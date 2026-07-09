@@ -54,10 +54,13 @@ export function getTeamDeploymentPreflight(request?: FastifyRequest) {
 
     for (const target of NODE_TARGETS) {
         const info = getTeamNodeArtifactInfo(target.platform, target.arch);
+        const invalidArtifact = info.exists && info.valid === false;
         checks.push({
             key: `node_artifact_${target.platform}_${target.arch}`,
-            status: info.exists ? "ok" : target.required ? "action_required" : "warning",
-            message: info.exists
+            status: invalidArtifact ? "action_required" : info.exists ? "ok" : target.required ? "action_required" : "warning",
+            message: invalidArtifact
+                ? `Node artifact for ${target.platform}/${target.arch} is invalid: ${info.validationError ?? "binary header did not match"}`
+                : info.exists
                 ? `Node artifact for ${target.platform}/${target.arch} is available.`
                 : `Node artifact for ${target.platform}/${target.arch} is missing${target.required ? "." : "; provide it before provisioning this platform."}`,
             detail: {
@@ -65,6 +68,11 @@ export function getTeamDeploymentPreflight(request?: FastifyRequest) {
                 arch: info.arch,
                 supported: info.supported,
                 exists: info.exists,
+                valid: info.valid ?? null,
+                format: info.format ?? null,
+                detectedPlatform: info.detectedPlatform ?? null,
+                detectedArch: info.detectedArch ?? null,
+                validationError: info.validationError ?? null,
                 source: info.source ?? null,
                 path: info.path,
                 size: info.size ?? null,

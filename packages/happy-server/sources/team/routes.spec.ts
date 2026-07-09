@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 import fastify from "fastify";
@@ -80,6 +80,38 @@ describe("team routes", () => {
         await db?.$disconnect();
         if (pgliteDir) {
             await rm(pgliteDir, { recursive: true, force: true });
+        }
+    });
+
+    it("rejects Node artifacts whose binary header does not match the requested platform", async () => {
+        const previousArtifactDir = process.env.TEAM_NODE_ARTIFACT_DIR;
+        const artifactDir = await mkdtemp(path.join(tmpdir(), "happy-team-route-node-artifacts-"));
+        try {
+            process.env.TEAM_NODE_ARTIFACT_DIR = artifactDir;
+            const nodePath = path.join(artifactDir, "darwin-arm64", "node");
+            await mkdir(path.dirname(nodePath), { recursive: true });
+            await writeFile(nodePath, elfHeader(0xb7));
+
+            const response = await app.inject({
+                method: "GET",
+                url: "/v1/team/artifacts/node/darwin/arm64",
+            });
+            expect(response.statusCode).toBe(503);
+            expect(response.json()).toMatchObject({
+                error: "Team Node artifact does not match requested platform",
+                platform: "darwin",
+                arch: "arm64",
+                validationError: "Expected darwin/arm64, got linux/arm64",
+                detectedPlatform: "linux",
+                detectedArch: "arm64",
+            });
+        } finally {
+            if (previousArtifactDir === undefined) {
+                delete process.env.TEAM_NODE_ARTIFACT_DIR;
+            } else {
+                process.env.TEAM_NODE_ARTIFACT_DIR = previousArtifactDir;
+            }
+            await rm(artifactDir, { recursive: true, force: true });
         }
     });
 
@@ -334,3 +366,15 @@ describe("team routes", () => {
         expect(redacted).toBe("token [redacted] password [redacted] api [redacted]");
     });
 });
+
+function elfHeader(machine: number): Buffer {
+    const header = Buffer.alloc(64);
+    header[0] = 0x7f;
+    header[1] = 0x45;
+    header[2] = 0x4c;
+    header[3] = 0x46;
+    header[4] = 2;
+    header[5] = 1;
+    header.writeUInt16LE(machine, 18);
+    return header;
+}

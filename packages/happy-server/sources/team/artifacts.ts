@@ -1,4 +1,4 @@
-import { createReadStream, existsSync, statSync } from "fs";
+import { closeSync, createReadStream, existsSync, openSync, readSync, statSync } from "fs";
 import path from "path";
 import { type FastifyReply, type FastifyRequest } from "fastify";
 
@@ -6,6 +6,14 @@ const DEFAULT_CLI_ARTIFACT_PATH = "/opt/happy-team/artifacts/happy-cli.tgz";
 const DEFAULT_NODE_ARTIFACT_DIR = "/opt/happy-team/artifacts/node";
 const NODE_ARTIFACT_PLATFORMS = ["linux", "darwin"] as const;
 const NODE_ARTIFACT_ARCHES = ["x64", "arm64"] as const;
+type NodeArtifactFormat = "elf" | "macho";
+type TeamNodeArtifactValidation = {
+    valid: boolean;
+    format?: NodeArtifactFormat;
+    detectedPlatform?: string;
+    detectedArch?: string;
+    error?: string;
+};
 
 export type NodeArtifactPlatform = typeof NODE_ARTIFACT_PLATFORMS[number];
 export type NodeArtifactArch = typeof NODE_ARTIFACT_ARCHES[number];
@@ -17,6 +25,11 @@ export type TeamNodeArtifactInfo = {
     supported: boolean;
     source?: "configured" | "local" | "server-runtime";
     size?: number;
+    valid?: boolean;
+    format?: NodeArtifactFormat;
+    detectedPlatform?: string;
+    detectedArch?: string;
+    validationError?: string;
 };
 
 export function getTeamPublicServerUrl(request?: FastifyRequest): string {
@@ -83,6 +96,17 @@ export function sendNodeArtifact(reply: FastifyReply, platform: string, arch: st
             supported: supportedNodeArtifactNames(),
         });
     }
+    if (info.valid === false) {
+        return reply.code(503).send({
+            error: "Team Node artifact does not match requested platform",
+            platform: info.platform,
+            arch: info.arch,
+            expectedPath: info.path,
+            validationError: info.validationError,
+            detectedPlatform: info.detectedPlatform,
+            detectedArch: info.detectedArch,
+        });
+    }
     return reply
         .type("application/octet-stream")
         .header("Content-Disposition", `attachment; filename=node-${info.platform}-${info.arch}`)
@@ -115,6 +139,7 @@ export function getTeamNodeArtifactInfo(platform: string, arch: string): TeamNod
     for (const candidate of candidates) {
         if (existsSync(candidate.path)) {
             const stat = statSync(candidate.path);
+            const validation = validateNodeArtifactBinary(candidate.path, normalizedPlatform, normalizedArch);
             return {
                 platform: normalizedPlatform,
                 arch: normalizedArch,
@@ -123,12 +148,14 @@ export function getTeamNodeArtifactInfo(platform: string, arch: string): TeamNod
                 supported: true,
                 source: candidate.source,
                 size: stat.size,
+                ...toArtifactValidationInfo(validation),
             };
         }
     }
 
     if (normalizedPlatform === process.platform && normalizedArch === process.arch && existsSync(process.execPath)) {
         const stat = statSync(process.execPath);
+        const validation = validateNodeArtifactBinary(process.execPath, normalizedPlatform, normalizedArch);
         return {
             platform: normalizedPlatform,
             arch: normalizedArch,
@@ -137,6 +164,7 @@ export function getTeamNodeArtifactInfo(platform: string, arch: string): TeamNod
             supported: true,
             source: "server-runtime",
             size: stat.size,
+            ...toArtifactValidationInfo(validation),
         };
     }
 
@@ -151,6 +179,47 @@ export function getTeamNodeArtifactInfo(platform: string, arch: string): TeamNod
 
 export function resolveTeamNodeArtifactDir(): string {
     return process.env.TEAM_NODE_ARTIFACT_DIR || DEFAULT_NODE_ARTIFACT_DIR;
+}
+
+export function validateNodeArtifactBinary(filePath: string, expectedPlatform: string, expectedArch: string): TeamNodeArtifactValidation {
+    const header = Buffer.alloc(64);
+    let fd: number | undefined;
+    try {
+        fd = openSync(filePath, "r");
+        const bytesRead = readSync(fd, header, 0, header.length, 0);
+        if (bytesRead < 8) {
+            return {
+                valid: false,
+                error: "Artifact is too small to be a Node binary",
+            };
+        }
+    } catch (error) {
+        return {
+            valid: false,
+            error: error instanceof Error ? error.message : "Unable to read artifact",
+        };
+    } finally {
+        if (fd !== undefined) {
+            closeSync(fd);
+        }
+    }
+
+    const detected = detectNodeBinaryHeader(header);
+    if (!detected) {
+        return {
+            valid: false,
+            error: "Artifact is not a supported 64-bit ELF or Mach-O binary",
+        };
+    }
+
+    const valid = detected.platform === expectedPlatform && detected.arch === expectedArch;
+    return {
+        valid,
+        format: detected.format,
+        detectedPlatform: detected.platform,
+        detectedArch: detected.arch,
+        error: valid ? undefined : `Expected ${expectedPlatform}/${expectedArch}, got ${detected.platform}/${detected.arch}`,
+    };
 }
 
 export function buildNodeArtifactDownloadCommand(serverUrl: string, output: string): string {
@@ -217,6 +286,37 @@ function normalizeNodeArch(arch: string): string {
     if (value === "x86_64" || value === "amd64") return "x64";
     if (value === "aarch64") return "arm64";
     return value;
+}
+
+function toArtifactValidationInfo(validation: TeamNodeArtifactValidation): Pick<TeamNodeArtifactInfo, "valid" | "format" | "detectedPlatform" | "detectedArch" | "validationError"> {
+    return {
+        valid: validation.valid,
+        format: validation.format,
+        detectedPlatform: validation.detectedPlatform,
+        detectedArch: validation.detectedArch,
+        validationError: validation.error,
+    };
+}
+
+function detectNodeBinaryHeader(header: Buffer): { format: NodeArtifactFormat; platform: string; arch: string } | null {
+    if (header.length >= 20 && header[0] === 0x7f && header[1] === 0x45 && header[2] === 0x4c && header[3] === 0x46) {
+        if (header[4] !== 2 || header[5] !== 1) {
+            return null;
+        }
+        const machine = header.readUInt16LE(18);
+        if (machine === 0x3e) return { format: "elf", platform: "linux", arch: "x64" };
+        if (machine === 0xb7) return { format: "elf", platform: "linux", arch: "arm64" };
+        return null;
+    }
+
+    if (header.length >= 8 && header.readUInt32LE(0) === 0xfeedfacf) {
+        const cpuType = header.readInt32LE(4);
+        if (cpuType === 0x01000007) return { format: "macho", platform: "darwin", arch: "x64" };
+        if (cpuType === 0x0100000c) return { format: "macho", platform: "darwin", arch: "arm64" };
+        return null;
+    }
+
+    return null;
 }
 
 function isSupportedNodeArtifact(platform: string, arch: string): boolean {
