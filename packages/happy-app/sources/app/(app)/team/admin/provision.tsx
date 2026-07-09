@@ -223,15 +223,19 @@ export default function TeamProvisionScreen() {
     const [deleteAfterUse, setDeleteAfterUse] = React.useState(true);
     const [claude, setClaude] = React.useState(true);
     const [codex, setCodex] = React.useState(false);
+    const [selectedCredentialId, setSelectedCredentialId] = React.useState<string | null>(null);
     const [manualCommand, setManualCommand] = React.useState<string | null>(null);
     const [loading, setLoading] = React.useState(true);
     const [saving, setSaving] = React.useState(false);
+    const [savingCredential, setSavingCredential] = React.useState(false);
     const [manualLoading, setManualLoading] = React.useState(false);
     const [deletingId, setDeletingId] = React.useState<string | null>(null);
     const [retryingId, setRetryingId] = React.useState<string | null>(null);
     const [error, setError] = React.useState<string | null>(null);
 
     const selectedUser = React.useMemo(() => users.find((user) => user.id === selectedUserId) ?? null, [selectedUserId, users]);
+    const selectedCredential = React.useMemo(() => credentials.find((credential) => credential.id === selectedCredentialId) ?? null, [credentials, selectedCredentialId]);
+    const userCredentials = React.useMemo(() => credentials.filter((credential) => credential.ownerUserId === selectedUserId), [credentials, selectedUserId]);
     const agents = React.useMemo<ProvisionAgent[]>(() => {
         const values: ProvisionAgent[] = [];
         if (claude) values.push('claude');
@@ -270,6 +274,13 @@ export default function TeamProvisionScreen() {
     }, [refresh]);
 
     React.useEffect(() => {
+        if (!selectedCredentialId) return;
+        if (!credentials.some((credential) => credential.id === selectedCredentialId && credential.ownerUserId === selectedUserId)) {
+            setSelectedCredentialId(null);
+        }
+    }, [credentials, selectedCredentialId, selectedUserId]);
+
+    React.useEffect(() => {
         if (!auth.credentials) return;
         const timer = setInterval(() => {
             listProvisionJobs(auth.credentials!)
@@ -279,17 +290,27 @@ export default function TeamProvisionScreen() {
         return () => clearInterval(timer);
     }, [auth.credentials]);
 
-    const startProvisioning = async () => {
-        if (!auth.credentials || !selectedUser) return;
+    const clearSelectedCredential = React.useCallback(() => {
+        setSelectedCredentialId(null);
+    }, []);
+
+    const validateNewCredential = React.useCallback((): number | null => {
         const parsedPort = Number(port);
-        if (!host.trim() || !username.trim() || !Number.isInteger(parsedPort) || parsedPort <= 0 || agents.length === 0) {
+        if (!selectedUser || !host.trim() || !username.trim() || !secret.trim() || !Number.isInteger(parsedPort) || parsedPort <= 0) {
             setError(t('team.provisionValidationFailed'));
-            return;
+            return null;
         }
-        setSaving(true);
+        return parsedPort;
+    }, [host, port, secret, selectedUser, username]);
+
+    const saveCredential = async () => {
+        if (!auth.credentials || !selectedUser) return;
+        const parsedPort = validateNewCredential();
+        if (!parsedPort) return;
+        setSavingCredential(true);
         setError(null);
         try {
-            const credential = await createSshCredential(auth.credentials, {
+            const result = await createSshCredential(auth.credentials, {
                 ownerUserId: selectedUser.id,
                 label: `${username}@${host}`,
                 host: host.trim(),
@@ -301,8 +322,47 @@ export default function TeamProvisionScreen() {
                 passphrase: authType === 'PRIVATE_KEY' && passphrase ? passphrase : undefined,
                 deleteAfterUse,
             });
+            setCredentials((current) => [result.credential, ...current.filter((credential) => credential.id !== result.credential.id)]);
+            setSelectedCredentialId(result.credential.id);
+            setSecret('');
+            setPassphrase('');
+            await Modal.alert(t('team.sshCredentialSavedTitle'), t('team.sshCredentialSavedMessage'));
+        } catch (e) {
+            setError(e instanceof Error ? e.message : t('team.failedToSaveSshCredential'));
+        } finally {
+            setSavingCredential(false);
+        }
+    };
+
+    const startProvisioning = async () => {
+        if (!auth.credentials || !selectedUser) return;
+        if (agents.length === 0) {
+            setError(t('team.provisionValidationFailed'));
+            return;
+        }
+        setSaving(true);
+        setError(null);
+        try {
+            let credentialId = selectedCredential?.id ?? null;
+            if (!credentialId) {
+                const parsedPort = validateNewCredential();
+                if (!parsedPort) return;
+                const credential = await createSshCredential(auth.credentials, {
+                    ownerUserId: selectedUser.id,
+                    label: `${username}@${host}`,
+                    host: host.trim(),
+                    port: parsedPort,
+                    username: username.trim(),
+                    authType,
+                    password: authType === 'PASSWORD' ? secret : undefined,
+                    privateKey: authType === 'PRIVATE_KEY' ? secret : undefined,
+                    passphrase: authType === 'PRIVATE_KEY' && passphrase ? passphrase : undefined,
+                    deleteAfterUse,
+                });
+                credentialId = credential.credential.id;
+            }
             const job = await createProvisionJob(auth.credentials, {
-                credentialId: credential.credential.id,
+                credentialId,
                 targetUserId: selectedUser.id,
                 agents,
             });
@@ -347,6 +407,9 @@ export default function TeamProvisionScreen() {
         try {
             await deleteSshCredential(auth.credentials, credential.id);
             setCredentials((current) => current.filter((item) => item.id !== credential.id));
+            if (selectedCredentialId === credential.id) {
+                setSelectedCredentialId(null);
+            }
         } catch (e) {
             await Modal.alert(t('team.actionFailed'), e instanceof Error ? e.message : t('team.unableToUpdateMember'));
         } finally {
@@ -407,20 +470,63 @@ export default function TeamProvisionScreen() {
                     )}
                 </ItemGroup>
 
+                <ItemGroup title={t('team.savedCredentials')}>
+                    {userCredentials.length === 0 ? (
+                        <Text style={styles.empty}>{t('team.noSavedCredentials')}</Text>
+                    ) : userCredentials.map((credential) => {
+                        const selected = selectedCredentialId === credential.id;
+                        return (
+                            <Item
+                                key={credential.id}
+                                title={credential.label}
+                                subtitle={`${credential.username}@${credential.host}:${credential.port} / ${credential.authType}${credential.deleteAfterUse ? ` / ${t('team.deleteAfterUseShort')}` : ''}`}
+                                detail={selected ? t('team.selectedCredential') : undefined}
+                                selected={selected}
+                                showChevron={false}
+                                rightElement={(
+                                    <View style={styles.row}>
+                                        <Pressable
+                                            accessibilityLabel={t('team.useSshCredential')}
+                                            disabled={selected}
+                                            onPress={() => setSelectedCredentialId(credential.id)}
+                                            style={styles.iconButton}
+                                        >
+                                            <Ionicons
+                                                name={selected ? 'checkmark-circle-outline' : 'radio-button-off-outline'}
+                                                size={18}
+                                                color={selected ? theme.colors.status.connected : theme.colors.textSecondary}
+                                            />
+                                        </Pressable>
+                                        <Pressable
+                                            accessibilityLabel={t('team.deleteCredentialTitle')}
+                                            disabled={deletingId === credential.id}
+                                            onPress={() => void removeCredential(credential)}
+                                            style={styles.iconButton}
+                                        >
+                                            <Ionicons name="trash-outline" size={18} color={theme.colors.textDestructive} />
+                                        </Pressable>
+                                    </View>
+                                )}
+                            />
+                        );
+                    })}
+                </ItemGroup>
+
                 <ItemGroup title={t('team.sshDetails')}>
                     <View style={styles.form}>
+                        <Text style={styles.label}>{t('team.newSshCredential')}</Text>
                         <View style={styles.row}>
                             <View style={styles.split}>
                                 <Text style={styles.label}>{t('team.host')}</Text>
-                                <TextInput value={host} onChangeText={setHost} autoCapitalize="none" autoCorrect={false} style={styles.input} />
+                                <TextInput value={host} onChangeText={(value) => { setHost(value); clearSelectedCredential(); }} autoCapitalize="none" autoCorrect={false} style={styles.input} />
                             </View>
                             <View style={styles.split}>
                                 <Text style={styles.label}>{t('team.port')}</Text>
-                                <TextInput value={port} onChangeText={setPort} keyboardType="number-pad" style={styles.input} />
+                                <TextInput value={port} onChangeText={(value) => { setPort(value); clearSelectedCredential(); }} keyboardType="number-pad" style={styles.input} />
                             </View>
                         </View>
                         <Text style={styles.label}>{t('team.username')}</Text>
-                        <TextInput value={username} onChangeText={setUsername} autoCapitalize="none" autoCorrect={false} style={styles.input} />
+                        <TextInput value={username} onChangeText={(value) => { setUsername(value); clearSelectedCredential(); }} autoCapitalize="none" autoCorrect={false} style={styles.input} />
                         <Text style={styles.label}>{t('team.authMethod')}</Text>
                         <Segment
                             value={authType}
@@ -428,12 +534,12 @@ export default function TeamProvisionScreen() {
                                 { value: 'PASSWORD', label: t('team.passwordAuth') },
                                 { value: 'PRIVATE_KEY', label: t('team.privateKeyAuth') },
                             ]}
-                            onChange={setAuthType}
+                            onChange={(value) => { setAuthType(value); clearSelectedCredential(); }}
                         />
                         <Text style={styles.label}>{authType === 'PASSWORD' ? t('team.sshPassword') : t('team.privateKey')}</Text>
                         <TextInput
                             value={secret}
-                            onChangeText={setSecret}
+                            onChangeText={(value) => { setSecret(value); clearSelectedCredential(); }}
                             secureTextEntry={authType === 'PASSWORD'}
                             multiline={authType === 'PRIVATE_KEY'}
                             autoCapitalize="none"
@@ -443,10 +549,11 @@ export default function TeamProvisionScreen() {
                         {authType === 'PRIVATE_KEY' && (
                             <>
                                 <Text style={styles.label}>{t('team.passphrase')}</Text>
-                                <TextInput value={passphrase} onChangeText={setPassphrase} secureTextEntry autoCapitalize="none" autoCorrect={false} style={styles.input} />
+                                <TextInput value={passphrase} onChangeText={(value) => { setPassphrase(value); clearSelectedCredential(); }} secureTextEntry autoCapitalize="none" autoCorrect={false} style={styles.input} />
                             </>
                         )}
-                        <ToggleRow label={t('team.deleteCredentialAfterUse')} value={deleteAfterUse} onValueChange={setDeleteAfterUse} />
+                        <ToggleRow label={t('team.deleteCredentialAfterUse')} value={deleteAfterUse} onValueChange={(value) => { setDeleteAfterUse(value); clearSelectedCredential(); }} />
+                        <RoundButton title={t('team.saveSshCredential')} size="normal" display="inverted" action={saveCredential} loading={savingCredential} disabled={!selectedUser || !secret.trim()} />
                     </View>
                 </ItemGroup>
 
@@ -455,7 +562,7 @@ export default function TeamProvisionScreen() {
                         <ToggleRow label={t('team.claudeCode')} value={claude} onValueChange={setClaude} />
                         <ToggleRow label={t('team.codex')} value={codex} onValueChange={setCodex} />
                         {error && <Text style={styles.error}>{error}</Text>}
-                        <RoundButton title={t('team.startProvisioning')} size="normal" action={startProvisioning} loading={saving} disabled={!selectedUser || !secret.trim()} />
+                        <RoundButton title={t('team.startProvisioning')} size="normal" action={startProvisioning} loading={saving} disabled={!selectedUser || agents.length === 0 || (!selectedCredential && !secret.trim())} />
                         <RoundButton title={t('team.requestManualCommand')} size="normal" display="inverted" action={createManualCommand} loading={manualLoading} disabled={!selectedUser} />
                     </View>
                 </ItemGroup>
@@ -468,29 +575,6 @@ export default function TeamProvisionScreen() {
                         </View>
                     </ItemGroup>
                 )}
-
-                <ItemGroup title={t('team.savedCredentials')}>
-                    {credentials.length === 0 ? (
-                        <Text style={styles.empty}>{t('team.noSavedCredentials')}</Text>
-                    ) : credentials.map((credential) => (
-                        <Item
-                            key={credential.id}
-                            title={credential.label}
-                            subtitle={`${credential.username}@${credential.host}:${credential.port} / ${credential.authType}`}
-                            showChevron={false}
-                            rightElement={(
-                                <Pressable
-                                    accessibilityLabel={t('team.deleteCredentialTitle')}
-                                    disabled={deletingId === credential.id}
-                                    onPress={() => void removeCredential(credential)}
-                                    style={styles.iconButton}
-                                >
-                                    <Ionicons name="trash-outline" size={18} color={theme.colors.textDestructive} />
-                                </Pressable>
-                            )}
-                        />
-                    ))}
-                </ItemGroup>
 
                 <ItemGroup title={t('team.provisioningJobs')}>
                     {jobs.length === 0 ? (
