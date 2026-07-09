@@ -42,9 +42,17 @@ describe("provision daemon startup script", () => {
 
     it("uses the selected Node runtime when installing the CLI", () => {
         const command = buildInstallCliCommand(serverUrl, "/usr/local/bin/node");
+        const syntax = spawnSync("sh", ["-n"], {
+            input: `set -eu\n${command}\n`,
+            encoding: "utf8",
+        });
 
+        expect(syntax.status).toBe(0);
+        expect(syntax.stderr).toBe("");
         expect(command).toContain("exec '/usr/local/bin/node' \"$HOME/.happy-team/cli/bin/happy.mjs\" \"$@\"");
         expect(command).toContain("'/usr/local/bin/node' -e 'console.log(\"happy cli installed\")'");
+        expect(command).toContain("cat > \"$HOME/.happy-team/bin/claude\"");
+        expect(command).toContain("@anthropic-ai/claude-agent-sdk-darwin-arm64");
         expect(command).not.toContain("\"$HOME/.happy-team/bin/node\" -e");
     });
 

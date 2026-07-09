@@ -1,6 +1,6 @@
 import { AgentAuthMode, ProvisionStatus, type TeamUser } from "@prisma/client";
 import { db } from "@/storage/db";
-import { buildManualInstallCommand, buildNodeArtifactDownloadCommand, downloadCommand, shellQuote } from "@/team/artifacts";
+import { buildClaudeSdkCliWrapperCommand, buildManualInstallCommand, buildNodeArtifactDownloadCommand, downloadCommand, shellQuote } from "@/team/artifacts";
 import { buildSshConnectionInput, SshExecutor, type SshExecResult } from "@/team/provision/ssh";
 import { decryptSshCredentialAuth } from "@/team/sshCredentials";
 import { writeTeamAudit } from "@/team/audit";
@@ -251,6 +251,7 @@ export function buildInstallCliCommand(serverUrl: string, nodePath: string): str
         `exec ${shellQuote(nodePath)} "$HOME/.happy-team/cli/bin/happy.mjs" "$@"`,
         "HAPPY_TEAM_SH",
         "chmod 700 \"$HOME/.happy-team/bin/happy\"",
+        buildClaudeSdkCliWrapperCommand(),
         "test -s \"$HOME/.happy-team/cli/dist/index.mjs\"",
         `${shellQuote(nodePath)} -e 'console.log("happy cli installed")'`,
     ].join("\n");

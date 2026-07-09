@@ -404,10 +404,58 @@ export function buildManualInstallCommand(input: {
         "tar -xzf /tmp/happy-cli.tgz -C \"$HOME/.happy-team/cli\"",
         `printf '%s\\n' ${wrapperLines} > "$HOME/.happy-team/bin/happy"`,
         "chmod 700 \"$HOME/.happy-team/bin/happy\"",
+        buildClaudeSdkCliWrapperCommand(),
         "PATH=\"$HOME/.happy-team/bin:$PATH\"; export PATH",
         "\"$HOME/.happy-team/bin/happy\" enroll --server " + server + " --token " + token + " --force",
         "HAPPY_SERVER_URL=" + server + " \"$HOME/.happy-team/bin/happy\" daemon start",
     ].join(" && ");
+}
+
+export function buildClaudeSdkCliWrapperCommand(): string {
+    const wrapperScript = [
+        "#!/bin/sh",
+        "platform=$(uname -s | tr '[:upper:]' '[:lower:]')",
+        "machine=$(uname -m)",
+        "sdk_pkg=",
+        "case \"$platform/$machine\" in",
+        "  linux/x86_64|linux/amd64)",
+        "    if ldd /bin/sh 2>&1 | grep -qi musl || ldd --version 2>&1 | grep -qi musl; then",
+        "      sdk_pkg='@anthropic-ai/claude-agent-sdk-linux-x64-musl'",
+        "    else",
+        "      sdk_pkg='@anthropic-ai/claude-agent-sdk-linux-x64'",
+        "    fi",
+        "    ;;",
+        "  linux/aarch64|linux/arm64)",
+        "    if ldd /bin/sh 2>&1 | grep -qi musl || ldd --version 2>&1 | grep -qi musl; then",
+        "      sdk_pkg='@anthropic-ai/claude-agent-sdk-linux-arm64-musl'",
+        "    else",
+        "      sdk_pkg='@anthropic-ai/claude-agent-sdk-linux-arm64'",
+        "    fi",
+        "    ;;",
+        "  darwin/x86_64|darwin/amd64)",
+        "    sdk_pkg='@anthropic-ai/claude-agent-sdk-darwin-x64'",
+        "    ;;",
+        "  darwin/arm64|darwin/aarch64)",
+        "    sdk_pkg='@anthropic-ai/claude-agent-sdk-darwin-arm64'",
+        "    ;;",
+        "esac",
+        "if [ -z \"$sdk_pkg\" ]; then",
+        "  echo \"Unsupported Claude SDK platform: $platform/$machine\" >&2",
+        "  exit 127",
+        "fi",
+        "sdk_bin=\"$HOME/.happy-team/cli/node_modules/$sdk_pkg/claude\"",
+        "if [ ! -x \"$sdk_bin\" ]; then",
+        "  echo \"Claude SDK binary missing at $sdk_bin. Run Deployment Preflight and rebuild happy-cli.tgz with optional dependencies.\" >&2",
+        "  exit 127",
+        "fi",
+        "exec \"$sdk_bin\" \"$@\"",
+    ].join("\n");
+    return [
+        "cat > \"$HOME/.happy-team/bin/claude\" <<'HAPPY_TEAM_CLAUDE_SH'",
+        wrapperScript,
+        "HAPPY_TEAM_CLAUDE_SH",
+        "chmod 700 \"$HOME/.happy-team/bin/claude\"",
+    ].join("\n");
 }
 
 export function shellQuote(value: string): string {

@@ -139,7 +139,7 @@ Audit 页可按 action 名称过滤，例如 `login`、`create_user`、`provisio
 成员在 Settings 里打开 Team Agent Access 可切换每个 agent 的认证模式：
 
 - Company API：daemon 的 `agent.env` 写入 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`，请求走公司 key。
-- Personal OAuth：daemon RPC 会重写 `agent.env` 并清除对应公司 key；成员随后通过网页远程会话在目标机器上完成一次 `claude` 或 `codex` 登录。
+- Personal OAuth：daemon RPC 会重写 `agent.env` 并清除对应公司 key；成员随后通过网页远程会话在目标机器上完成一次 `claude` 或 `codex` 登录。Provisioning 会提供 `~/.happy-team/bin/claude` wrapper（来自 CLI artifact 内置 Claude Agent SDK native binary），目标机没有系统级 `claude` 时可用 `~/.happy-team/bin/claude login`。
 
 机器离线时切换会进入 pending；daemon 下次上线后通过现有 Machine RPC 应用变更并自重启。Team Agent Access 页面会显示每台机器的 agent-auth 应用状态，便于确认 pending/failed 机器。切换到 Claude Personal OAuth 时，daemon 会清除 `ANTHROPIC_API_KEY` 并尝试从本机 `~/.claude/.credentials.json` 重新导出 `CLAUDE_CODE_OAUTH_TOKEN` 供自重启后的进程使用；切回 Company API 时会清除旧的 `CLAUDE_CODE_OAUTH_TOKEN`。切换回 Company API 要求 server 环境中仍配置对应的 `TEAM_ANTHROPIC_API_KEY` / `TEAM_OPENAI_API_KEY`。
 

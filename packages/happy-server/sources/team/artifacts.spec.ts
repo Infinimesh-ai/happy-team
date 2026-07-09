@@ -1,9 +1,10 @@
+import { spawnSync } from "child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 import { gzipSync } from "zlib";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildManualInstallCommand, getTeamCliClaudeSdkInfo, getTeamNodeArtifactInfo, validateNodeArtifactBinary } from "@/team/artifacts";
+import { buildClaudeSdkCliWrapperCommand, buildManualInstallCommand, getTeamCliClaudeSdkInfo, getTeamNodeArtifactInfo, validateNodeArtifactBinary } from "@/team/artifacts";
 
 const originalCliArtifactPath = process.env.TEAM_CLI_ARTIFACT_PATH;
 const originalNodeArtifactDir = process.env.TEAM_NODE_ARTIFACT_DIR;
@@ -112,10 +113,19 @@ describe("team artifacts", () => {
             token: "hte_test_token",
             agents: ["claude", "codex"],
         });
+        const syntax = spawnSync("sh", ["-n"], {
+            input: `set -eu\n${command}\n`,
+            encoding: "utf8",
+        });
+
+        expect(syntax.status).toBe(0);
+        expect(syntax.stderr).toBe("");
         expect(command).toContain("uname -s");
         expect(command).toContain("uname -m");
         expect(command).toContain("/v1/team/artifacts/node/$platform/$arch");
         expect(command).toContain("PATH=\"$HOME/.happy-team/bin:$PATH\"; export PATH");
+        expect(command).toContain("cat > \"$HOME/.happy-team/bin/claude\"");
+        expect(command).toContain("@anthropic-ai/claude-agent-sdk-darwin-arm64");
         expect(command).toContain("enroll --server");
         expect(command).not.toContain("TEAM_ANTHROPIC_API_KEY");
         expect(command).not.toContain("TEAM_OPENAI_API_KEY");
@@ -137,6 +147,26 @@ describe("team artifacts", () => {
         expect(info.targets.find((target) => target.platform === "linux" && target.arch === "x64")?.exists).toBe(true);
         expect(info.targets.find((target) => target.platform === "linux" && target.arch === "arm64")?.exists).toBe(false);
         expect(info.targets.find((target) => target.platform === "darwin" && target.arch === "arm64")?.exists).toBe(true);
+    });
+
+    it("creates a claude wrapper that executes the packaged SDK binary", async () => {
+        const home = await mkdtemp(path.join(tmpdir(), "happy-team-claude-wrapper-"));
+        tempDirs.push(home);
+        await mkdir(path.join(home, ".happy-team", "bin"), { recursive: true });
+        await writeFakeClaudeSdkBinary(home, "@anthropic-ai/claude-agent-sdk-linux-x64");
+        await writeFakeClaudeSdkBinary(home, "@anthropic-ai/claude-agent-sdk-linux-x64-musl");
+
+        const result = spawnSync("sh", ["-c", `set -eu\n${buildClaudeSdkCliWrapperCommand()}\n"$HOME/.happy-team/bin/claude" --version`], {
+            env: {
+                ...process.env,
+                HOME: home,
+            },
+            encoding: "utf8",
+        });
+
+        expect(result.status).toBe(0);
+        expect(result.stderr).toBe("");
+        expect(result.stdout.trim()).toBe("fake-claude:--version");
     });
 });
 
@@ -184,4 +214,10 @@ function tarHeader(name: string): Buffer {
     header[154] = 0;
     header[155] = 0x20;
     return header;
+}
+
+async function writeFakeClaudeSdkBinary(home: string, packageName: string): Promise<void> {
+    const binaryPath = path.join(home, ".happy-team", "cli", "node_modules", packageName, "claude");
+    await mkdir(path.dirname(binaryPath), { recursive: true });
+    await writeFile(binaryPath, "#!/bin/sh\nprintf 'fake-claude:%s\\n' \"$*\"\n", { mode: 0o700 });
 }
