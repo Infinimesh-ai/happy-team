@@ -83,22 +83,25 @@ export async function getTeamDeploymentPreflight(request?: FastifyRequest) {
     }
 
     const cliClaudeSdkInfo = await getTeamCliClaudeSdkInfo();
-    for (const target of NODE_TARGETS) {
-        const sdkTarget = cliClaudeSdkInfo.targets.find((candidate) => candidate.platform === target.platform && candidate.arch === target.arch);
-        const nodeInfo = nodeArtifactInfos.get(`${target.platform}_${target.arch}`);
-        const requiredForConfiguredTarget = target.required || Boolean(nodeInfo?.exists);
+    for (const sdkTarget of cliClaudeSdkInfo.targets) {
+        const nodeTarget = NODE_TARGETS.find((target) => target.platform === sdkTarget.platform && target.arch === sdkTarget.arch);
+        const nodeInfo = nodeArtifactInfos.get(`${sdkTarget.platform}_${sdkTarget.arch}`);
+        const requiredForConfiguredTarget = Boolean(nodeTarget?.required || nodeInfo?.exists);
         const sdkBinaryReady = Boolean(cliClaudeSdkInfo.exists && !cliClaudeSdkInfo.error && sdkTarget?.exists);
+        const targetLabel = `${sdkTarget.platform}/${sdkTarget.arch}${sdkTarget.libc ? `/${sdkTarget.libc}` : ""}`;
+        const keySuffix = `${sdkTarget.platform}_${sdkTarget.arch}${sdkTarget.libc ? `_${sdkTarget.libc}` : ""}`;
         checks.push({
-            key: `claude_sdk_binary_${target.platform}_${target.arch}`,
+            key: `claude_sdk_binary_${keySuffix}`,
             status: sdkBinaryReady ? "ok" : requiredForConfiguredTarget ? "action_required" : "warning",
             message: sdkBinaryReady
-                ? `Claude SDK native binary for ${target.platform}/${target.arch} is included in the CLI artifact.`
+                ? `Claude SDK native binary for ${targetLabel} is included in the CLI artifact.`
                 : cliClaudeSdkInfo.error
-                ? `Unable to inspect Claude SDK native binary for ${target.platform}/${target.arch}: ${cliClaudeSdkInfo.error}`
-                : `Claude SDK native binary for ${target.platform}/${target.arch} is missing from the CLI artifact${requiredForConfiguredTarget ? "." : "; include it before provisioning this platform."}`,
+                ? `Unable to inspect Claude SDK native binary for ${targetLabel}: ${cliClaudeSdkInfo.error}`
+                : `Claude SDK native binary for ${targetLabel} is missing from the CLI artifact${requiredForConfiguredTarget ? "." : "; include it before provisioning this platform."}`,
             detail: {
-                platform: target.platform,
-                arch: target.arch,
+                platform: sdkTarget.platform,
+                arch: sdkTarget.arch,
+                libc: sdkTarget.libc ?? null,
                 packageName: sdkTarget?.packageName ?? null,
                 entry: sdkTarget?.entry ?? null,
                 exists: sdkTarget?.exists ?? false,

@@ -18,6 +18,7 @@ type TeamNodeArtifactValidation = {
 type TeamCliClaudeSdkTarget = {
     platform: NodeArtifactPlatform;
     arch: NodeArtifactArch;
+    libc?: "glibc" | "musl";
     packageName: string;
     entry: string;
     exists: boolean;
@@ -67,14 +68,30 @@ const TEAM_CLAUDE_SDK_TARGETS: Array<Omit<TeamCliClaudeSdkTarget, "exists">> = [
     {
         platform: "linux",
         arch: "x64",
+        libc: "glibc",
         packageName: "@anthropic-ai/claude-agent-sdk-linux-x64",
         entry: "node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude",
     },
     {
         platform: "linux",
+        arch: "x64",
+        libc: "musl",
+        packageName: "@anthropic-ai/claude-agent-sdk-linux-x64-musl",
+        entry: "node_modules/@anthropic-ai/claude-agent-sdk-linux-x64-musl/claude",
+    },
+    {
+        platform: "linux",
         arch: "arm64",
+        libc: "glibc",
         packageName: "@anthropic-ai/claude-agent-sdk-linux-arm64",
         entry: "node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64/claude",
+    },
+    {
+        platform: "linux",
+        arch: "arm64",
+        libc: "musl",
+        packageName: "@anthropic-ai/claude-agent-sdk-linux-arm64-musl",
+        entry: "node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64-musl/claude",
     },
     {
         platform: "darwin",

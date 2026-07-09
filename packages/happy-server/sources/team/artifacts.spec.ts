@@ -146,8 +146,9 @@ describe("team artifacts", () => {
         const info = await getTeamCliClaudeSdkInfo();
         expect(info.exists).toBe(true);
         expect(info.complete).toBe(false);
-        expect(info.targets.find((target) => target.platform === "linux" && target.arch === "x64")?.exists).toBe(true);
-        expect(info.targets.find((target) => target.platform === "linux" && target.arch === "arm64")?.exists).toBe(false);
+        expect(info.targets.find((target) => target.platform === "linux" && target.arch === "x64" && target.libc === "glibc")?.exists).toBe(true);
+        expect(info.targets.find((target) => target.platform === "linux" && target.arch === "x64" && target.libc === "musl")?.exists).toBe(false);
+        expect(info.targets.find((target) => target.platform === "linux" && target.arch === "arm64" && target.libc === "glibc")?.exists).toBe(false);
         expect(info.targets.find((target) => target.platform === "darwin" && target.arch === "arm64")?.exists).toBe(true);
     });
 

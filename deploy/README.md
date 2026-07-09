@@ -153,7 +153,7 @@ curl -sS \
   "$TEAM_PUBLIC_SERVER_URL/v1/team/admin/preflight"
 ```
 
-返回只包含状态、artifact 路径/大小和布尔配置结果，不返回 `HANDY_MASTER_SECRET`、SSH 凭据、`TEAM_ANTHROPIC_API_KEY` 或 `TEAM_OPENAI_API_KEY` 的值。预检还会检查 `happy-cli.tgz` 是否包含 Linux/macOS x64/arm64 的 Claude Agent SDK 与 Codex CLI native binaries。`status=action_required` 表示某个默认路径会阻止零配置 Company API provisioning；`status=warning` 通常表示当前部署可跑本机/Linux x64，但远程机器或非 x64/macOS 验收前还需要补 artifact 或替换 localhost URL。
+返回只包含状态、artifact 路径/大小和布尔配置结果，不返回 `HANDY_MASTER_SECRET`、SSH 凭据、`TEAM_ANTHROPIC_API_KEY` 或 `TEAM_OPENAI_API_KEY` 的值。预检还会检查 `happy-cli.tgz` 是否包含 Linux glibc/musl 与 macOS x64/arm64 的 Claude Agent SDK native binaries，以及 Linux/macOS x64/arm64 的 Codex CLI native binaries。`status=action_required` 表示某个默认路径会阻止零配置 Company API provisioning；`status=warning` 通常表示当前部署可跑本机/Linux x64，但远程机器或非 x64/macOS 验收前还需要补 artifact 或替换 localhost URL。
 
 至少在以下时间点跑一次预检：
 
