@@ -101,7 +101,7 @@ tar -czf .team-artifacts/happy-cli.tgz -C .team-artifacts/happy-cli .
 1. 选择目标成员。
 2. 输入 SSH host、port、username 和密码或私钥。
 3. 选择要启用的 agent。默认 Claude Code 使用 `TEAM_ANTHROPIC_API_KEY`；Codex 使用 `TEAM_OPENAI_API_KEY`。
-4. 点击 Start Provisioning。server 会用 ssh2 连接目标机，检测 `uname -s` / `uname -m` 后下载匹配 Node artifact，安装 CLI，执行 `happy enroll --server <url> --token <一次性token>`，写入 `~/.happy-team/agent.env`（权限 600），并拉起 user systemd daemon；没有 user systemd 时会尝试普通 daemon + crontab fallback。
+4. 点击 Start Provisioning。server 会用 ssh2 连接目标机，检测 `uname -s` / `uname -m` 后下载匹配 Node artifact，安装 CLI，执行 `happy enroll --server <url> --token <一次性token>`，写入 `~/.happy-team/agent.env`（权限 600），并拉起 daemon。Linux 优先写 user systemd unit；没有 user systemd 时会尝试普通 daemon + crontab fallback。macOS 写用户级 `~/Library/LaunchAgents/com.happy-team.daemon.plist`，不需要 root 权限；plist 只 source `agent.env`，不展开保存公司 API key。
 
 Provisioning 日志会脱敏 token、SSH 凭据、公司 API key。响应里的 Manual Command 是兜底安装命令，可复制到目标机器手工执行；一次性 token 默认 15 分钟有效，只能使用一次。Manual Command 不包含公司 API key；它会导出 provisioned Node 的 `PATH`、完成 enroll 并启动 daemon，daemon 首次上线后由 server 通过加密 Machine RPC 写入当前成员的 `agent.env`。
 

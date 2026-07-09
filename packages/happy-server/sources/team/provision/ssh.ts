@@ -36,6 +36,13 @@ export class SshExecutor {
     private client = new Client();
     private connected = false;
 
+    constructor() {
+        // ssh2 may emit a late error after a failed handshake has already been
+        // rejected and cleaned up. Keep a baseline listener so that late socket
+        // errors do not escape as process-level unhandled exceptions.
+        this.client.on("error", () => {});
+    }
+
     async connect(input: SshConnectionInput): Promise<void> {
         if (this.connected) return;
         await new Promise<void>((resolve, reject) => {

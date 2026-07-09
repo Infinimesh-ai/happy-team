@@ -291,6 +291,24 @@ async function setupAgents(
 }
 
 async function startDaemon(executor: SshExecutor, jobId: string, serverUrl: string, redactions: string[]): Promise<void> {
+    await runShell(executor, jobId, "start_daemon", buildStartDaemonCommand(serverUrl), redactions, 60_000);
+}
+
+export function buildStartDaemonCommand(serverUrl: string): string {
+    return [
+        "platform=$(uname -s | tr '[:upper:]' '[:lower:]')",
+        "case \"$platform\" in",
+        "darwin)",
+        buildMacLaunchdStartCommand(serverUrl),
+        ";;",
+        "*)",
+        buildLinuxStartDaemonCommand(serverUrl),
+        ";;",
+        "esac",
+    ].join("\n");
+}
+
+function buildLinuxStartDaemonCommand(serverUrl: string): string {
     const unitContent = [
         "[Unit]",
         "Description=Happy Team daemon",
@@ -314,7 +332,7 @@ async function startDaemon(executor: SshExecutor, jobId: string, serverUrl: stri
     const pathExport = "PATH=\"$HOME/.happy-team/bin:$PATH\"; export PATH";
     const daemonStartShell = `${pathExport}; set -a; . "$HOME/.happy-team/agent.env"; set +a; "$HOME/.happy-team/bin/happy" daemon start`;
     const rebootCommand = shellQuote(
-        `@reboot HAPPY_SERVER_URL=${serverUrl} HAPPY_HOME_DIR=$HOME/.happy sh -lc ${shellQuote(daemonStartShell)}`,
+        `@reboot HAPPY_SERVER_URL=${shellQuote(serverUrl)} HAPPY_HOME_DIR="$HOME/.happy" sh -lc ${shellQuote(daemonStartShell)}`,
     );
     const fallbackStart = [
         pathExport,
@@ -338,7 +356,83 @@ async function startDaemon(executor: SshExecutor, jobId: string, serverUrl: stri
         fallbackStart.split("\n").map((line) => `  ${line}`).join("\n"),
         "fi",
     ].join("\n");
-    await runShell(executor, jobId, "start_daemon", command, redactions, 60_000);
+    return command;
+}
+
+function buildMacLaunchdStartCommand(serverUrl: string): string {
+    const macPath = "$HOME/.happy-team/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+    const detachedStartShell = [
+        `PATH="${macPath}"; export PATH`,
+        "set -a",
+        ". \"$HOME/.happy-team/agent.env\"",
+        "set +a",
+        "\"$HOME/.happy-team/bin/happy\" daemon start",
+    ].join("; ");
+    const fallbackStart = [
+        `PATH="${macPath}"; export PATH`,
+        "\"$HOME/.happy-team/bin/happy\" daemon stop >/dev/null 2>&1 || true",
+        `HAPPY_SERVER_URL=${shellQuote(serverUrl)} HAPPY_HOME_DIR="$HOME/.happy" sh -lc ${shellQuote(detachedStartShell)}`,
+    ].join("\n");
+
+    return [
+        "label=com.happy-team.daemon",
+        "plist=\"$HOME/Library/LaunchAgents/$label.plist\"",
+        "mkdir -p \"$HOME/Library/LaunchAgents\" \"$HOME/.happy\"",
+        "xml_escape() { sed -e 's/&/\\&amp;/g' -e 's/</\\&lt;/g' -e 's/>/\\&gt;/g' -e 's/\"/\\&quot;/g'; }",
+        `server_xml=$(printf '%s' ${shellQuote(serverUrl)} | xml_escape)`,
+        "home_xml=$(printf '%s' \"$HOME\" | xml_escape)",
+        `daemon_command="PATH=\\"${macPath}\\"; export PATH; set -a; . \\"$HOME/.happy-team/agent.env\\"; set +a; exec \\"$HOME/.happy-team/bin/happy\\" daemon start-sync"`,
+        "daemon_command_xml=$(printf '%s' \"$daemon_command\" | xml_escape)",
+        `path_xml=$(printf '%s' "${macPath}" | xml_escape)`,
+        "cat > \"$plist\" <<HAPPY_TEAM_PLIST",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+        "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
+        "<plist version=\"1.0\">",
+        "<dict>",
+        "  <key>Label</key>",
+        "  <string>$label</string>",
+        "  <key>ProgramArguments</key>",
+        "  <array>",
+        "    <string>/bin/sh</string>",
+        "    <string>-lc</string>",
+        "    <string>$daemon_command_xml</string>",
+        "  </array>",
+        "  <key>EnvironmentVariables</key>",
+        "  <dict>",
+        "    <key>HAPPY_SERVER_URL</key>",
+        "    <string>$server_xml</string>",
+        "    <key>HAPPY_HOME_DIR</key>",
+        "    <string>$home_xml/.happy</string>",
+        "    <key>PATH</key>",
+        "    <string>$path_xml</string>",
+        "  </dict>",
+        "  <key>RunAtLoad</key>",
+        "  <true/>",
+        "  <key>KeepAlive</key>",
+        "  <true/>",
+        "  <key>StandardOutPath</key>",
+        "  <string>$home_xml/.happy/daemon.log</string>",
+        "  <key>StandardErrorPath</key>",
+        "  <string>$home_xml/.happy/daemon.err</string>",
+        "</dict>",
+        "</plist>",
+        "HAPPY_TEAM_PLIST",
+        "chmod 644 \"$plist\"",
+        "if command -v launchctl >/dev/null 2>&1; then",
+        "  uid=$(id -u)",
+        "  launchctl bootout \"gui/$uid\" \"$plist\" >/dev/null 2>&1 || launchctl unload \"$plist\" >/dev/null 2>&1 || true",
+        "  if launchctl bootstrap \"gui/$uid\" \"$plist\" >/dev/null 2>&1 || launchctl load \"$plist\" >/dev/null 2>&1; then",
+        "    launchctl kickstart -k \"gui/$uid/$label\" >/dev/null 2>&1 || true",
+        "    echo \"launchd agent installed at $plist\"",
+        "  else",
+        "    echo 'launchctl could not load user agent; daemon started without launchd fallback'",
+        fallbackStart.split("\n").map((line) => `    ${line}`).join("\n"),
+        "  fi",
+        "else",
+        "  echo 'launchctl unavailable; daemon started without launchd fallback'",
+        fallbackStart.split("\n").map((line) => `  ${line}`).join("\n"),
+        "fi",
+    ].join("\n");
 }
 
 async function waitForMachine(accountId: string, startTime: Date): Promise<{ id: string }> {

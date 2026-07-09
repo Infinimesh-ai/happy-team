@@ -277,7 +277,7 @@ PENDING → RUNNING(connect → detect → install_node → install_cli
 | install_cli | 从企业服务器分发 fork 版 CLI tarball，`npm install -g` 到用户级前缀（`~/.happy-team/prefix`），或直接解包运行 | |
 | enroll | 服务端为目标成员生成一次性 EnrollToken → 远端执行 `happy enroll --server <url> --token <t>` | token 单次有效，日志中脱敏 |
 | setup_agents | 检测 `claude` / `codex` 是否可用（缺失则从企业服务器分发安装）；按目标成员的 agentAuthMode（§9.5）生成 `~/.happy-team/agent.env`：COMPANY_API 模式写入公司 API key 环境变量，PERSONAL_OAUTH 模式不写 key 并在 job 结果标注"待成员完成一次 OAuth 登录" | 缺 agent 且无法安装不算 FAILED，标 warning |
-| start_daemon | 写 systemd **user** unit（无 systemd 则 cron `@reboot` + nohup 立即拉起），`happy daemon start`，开机自启 | |
+| start_daemon | Linux 写 systemd **user** unit（无 systemd 则 cron `@reboot` + nohup 立即拉起）；macOS 写用户级 `~/Library/LaunchAgents/com.happy-team.daemon.plist`，plist 只 source `agent.env`，不展开保存公司 API key；随后启动 daemon | |
 | verify | 轮询服务端确认新 Machine 心跳出现且归属正确 Account，回填 `machineId` | 60s 无心跳则 FAILED，附排查提示 |
 
 完成后：若凭据 `deleteAfterUse`，删除 `SshCredential`（job 保留 hostSnapshot）。
@@ -298,8 +298,8 @@ HAPPY_SERVER_URL=https://happy.yourco.com ~/.happy-team/bin/happy daemon start
 
 ### 9.4 首版平台矩阵
 - M2/M3 代码事实：Linux x64/glibc 已通过 Ubuntu 24.04 sshd 容器端到端验证；Linux arm64 已通过 Ubuntu 24.04 arm64/qemu sshd 容器端到端验证；Linux 无 systemd 走普通 daemon + `crontab @reboot` fallback。
-- M3 代码事实：Node artifact 路由与 provisioning/manual command 已支持 `linux|darwin` + `x64|arm64`；Linux x64 可直接分发 server runtime，其他平台需在 `TEAM_NODE_ARTIFACT_DIR`/compose artifact mount 中提供 `node` 二进制。
-- 待补真实验收：物理 Linux arm64 或 macOS 真实机器端到端；macOS launchd 持久化；Alpine/musl Node 兼容。
+- M3 代码事实：Node artifact 路由与 provisioning/manual command 已支持 `linux|darwin` + `x64|arm64`；Linux x64 可直接分发 server runtime，其他平台需在 `TEAM_NODE_ARTIFACT_DIR`/compose artifact mount 中提供 `node` 二进制。macOS start_daemon 路径已生成用户级 LaunchAgent，不需要 root 权限。
+- 待补真实验收：物理 Linux arm64 或 macOS 真实机器端到端；macOS launchd 持久化实际重启验证；Alpine/musl Node 兼容。
 - Windows：不支持 SSH 初始化，走手动安装兜底。
 
 ### 9.5 Agent 认证模式（默认公司 API，成员可选个人 OAuth）
@@ -446,9 +446,10 @@ services:
 - 手动安装命令会导出 `PATH="$HOME/.happy-team/bin:$PATH"` 后启动 daemon；否则目标机无系统 Node 时 CLI wrapper 可启动，但 `happy daemon start` 内部 spawn `node` 会失败。手动 enroll 的机器首次 `machine-alive` 若尚无 `TeamAgentAuthUpdate` 行，server 会自动创建并应用当前成员的 agent-auth 配置，避免把公司 API key 明文嵌入手动命令。
 - Provisioning 与 Manual Command 都按目标机 `uname -s` / `uname -m` 生成 Node artifact URL：`/v1/team/artifacts/node/$platform/$arch`，平台支持 `linux|darwin`、架构支持 `x64|arm64`。compose 默认把 host 侧 `.team-artifacts/node` 只读挂载到 `/opt/happy-team/artifacts/node` 供企业放置非 x64 制品。
 - CLI 内部自重启路径用 `process.execPath` 启动当前 Node runtime，不再依赖目标机 `PATH` 上存在系统 `node`；`happy daemon start` 等待 state file 的窗口从 5s 调整为 30s，以覆盖 arm64/qemu 与冷启动自包含 Node 的慢启动情况。
+- macOS provisioning 的 `start_daemon` 分支写用户级 `~/Library/LaunchAgents/com.happy-team.daemon.plist`，通过 `/bin/sh -lc` source `~/.happy-team/agent.env` 后执行 `happy daemon start-sync`；plist 文件本身不保存 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`。若 SSH 会话中 `launchctl bootstrap gui/$UID` / `launchctl load` 不可用，会退回一次性 detached `happy daemon start` 并在日志标 warning。
 
 ### M3 验收记录
-- 2026-07-09：M3 后再次执行 CLI/server typecheck 与 focused Vitest：`pnpm --filter happy typecheck` 通过；`pnpm --filter happy-server-self-host typecheck` 通过；`pnpm --filter happy-server-self-host test -- sources/team/artifacts.spec.ts sources/team/routes.spec.ts sources/team/provision/ssh.spec.ts` 通过（Vitest 依赖收集共 12 个文件 / 78 tests）。M3 之前已执行 `happy-app` typecheck 通过。
+- 2026-07-09：M3 后再次执行 CLI/server typecheck 与 focused Vitest：`pnpm --filter happy typecheck` 通过；`pnpm --filter happy-server-self-host typecheck` 通过；`pnpm --filter happy-server-self-host test -- sources/team/provision/runner.spec.ts sources/team/artifacts.spec.ts sources/team/routes.spec.ts sources/team/provision/ssh.spec.ts` 通过（Vitest 依赖收集共 13 个文件 / 80 tests）。M3 之前已执行 `happy-app` typecheck 通过。
 - 2026-07-09：从空卷重放 `deploy/README.md` / compose 部署，`sudo docker compose build` 成功，`sudo docker compose up -d` 后 Postgres/Redis/server healthy，server 应用迁移到 `20260709030000_add_team_agent_auth_updates`，webapp `/team/login` 与 server `/` 均可访问。
 - 2026-07-09：真实 Chromium 浏览器完成 admin 首登改密、Team Members 创建成员、Provision Machine 页面发起一台干净 Ubuntu 24.04 sshd 容器初始化；另用同一 live API 初始化两台干净 Ubuntu 24.04 sshd 容器。三台机器均在线并在 Team Machines 页面显示 owner：`member1@example.com` → `e638e530-12d0-47bb-a7e9-edb1f24dd052`，`member2@example.com` → `06038ca3-8f9d-40bb-a5c7-8a25a2ec5700`，`member3@example.com` → `6d49a3a8-0556-4c59-ae86-187b40cfa33e`。
 - 2026-07-09：Provisioning 页面显示三条成功 job；两条 `claude,codex` job 的 `agent.env` 为 0600 且含公司 Anthropic/OpenAI key（命令输出只做 key 名称验证，值已 redacted）。持久化 `ProvisionJob.log` 中搜索 SSH 密码、enroll token、占位 API key，命中数为 0。
@@ -459,4 +460,5 @@ services:
 - 2026-07-09：补齐平台感知 Node artifact 路由：`getTeamNodeArtifactInfo()` 支持配置目录中的 `linux-arm64/node`、`darwin-arm64/node`、`darwin-x64/node`，Linux x64 fallback 为 server `process.execPath`；`install_node` 与 Manual Command 不再硬编码 Linux x64 URL。
 - 2026-07-09：用 `tonistiigi/binfmt` 启用 arm64 binfmt，在 Linux x64 主机上运行 Ubuntu 24.04 arm64/qemu sshd 目标机；host 侧 `.team-artifacts/node/linux-arm64/node` 使用 Node `v20.20.2` arm64 二进制，live server `GET /v1/team/artifacts/node/linux/arm64` 返回 200。retry job `cmrdaonhs000fqq2tryzxhbjj` 成功完成 `connect -> detect -> install_node -> install_cli -> enroll -> setup_agents -> start_daemon -> verify`，机器 `85dec7b0-f6e6-48b8-a555-cca0199966bf` 归属 `member-arm64c-1783588717@example.com` 且 online；目标机 `uname -m=aarch64`，provisioned Node 报 `linux arm64 v20.20.2`，`agent.env` 为 `600 happy:happy` 并含公司 Anthropic/OpenAI key，`deleteAfterUse` 凭据已删除。
 - 2026-07-09：同一 arm64/qemu 机器上，成员自助把 Claude/Codex 均切到 PERSONAL_OAUTH，接口返回 `Applied 1 / Pending 0 / Failed 0`，目标 `agent.env` 权限保持 0600 且公司 key 全部清除；随后切回 COMPANY_API，同样返回 `Applied 1 / Pending 0 / Failed 0`，公司 key 通过 daemon RPC 恢复。
-- 未完成的外部验收项：尚未在物理 Linux arm64 或 macOS 机器跑完端到端；`TEAM_ANTHROPIC_API_KEY` / `TEAM_OPENAI_API_KEY` 使用占位值，未能真实验证 Claude/OpenAI 计费链路；没有可用个人 Claude/Codex OAuth 账号，未能完成"切到 PERSONAL_OAUTH 后实际发起一次个人账号请求"的最终业务验收。
+- 2026-07-09：补齐 macOS 用户级 launchd 分支；`buildStartDaemonCommand()` 生成的远端 shell 通过 `sh -n` 语法检查，Vitest 覆盖 launchd plist、Linux systemd/cron fallback、以及启动脚本不嵌入公司 API key 名称。`SshExecutor` 增加 baseline error listener，避免 ssh2 失败握手清理后的迟到 socket error 作为 unhandled exception 污染测试结果。
+- 未完成的外部验收项：尚未在物理 Linux arm64 或 macOS 机器跑完端到端；macOS LaunchAgent 尚未在真实 macOS 重启后验证；`TEAM_ANTHROPIC_API_KEY` / `TEAM_OPENAI_API_KEY` 使用占位值，未能真实验证 Claude/OpenAI 计费链路；没有可用个人 Claude/Codex OAuth 账号，未能完成"切到 PERSONAL_OAUTH 后实际发起一次个人账号请求"的最终业务验收。
