@@ -12,10 +12,14 @@ type PreflightCheck = {
 
 const NODE_TARGETS = [
     { platform: "linux", arch: "x64", required: true },
+    { platform: "linux", arch: "x64", libc: "musl", required: false },
     { platform: "linux", arch: "arm64", required: false },
+    { platform: "linux", arch: "arm64", libc: "musl", required: false },
     { platform: "darwin", arch: "x64", required: false },
     { platform: "darwin", arch: "arm64", required: false },
 ] as const;
+
+const CODEX_NODE_TARGETS = NODE_TARGETS.filter((target) => !("libc" in target));
 
 export async function getTeamDeploymentPreflight(request?: FastifyRequest) {
     const checks: PreflightCheck[] = [];
@@ -54,20 +58,23 @@ export async function getTeamDeploymentPreflight(request?: FastifyRequest) {
     });
 
     for (const target of NODE_TARGETS) {
-        const info = getTeamNodeArtifactInfo(target.platform, target.arch);
-        nodeArtifactInfos.set(`${target.platform}_${target.arch}`, info);
+        const targetKey = buildNodeTargetKey(target);
+        const targetLabel = buildNodeTargetLabel(target);
+        const info = getTeamNodeArtifactInfo(target.platform, target.arch, "libc" in target ? target.libc : undefined);
+        nodeArtifactInfos.set(targetKey, info);
         const invalidArtifact = info.exists && info.valid === false;
         checks.push({
-            key: `node_artifact_${target.platform}_${target.arch}`,
+            key: `node_artifact_${targetKey}`,
             status: invalidArtifact ? "action_required" : info.exists ? "ok" : target.required ? "action_required" : "warning",
             message: invalidArtifact
-                ? `Node artifact for ${target.platform}/${target.arch} is invalid: ${info.validationError ?? "binary header did not match"}`
+                ? `Node artifact for ${targetLabel} is invalid: ${info.validationError ?? "binary header did not match"}`
                 : info.exists
-                ? `Node artifact for ${target.platform}/${target.arch} is available.`
-                : `Node artifact for ${target.platform}/${target.arch} is missing${target.required ? "." : "; provide it before provisioning this platform."}`,
+                ? `Node artifact for ${targetLabel} is available.`
+                : `Node artifact for ${targetLabel} is missing${target.required ? "." : "; provide it before provisioning this platform."}`,
             detail: {
                 platform: info.platform,
                 arch: info.arch,
+                libc: info.libc ?? null,
                 supported: info.supported,
                 exists: info.exists,
                 valid: info.valid ?? null,
@@ -84,8 +91,8 @@ export async function getTeamDeploymentPreflight(request?: FastifyRequest) {
 
     const cliClaudeSdkInfo = await getTeamCliClaudeSdkInfo();
     for (const sdkTarget of cliClaudeSdkInfo.targets) {
-        const nodeTarget = NODE_TARGETS.find((target) => target.platform === sdkTarget.platform && target.arch === sdkTarget.arch);
-        const nodeInfo = nodeArtifactInfos.get(`${sdkTarget.platform}_${sdkTarget.arch}`);
+        const nodeTarget = NODE_TARGETS.find((target) => target.platform === sdkTarget.platform && target.arch === sdkTarget.arch && getLinuxLibc(target) === getLinuxLibc(sdkTarget));
+        const nodeInfo = nodeArtifactInfos.get(buildNodeTargetKey(sdkTarget));
         const requiredForConfiguredTarget = Boolean(nodeTarget?.required || nodeInfo?.exists);
         const sdkBinaryReady = Boolean(cliClaudeSdkInfo.exists && !cliClaudeSdkInfo.error && sdkTarget?.exists);
         const targetLabel = `${sdkTarget.platform}/${sdkTarget.arch}${sdkTarget.libc ? `/${sdkTarget.libc}` : ""}`;
@@ -113,9 +120,9 @@ export async function getTeamDeploymentPreflight(request?: FastifyRequest) {
     }
 
     const cliCodexInfo = await getTeamCliCodexInfo();
-    for (const target of NODE_TARGETS) {
+    for (const target of CODEX_NODE_TARGETS) {
         const codexTarget = cliCodexInfo.targets.find((candidate) => candidate.platform === target.platform && candidate.arch === target.arch);
-        const nodeInfo = nodeArtifactInfos.get(`${target.platform}_${target.arch}`);
+        const nodeInfo = nodeArtifactInfos.get(buildNodeTargetKey(target));
         const requiredForConfiguredTarget = target.required || Boolean(nodeInfo?.exists);
         const codexBinaryReady = Boolean(cliCodexInfo.exists && !cliCodexInfo.error && cliCodexInfo.launcherExists && codexTarget?.exists);
         checks.push({
@@ -163,6 +170,19 @@ export async function getTeamDeploymentPreflight(request?: FastifyRequest) {
         serverUrl,
         checks,
     };
+}
+
+function buildNodeTargetKey(target: { platform: string; arch: string; libc?: string }): string {
+    return `${target.platform}_${target.arch}${target.libc && target.libc !== "glibc" ? `_${target.libc}` : ""}`;
+}
+
+function buildNodeTargetLabel(target: { platform: string; arch: string; libc?: string }): string {
+    return `${target.platform}/${target.arch}${target.libc ? `/${target.libc}` : ""}`;
+}
+
+function getLinuxLibc(target: { platform: string; libc?: string }): string | undefined {
+    if (target.platform !== "linux") return undefined;
+    return target.libc ?? "glibc";
 }
 
 function summarizeStatus(checks: PreflightCheck[]): PreflightStatus {

@@ -7,7 +7,9 @@ const DEFAULT_CLI_ARTIFACT_PATH = "/opt/happy-team/artifacts/happy-cli.tgz";
 const DEFAULT_NODE_ARTIFACT_DIR = "/opt/happy-team/artifacts/node";
 const NODE_ARTIFACT_PLATFORMS = ["linux", "darwin"] as const;
 const NODE_ARTIFACT_ARCHES = ["x64", "arm64"] as const;
+const NODE_ARTIFACT_LIBCS = ["glibc", "musl"] as const;
 type NodeArtifactFormat = "elf" | "macho";
+export type NodeArtifactLibc = typeof NODE_ARTIFACT_LIBCS[number];
 type TeamNodeArtifactValidation = {
     valid: boolean;
     format?: NodeArtifactFormat;
@@ -36,6 +38,7 @@ export type NodeArtifactArch = typeof NODE_ARTIFACT_ARCHES[number];
 export type TeamNodeArtifactInfo = {
     platform: string;
     arch: string;
+    libc?: NodeArtifactLibc;
     path: string;
     exists: boolean;
     supported: boolean;
@@ -327,13 +330,14 @@ function normalizeTarEntryPath(value: string): string {
     return value.replace(/^\.\/+/, "").replace(/^\/+/, "");
 }
 
-export function sendNodeArtifact(reply: FastifyReply, platform: string, arch: string) {
-    const info = getTeamNodeArtifactInfo(platform, arch);
+export function sendNodeArtifact(reply: FastifyReply, platform: string, arch: string, libc?: string) {
+    const info = getTeamNodeArtifactInfo(platform, arch, libc);
     if (!info.supported) {
         return reply.code(404).send({
             error: "Unsupported Team Node artifact platform",
             platform: info.platform,
             arch: info.arch,
+            libc: info.libc,
             supported: supportedNodeArtifactNames(),
         });
     }
@@ -342,6 +346,7 @@ export function sendNodeArtifact(reply: FastifyReply, platform: string, arch: st
             error: "Team Node artifact is not configured",
             platform: info.platform,
             arch: info.arch,
+            libc: info.libc,
             expectedPath: info.path,
             supported: supportedNodeArtifactNames(),
         });
@@ -351,40 +356,39 @@ export function sendNodeArtifact(reply: FastifyReply, platform: string, arch: st
             error: "Team Node artifact does not match requested platform",
             platform: info.platform,
             arch: info.arch,
+            libc: info.libc,
             expectedPath: info.path,
             validationError: info.validationError,
             detectedPlatform: info.detectedPlatform,
             detectedArch: info.detectedArch,
         });
     }
+    const libcSuffix = info.libc && info.libc !== "glibc" ? `-${info.libc}` : "";
     return reply
         .type("application/octet-stream")
-        .header("Content-Disposition", `attachment; filename=node-${info.platform}-${info.arch}`)
+        .header("Content-Disposition", `attachment; filename=node-${info.platform}-${info.arch}${libcSuffix}`)
         .send(createReadStream(info.path));
 }
 
-export function getTeamNodeArtifactInfo(platform: string, arch: string): TeamNodeArtifactInfo {
+export function getTeamNodeArtifactInfo(platform: string, arch: string, libc?: string): TeamNodeArtifactInfo {
     const normalizedPlatform = normalizeNodePlatform(platform);
     const normalizedArch = normalizeNodeArch(arch);
+    const normalizedLibc = normalizeNodeLibc(normalizedPlatform, libc);
     const artifactDir = resolveTeamNodeArtifactDir();
-    const primaryPath = path.join(artifactDir, `${normalizedPlatform}-${normalizedArch}`, "node");
-    const supported = isSupportedNodeArtifact(normalizedPlatform, normalizedArch);
+    const primaryPath = buildNodeArtifactPrimaryPath(artifactDir, normalizedPlatform, normalizedArch, normalizedLibc);
+    const supported = isSupportedNodeArtifact(normalizedPlatform, normalizedArch, normalizedLibc);
     if (!supported) {
         return {
             platform: normalizedPlatform,
             arch: normalizedArch,
+            libc: normalizedLibc,
             path: primaryPath,
             exists: false,
             supported: false,
         };
     }
 
-    const candidates: Array<{ path: string; source: TeamNodeArtifactInfo["source"] }> = [
-        { path: primaryPath, source: "configured" },
-        { path: path.join(artifactDir, normalizedPlatform, normalizedArch, "node"), source: "configured" },
-        { path: path.join(process.cwd(), ".team-artifacts", "node", `${normalizedPlatform}-${normalizedArch}`, "node"), source: "local" },
-        { path: path.join(process.cwd(), ".team-artifacts", "node", normalizedPlatform, normalizedArch, "node"), source: "local" },
-    ];
+    const candidates = buildNodeArtifactCandidates(artifactDir, normalizedPlatform, normalizedArch, normalizedLibc);
 
     for (const candidate of candidates) {
         if (existsSync(candidate.path)) {
@@ -393,6 +397,7 @@ export function getTeamNodeArtifactInfo(platform: string, arch: string): TeamNod
             return {
                 platform: normalizedPlatform,
                 arch: normalizedArch,
+                libc: normalizedLibc,
                 path: candidate.path,
                 exists: true,
                 supported: true,
@@ -403,12 +408,13 @@ export function getTeamNodeArtifactInfo(platform: string, arch: string): TeamNod
         }
     }
 
-    if (normalizedPlatform === process.platform && normalizedArch === process.arch && existsSync(process.execPath)) {
+    if (normalizedLibc !== "musl" && normalizedPlatform === process.platform && normalizedArch === process.arch && existsSync(process.execPath)) {
         const stat = statSync(process.execPath);
         const validation = validateNodeArtifactBinary(process.execPath, normalizedPlatform, normalizedArch);
         return {
             platform: normalizedPlatform,
             arch: normalizedArch,
+            libc: normalizedLibc,
             path: process.execPath,
             exists: true,
             supported: true,
@@ -421,6 +427,7 @@ export function getTeamNodeArtifactInfo(platform: string, arch: string): TeamNod
     return {
         platform: normalizedPlatform,
         arch: normalizedArch,
+        libc: normalizedLibc,
         path: primaryPath,
         exists: false,
         supported: true,
@@ -479,7 +486,16 @@ export function buildNodeArtifactDownloadCommand(serverUrl: string, output: stri
         "case \"$platform\" in linux|darwin) ;; *) echo \"Unsupported platform: $platform\" >&2; exit 1 ;; esac",
         "machine=$(uname -m)",
         "case \"$machine\" in x86_64|amd64) arch=x64 ;; aarch64|arm64) arch=arm64 ;; *) echo \"Unsupported architecture: $machine\" >&2; exit 1 ;; esac",
+        "libc=",
+        "if [ \"$platform\" = \"linux\" ]; then",
+        "  if ldd /bin/sh 2>&1 | grep -qi musl || ldd --version 2>&1 | grep -qi musl; then",
+        "    libc=musl",
+        "  fi",
+        "fi",
         `node_url=${server}/v1/team/artifacts/node/$platform/$arch`,
+        "if [ \"$libc\" = \"musl\" ]; then",
+        "  node_url=\"$node_url?libc=musl\"",
+        "fi",
         downloadCommandFromVariable("node_url", output),
     ].join("\n");
 }
@@ -605,6 +621,37 @@ function normalizeNodeArch(arch: string): string {
     return value;
 }
 
+function normalizeNodeLibc(platform: string, libc: string | undefined): NodeArtifactLibc | undefined {
+    if (platform !== "linux") return undefined;
+    if (libc?.toLowerCase() === "musl") return "musl";
+    return "glibc";
+}
+
+function buildNodeArtifactPrimaryPath(artifactDir: string, platform: string, arch: string, libc: NodeArtifactLibc | undefined): string {
+    if (platform === "linux" && libc === "musl") {
+        return path.join(artifactDir, `${platform}-${arch}-musl`, "node");
+    }
+    return path.join(artifactDir, `${platform}-${arch}`, "node");
+}
+
+function buildNodeArtifactCandidates(artifactDir: string, platform: string, arch: string, libc: NodeArtifactLibc | undefined): Array<{ path: string; source: TeamNodeArtifactInfo["source"] }> {
+    const localDir = path.join(process.cwd(), ".team-artifacts", "node");
+    if (platform === "linux" && libc === "musl") {
+        return [
+            { path: path.join(artifactDir, `${platform}-${arch}-musl`, "node"), source: "configured" },
+            { path: path.join(artifactDir, platform, arch, "musl", "node"), source: "configured" },
+            { path: path.join(localDir, `${platform}-${arch}-musl`, "node"), source: "local" },
+            { path: path.join(localDir, platform, arch, "musl", "node"), source: "local" },
+        ];
+    }
+    return [
+        { path: path.join(artifactDir, `${platform}-${arch}`, "node"), source: "configured" },
+        { path: path.join(artifactDir, platform, arch, "node"), source: "configured" },
+        { path: path.join(localDir, `${platform}-${arch}`, "node"), source: "local" },
+        { path: path.join(localDir, platform, arch, "node"), source: "local" },
+    ];
+}
+
 function toArtifactValidationInfo(validation: TeamNodeArtifactValidation): Pick<TeamNodeArtifactInfo, "valid" | "format" | "detectedPlatform" | "detectedArch" | "validationError"> {
     return {
         valid: validation.valid,
@@ -636,11 +683,15 @@ function detectNodeBinaryHeader(header: Buffer): { format: NodeArtifactFormat; p
     return null;
 }
 
-function isSupportedNodeArtifact(platform: string, arch: string): boolean {
+function isSupportedNodeArtifact(platform: string, arch: string, libc?: NodeArtifactLibc): boolean {
     return (NODE_ARTIFACT_PLATFORMS as readonly string[]).includes(platform)
-        && (NODE_ARTIFACT_ARCHES as readonly string[]).includes(arch);
+        && (NODE_ARTIFACT_ARCHES as readonly string[]).includes(arch)
+        && (platform !== "linux" || !libc || (NODE_ARTIFACT_LIBCS as readonly string[]).includes(libc));
 }
 
 function supportedNodeArtifactNames(): string[] {
-    return NODE_ARTIFACT_PLATFORMS.flatMap((platform) => NODE_ARTIFACT_ARCHES.map((arch) => `${platform}/${arch}`));
+    return NODE_ARTIFACT_PLATFORMS.flatMap((platform) => NODE_ARTIFACT_ARCHES.flatMap((arch) => {
+        if (platform === "linux") return [`${platform}/${arch}`, `${platform}/${arch}?libc=musl`];
+        return [`${platform}/${arch}`];
+    }));
 }

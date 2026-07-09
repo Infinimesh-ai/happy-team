@@ -69,12 +69,14 @@ docker compose --profile proxy up -d --build
 M2 起 server 镜像会内置 `happy-cli.tgz`，并通过以下只读接口分发给目标机器：
 
 - `GET /v1/team/artifacts/cli.tgz`
-- `GET /v1/team/artifacts/node/:platform/:arch`（支持 `linux|darwin` 与 `x64|arm64`）
+- `GET /v1/team/artifacts/node/:platform/:arch`（支持 `linux|darwin` 与 `x64|arm64`；Linux musl 目标会自动追加 `?libc=musl`）
 
-Docker 部署时不需要额外构建 CLI artifact；`Dockerfile.server` 会在 build 阶段运行 CLI deploy，并把 artifact 放到 `/opt/happy-team/artifacts/happy-cli.tgz`。Linux x64 Node 默认从 server 容器自身的 `process.execPath` 分发。其他平台需要把对应 Node 20+ 单文件二进制放入 host 侧 `TEAM_NODE_ARTIFACT_HOST_DIR`（compose 会只读挂载到容器内 `/opt/happy-team/artifacts/node`），例如：
+Docker 部署时不需要额外构建 CLI artifact；`Dockerfile.server` 会在 build 阶段运行 CLI deploy，并把 artifact 放到 `/opt/happy-team/artifacts/happy-cli.tgz`。Linux x64 glibc Node 默认从 server 容器自身的 `process.execPath` 分发。其他平台需要把对应 Node 20+ 单文件二进制放入 host 侧 `TEAM_NODE_ARTIFACT_HOST_DIR`（compose 会只读挂载到容器内 `/opt/happy-team/artifacts/node`），例如：
 
 ```text
 .team-artifacts/node/linux-arm64/node
+.team-artifacts/node/linux-x64-musl/node
+.team-artifacts/node/linux-arm64-musl/node
 .team-artifacts/node/darwin-arm64/node
 .team-artifacts/node/darwin-x64/node
 ```
@@ -83,9 +85,10 @@ Docker 部署时不需要额外构建 CLI artifact；`Dockerfile.server` 会在 
 
 ```text
 .team-artifacts/node/linux/arm64/node
+.team-artifacts/node/linux/x64/musl/node
 ```
 
-可用内置脚本从 Node.js 官方 dist 下载并校验 SHA256 后生成上述目录。默认下载 `linux-arm64`、`darwin-arm64`、`darwin-x64` 的 Node `20.20.2` 制品：
+可用内置脚本从 Node.js 官方 dist 下载并校验 SHA256 后生成上述 glibc Linux 与 macOS 目录。默认下载 `linux-arm64`、`darwin-arm64`、`darwin-x64` 的 Node `20.20.2` 制品：
 
 ```bash
 pnpm team:node-artifacts
@@ -97,7 +100,7 @@ pnpm team:node-artifacts
 pnpm team:node-artifacts -- --version 20.20.2 --target linux-arm64 --target darwin-arm64 --target darwin-x64
 ```
 
-脚本只在部署机准备 artifact 时访问公网；目标机器仍只从企业 server 下载这些制品，不需要外网。每次补充或替换 artifact 后，重启 server 容器或确认 compose 挂载目录已包含新文件，再打开 Deployment Preflight 检查对应平台是否变为 Ready。Preflight 会读取 Node 二进制头并校验 ELF/Mach-O 平台架构；如果把 Linux artifact 放到 Darwin 目录这类路径与二进制不匹配，预检会标为 action required，artifact 下载接口也会返回 503。
+脚本只在部署机准备 artifact 时访问公网；目标机器仍只从企业 server 下载这些制品，不需要外网。Node.js 官方 dist 不提供 musl 单文件 tarball，Alpine/musl 目标需要企业自行提供经过审计的 Node 20+ musl 二进制到 `linux-x64-musl/node`、`linux-arm64-musl/node` 或分层 `linux/<arch>/musl/node`。每次补充或替换 artifact 后，重启 server 容器或确认 compose 挂载目录已包含新文件，再打开 Deployment Preflight 检查对应平台是否变为 Ready。Preflight 会读取 Node 二进制头并校验 ELF/Mach-O 平台架构；如果把 Linux artifact 放到 Darwin 目录这类路径与二进制不匹配，预检会标为 action required，artifact 下载接口也会返回 503。
 
 目标机不访问公网；这些 Node 制品由企业 server 自分发。若 artifact 缺失，对应 provisioning job 会在 `install_node` 步骤失败并提示缺少的 server-side path。
 

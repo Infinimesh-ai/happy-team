@@ -83,6 +83,31 @@ describe("team routes", () => {
         }
     });
 
+    it("serves Linux musl Node artifacts when requested", async () => {
+        const previousArtifactDir = process.env.TEAM_NODE_ARTIFACT_DIR;
+        const artifactDir = await mkdtemp(path.join(tmpdir(), "happy-team-route-musl-node-artifacts-"));
+        try {
+            process.env.TEAM_NODE_ARTIFACT_DIR = artifactDir;
+            const nodePath = path.join(artifactDir, "linux-x64-musl", "node");
+            await mkdir(path.dirname(nodePath), { recursive: true });
+            await writeFile(nodePath, elfHeader(0x3e));
+
+            const response = await app.inject({
+                method: "GET",
+                url: "/v1/team/artifacts/node/linux/x64?libc=musl",
+            });
+            expect(response.statusCode).toBe(200);
+            expect(response.headers["content-disposition"]).toBe("attachment; filename=node-linux-x64-musl");
+        } finally {
+            if (previousArtifactDir === undefined) {
+                delete process.env.TEAM_NODE_ARTIFACT_DIR;
+            } else {
+                process.env.TEAM_NODE_ARTIFACT_DIR = previousArtifactDir;
+            }
+            await rm(artifactDir, { recursive: true, force: true });
+        }
+    });
+
     it("rejects Node artifacts whose binary header does not match the requested platform", async () => {
         const previousArtifactDir = process.env.TEAM_NODE_ARTIFACT_DIR;
         const artifactDir = await mkdtemp(path.join(tmpdir(), "happy-team-route-node-artifacts-"));
@@ -148,7 +173,9 @@ describe("team routes", () => {
             "team_public_server_url",
             "team_cli_artifact",
             "node_artifact_linux_x64",
+            "node_artifact_linux_x64_musl",
             "node_artifact_linux_arm64",
+            "node_artifact_linux_arm64_musl",
             "node_artifact_darwin_x64",
             "node_artifact_darwin_arm64",
             "claude_sdk_binary_linux_x64_glibc",

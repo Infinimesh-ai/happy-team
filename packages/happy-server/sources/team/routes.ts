@@ -48,9 +48,12 @@ export function teamRoutes(app: Fastify) {
                 platform: z.string().min(1),
                 arch: z.string().min(1),
             }),
+            querystring: z.object({
+                libc: z.enum(["glibc", "musl"]).optional(),
+            }),
         },
     }, async (request, reply) => {
-        return sendNodeArtifact(reply, request.params.platform, request.params.arch);
+        return sendNodeArtifact(reply, request.params.platform, request.params.arch, request.query.libc);
     });
 
     app.post("/v1/team/enroll", {

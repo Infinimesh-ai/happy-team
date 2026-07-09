@@ -51,6 +51,44 @@ describe("team artifacts", () => {
         expect(info.size).toBeGreaterThan(0);
     });
 
+    it("resolves configured Linux musl Node artifacts without server-runtime fallback", async () => {
+        const artifactDir = await mkdtemp(path.join(tmpdir(), "happy-team-musl-node-artifacts-"));
+        tempDirs.push(artifactDir);
+        process.env.TEAM_NODE_ARTIFACT_DIR = artifactDir;
+
+        const nodePath = path.join(artifactDir, "linux-x64-musl", "node");
+        await mkdir(path.dirname(nodePath), { recursive: true });
+        await writeFile(nodePath, elfHeader(0x3e));
+
+        const info = getTeamNodeArtifactInfo("linux", "x86_64", "musl");
+        expect(info).toMatchObject({
+            platform: "linux",
+            arch: "x64",
+            libc: "musl",
+            path: nodePath,
+            exists: true,
+            supported: true,
+            source: "configured",
+            valid: true,
+            format: "elf",
+            detectedPlatform: "linux",
+            detectedArch: "x64",
+        });
+
+        await rm(path.dirname(nodePath), { recursive: true, force: true });
+        const missingMusl = getTeamNodeArtifactInfo("linux", "x86_64", "musl");
+        expect(missingMusl).toMatchObject({
+            platform: "linux",
+            arch: "x64",
+            libc: "musl",
+            path: nodePath,
+            exists: false,
+            supported: true,
+        });
+        expect(missingMusl.source).toBeUndefined();
+        expect(missingMusl.path).not.toBe(process.execPath);
+    });
+
     it("detects configured Node artifacts that do not match the requested platform", async () => {
         const artifactDir = await mkdtemp(path.join(tmpdir(), "happy-team-wrong-node-artifacts-"));
         tempDirs.push(artifactDir);
@@ -123,6 +161,8 @@ describe("team artifacts", () => {
         expect(command).toContain("uname -s");
         expect(command).toContain("uname -m");
         expect(command).toContain("/v1/team/artifacts/node/$platform/$arch");
+        expect(command).toContain("ldd /bin/sh");
+        expect(command).toContain("node_url=\"$node_url?libc=musl\"");
         expect(command).toContain("PATH=\"$HOME/.happy-team/bin:$PATH\"; export PATH");
         expect(command).toContain("cat > \"$HOME/.happy-team/bin/claude\"");
         expect(command).toContain("@anthropic-ai/claude-agent-sdk-darwin-arm64");
