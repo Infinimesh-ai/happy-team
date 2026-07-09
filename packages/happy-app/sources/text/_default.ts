@@ -810,6 +810,7 @@ export const en = {
         alreadySignedIn: 'A Happy account is already signed in on this browser.',
         loginFailed: 'Login failed',
         changePasswordTitle: 'Change Password',
+        changePasswordSettingsSubtitle: 'Update your Team password',
         changePasswordIntro: 'Set a new password before continuing to your Team workspace.',
         changePasswordFooter: 'Passwords must be at least 10 characters.',
         currentPassword: 'Current Password',

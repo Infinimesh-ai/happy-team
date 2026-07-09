@@ -301,6 +301,12 @@ export const SettingsView = React.memo(function SettingsView() {
             {isCustomServer && (
                 <ItemGroup title={t('team.productTitle')}>
                     <Item
+                        title={t('team.changePasswordTitle')}
+                        subtitle={t('team.changePasswordSettingsSubtitle')}
+                        icon={<Ionicons name="lock-closed-outline" size={29} color="#007AFF" />}
+                        onPress={() => router.push('/team/change-password')}
+                    />
+                    <Item
                         title={t('team.agentAuthTitle')}
                         subtitle={t('team.agentAuthSettingsSubtitle')}
                         icon={<Ionicons name="key-outline" size={29} color="#007AFF" />}
