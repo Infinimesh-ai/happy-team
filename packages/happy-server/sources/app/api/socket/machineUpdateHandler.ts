@@ -6,6 +6,7 @@ import { db } from "@/storage/db";
 import { Socket } from "socket.io";
 import { allocateUserSeq } from "@/storage/seq";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
+import { applyPendingAgentAuthForMachine } from "@/team/agentAuth";
 
 export function machineUpdateHandler(userId: string, socket: Socket) {
     const labels = getMetricsLabelsFromSocket(socket);
@@ -47,6 +48,12 @@ export function machineUpdateHandler(userId: string, socket: Socket) {
                 payload: machineActivity,
                 recipientFilter: { type: 'user-scoped-only' }
             });
+
+            setTimeout(() => {
+                applyPendingAgentAuthForMachine(data.machineId).catch((error) => {
+                    log({ module: 'websocket', level: 'error' }, `Error applying pending team agent auth for machine ${data.machineId}: ${error}`);
+                });
+            }, 1000);
         } catch (error) {
             log({ module: 'websocket', level: 'error' }, `Error in machine-alive: ${error}`);
         }

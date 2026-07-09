@@ -76,7 +76,7 @@ services:
       ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:?Set ADMIN_INITIAL_PASSWORD for the initial Team admin before starting}
       PORT: 3005
       PUBLIC_URL: ${HAPPY_PUBLIC_SERVER_URL:-http://localhost:3005}
-      TEAM_PUBLIC_SERVER_URL: ${HAPPY_PUBLIC_SERVER_URL:-http://localhost:3005}
+      TEAM_PUBLIC_SERVER_URL: ${TEAM_PUBLIC_SERVER_URL:-${HAPPY_PUBLIC_SERVER_URL:-http://localhost:3005}}
       TEAM_CLI_ARTIFACT_PATH: /opt/happy-team/artifacts/happy-cli.tgz
       TEAM_ANTHROPIC_API_KEY: ${TEAM_ANTHROPIC_API_KEY:-}
       TEAM_ANTHROPIC_BASE_URL: ${TEAM_ANTHROPIC_BASE_URL:-}

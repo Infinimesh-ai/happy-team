@@ -70,6 +70,27 @@ export interface ProvisionJob {
     finishedAt: string | null;
 }
 
+export interface TeamAuditLog {
+    id: string;
+    actorId: string | null;
+    action: string;
+    target: string | null;
+    detail: unknown;
+    createdAt: string;
+}
+
+export interface TeamAgentAuthSync {
+    totalMachines: number;
+    applied: number;
+    pending: number;
+    failed: number;
+    machines: Array<{
+        machineId: string;
+        status: 'PENDING' | 'APPLIED' | 'FAILED';
+        error?: string;
+    }>;
+}
+
 async function readResponse<T>(response: Response): Promise<T> {
     const text = await response.text();
     const body = text ? JSON.parse(text) : {};
@@ -140,8 +161,19 @@ export function updateTeamUser(credentials: AuthCredentials, id: string, input: 
     resetPassword?: boolean;
     claudeAuthMode?: AgentAuthMode;
     codexAuthMode?: AgentAuthMode;
-}): Promise<{ user: TeamUser; temporaryPassword?: string }> {
-    return teamRequest<{ user: TeamUser; temporaryPassword?: string }>(`/v1/team/admin/users/${encodeURIComponent(id)}`, {
+}): Promise<{ user: TeamUser; temporaryPassword?: string; agentAuthSync?: TeamAgentAuthSync }> {
+    return teamRequest<{ user: TeamUser; temporaryPassword?: string; agentAuthSync?: TeamAgentAuthSync }>(`/v1/team/admin/users/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        credentials,
+        body: input,
+    });
+}
+
+export function updateMyAgentAuth(credentials: AuthCredentials, input: {
+    claudeAuthMode?: AgentAuthMode;
+    codexAuthMode?: AgentAuthMode;
+}): Promise<{ user: TeamUser; agentAuthSync: TeamAgentAuthSync }> {
+    return teamRequest<{ user: TeamUser; agentAuthSync: TeamAgentAuthSync }>('/v1/team/me/agent-auth', {
         method: 'PATCH',
         credentials,
         body: input,
@@ -150,6 +182,15 @@ export function updateTeamUser(credentials: AuthCredentials, id: string, input: 
 
 export function listTeamMachines(credentials: AuthCredentials): Promise<{ machines: TeamMachine[] }> {
     return teamRequest<{ machines: TeamMachine[] }>('/v1/team/admin/machines', { credentials });
+}
+
+export function listTeamAudit(credentials: AuthCredentials, input: { limit?: number; cursor?: string; action?: string } = {}): Promise<{ logs: TeamAuditLog[]; nextCursor: string | null }> {
+    const params = new URLSearchParams();
+    if (input.limit) params.set('limit', String(input.limit));
+    if (input.cursor) params.set('cursor', input.cursor);
+    if (input.action) params.set('action', input.action);
+    const query = params.toString();
+    return teamRequest<{ logs: TeamAuditLog[]; nextCursor: string | null }>(`/v1/team/admin/audit${query ? `?${query}` : ''}`, { credentials });
 }
 
 export function listSshCredentials(credentials: AuthCredentials): Promise<{ credentials: SshCredential[] }> {
@@ -182,12 +223,12 @@ export function deleteSshCredential(credentials: AuthCredentials, id: string): P
     });
 }
 
-export function listProvisionJobs(credentials: AuthCredentials): Promise<{ jobs: ProvisionJob[] }> {
-    return teamRequest<{ jobs: ProvisionJob[] }>('/v1/team/admin/provision-jobs', { credentials });
+export function listProvisionJobs(credentials: AuthCredentials): Promise<{ jobs: ProvisionJob[]; queue?: { activeJobs: number; pendingJobs: number } }> {
+    return teamRequest<{ jobs: ProvisionJob[]; queue?: { activeJobs: number; pendingJobs: number } }>('/v1/team/admin/provision-jobs', { credentials });
 }
 
-export function getProvisionJob(credentials: AuthCredentials, id: string): Promise<{ job: ProvisionJob }> {
-    return teamRequest<{ job: ProvisionJob }>(`/v1/team/admin/provision-jobs/${encodeURIComponent(id)}`, { credentials });
+export function getProvisionJob(credentials: AuthCredentials, id: string): Promise<{ job: ProvisionJob; queue?: { activeJobs: number; pendingJobs: number } }> {
+    return teamRequest<{ job: ProvisionJob; queue?: { activeJobs: number; pendingJobs: number } }>(`/v1/team/admin/provision-jobs/${encodeURIComponent(id)}`, { credentials });
 }
 
 export function createProvisionJob(credentials: AuthCredentials, input: {
@@ -199,6 +240,13 @@ export function createProvisionJob(credentials: AuthCredentials, input: {
         method: 'POST',
         credentials,
         body: input,
+    });
+}
+
+export function retryProvisionJob(credentials: AuthCredentials, id: string): Promise<{ job: ProvisionJob; enrollToken: { id: string; token: string; expiresAt: string }; manualCommand: string }> {
+    return teamRequest<{ job: ProvisionJob; enrollToken: { id: string; token: string; expiresAt: string }; manualCommand: string }>(`/v1/team/admin/provision-jobs/${encodeURIComponent(id)}/retry`, {
+        method: 'POST',
+        credentials,
     });
 }
 

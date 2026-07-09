@@ -298,6 +298,17 @@ export const SettingsView = React.memo(function SettingsView() {
                 />
             </ItemGroup>
 
+            {isCustomServer && (
+                <ItemGroup title={t('team.productTitle')}>
+                    <Item
+                        title={t('team.agentAuthTitle')}
+                        subtitle={t('team.agentAuthSettingsSubtitle')}
+                        icon={<Ionicons name="key-outline" size={29} color="#007AFF" />}
+                        onPress={() => router.push('/team/agent-auth')}
+                    />
+                </ItemGroup>
+            )}
+
             {/* Social */}
             {/* <ItemGroup title={t('settings.social')}>
                 <Item

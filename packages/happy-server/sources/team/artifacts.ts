@@ -82,6 +82,7 @@ export function buildManualInstallCommand(input: {
         "tar -xzf /tmp/happy-cli.tgz -C \"$HOME/.happy-team/cli\"",
         `printf '%s\\n' ${wrapperLines} > "$HOME/.happy-team/bin/happy"`,
         "chmod 700 \"$HOME/.happy-team/bin/happy\"",
+        "PATH=\"$HOME/.happy-team/bin:$PATH\"; export PATH",
         "\"$HOME/.happy-team/bin/happy\" enroll --server " + server + " --token " + token + " --force",
         "HAPPY_SERVER_URL=" + server + " \"$HOME/.happy-team/bin/happy\" daemon start",
     ].join(" && ");

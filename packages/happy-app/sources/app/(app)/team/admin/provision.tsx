@@ -25,6 +25,7 @@ import {
     listTeamUsers,
     ProvisionAgent,
     ProvisionJob,
+    retryProvisionJob,
     SshAuthType,
     SshCredential,
     TeamMachine,
@@ -227,6 +228,7 @@ export default function TeamProvisionScreen() {
     const [saving, setSaving] = React.useState(false);
     const [manualLoading, setManualLoading] = React.useState(false);
     const [deletingId, setDeletingId] = React.useState<string | null>(null);
+    const [retryingId, setRetryingId] = React.useState<string | null>(null);
     const [error, setError] = React.useState<string | null>(null);
 
     const selectedUser = React.useMemo(() => users.find((user) => user.id === selectedUserId) ?? null, [selectedUserId, users]);
@@ -349,6 +351,22 @@ export default function TeamProvisionScreen() {
             await Modal.alert(t('team.actionFailed'), e instanceof Error ? e.message : t('team.unableToUpdateMember'));
         } finally {
             setDeletingId(null);
+        }
+    };
+
+    const retryJob = async (job: ProvisionJob) => {
+        if (!auth.credentials) return;
+        setRetryingId(job.id);
+        setError(null);
+        try {
+            const result = await retryProvisionJob(auth.credentials, job.id);
+            setManualCommand(result.manualCommand);
+            await refresh(false);
+            await Modal.alert(t('team.provisionStartedTitle'), t('team.provisionRetryStartedMessage'));
+        } catch (e) {
+            await Modal.alert(t('team.actionFailed'), e instanceof Error ? e.message : t('team.failedToRetryProvisioning'));
+        } finally {
+            setRetryingId(null);
         }
     };
 
@@ -484,6 +502,16 @@ export default function TeamProvisionScreen() {
                                 subtitle={t('team.jobSubtitle', { step: job.step ?? '-', agents: job.agents.join(', ') || '-' })}
                                 detail={job.error ?? job.machineId ?? undefined}
                                 showChevron={false}
+                                rightElement={job.status === 'FAILED' ? (
+                                    <Pressable
+                                        accessibilityLabel={t('team.retryProvisioning')}
+                                        disabled={retryingId === job.id}
+                                        onPress={() => void retryJob(job)}
+                                        style={styles.iconButton}
+                                    >
+                                        <Ionicons name="refresh-outline" size={18} color={theme.colors.textSecondary} />
+                                    </Pressable>
+                                ) : undefined}
                             />
                             {job.log ? <Text style={styles.logBlock}>{job.log.trim()}</Text> : null}
                         </View>

@@ -16,6 +16,12 @@ import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { isTeamAccountDisabled } from "@/team/status";
 
+let socketServer: Server | null = null;
+
+export function getSocketServer(): Server | null {
+    return socketServer;
+}
+
 export function startSocket(app: Fastify) {
     const io = new Server(app.server, {
         cors: {
@@ -46,6 +52,7 @@ export function startSocket(app: Fastify) {
         //     maxDisconnectionDuration: 2 * 60 * 1000,
         // },
     });
+    socketServer = io;
 
     // Multi-process support: attach Redis streams adapter when REDIS_URL is set
     if (process.env.REDIS_URL) {
@@ -236,5 +243,8 @@ export function startSocket(app: Fastify) {
 
     onShutdown('api', async () => {
         await io.close();
+        if (socketServer === io) {
+            socketServer = null;
+        }
     });
 }

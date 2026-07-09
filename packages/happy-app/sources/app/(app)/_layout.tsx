@@ -168,10 +168,34 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="team/agent-auth"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('team.agentAuthTitle'),
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
                 name="team/admin/users"
                 options={{
                     headerShown: true,
                     headerTitle: t('team.membersTitle'),
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
+                name="team/admin/machines"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('team.machinesTitle'),
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
+                name="team/admin/audit"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('team.auditTitle'),
                     headerBackTitle: t('common.back'),
                 }}
             />

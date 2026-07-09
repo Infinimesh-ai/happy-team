@@ -246,6 +246,16 @@ export default function TeamAdminUsersScreen() {
 
                 <ItemGroup title={t('team.administration')}>
                     <Item
+                        title={t('team.machinesTitle')}
+                        subtitle={t('team.machinesSubtitle')}
+                        onPress={() => router.push('/team/admin/machines')}
+                    />
+                    <Item
+                        title={t('team.auditTitle')}
+                        subtitle={t('team.auditSubtitle')}
+                        onPress={() => router.push('/team/admin/audit')}
+                    />
+                    <Item
                         title={t('team.provisionMachine')}
                         subtitle={t('team.provisionMachineSubtitle')}
                         onPress={() => router.push('/team/admin/provision')}

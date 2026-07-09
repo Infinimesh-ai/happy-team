@@ -83,6 +83,12 @@ enum ProvisionStatus {
     FAILED
 }
 
+enum TeamAgentAuthUpdateStatus {
+    PENDING
+    APPLIED
+    FAILED
+}
+
 model TeamUser {
     id                 String         @id @default(cuid())
     email              String         @unique
@@ -98,8 +104,28 @@ model TeamUser {
     createdAt          DateTime       @default(now())
     updatedAt          DateTime       @updatedAt
 
+    agentAuthUpdates TeamAgentAuthUpdate[]
+
     @@index([status])
     @@index([role])
+}
+
+model TeamAgentAuthUpdate {
+    id             String                    @id @default(cuid())
+    teamUserId     String
+    teamUser       TeamUser                  @relation(fields: [teamUserId], references: [id], onDelete: Cascade)
+    machineId      String
+    status         TeamAgentAuthUpdateStatus @default(PENDING)
+    claudeAuthMode AgentAuthMode
+    codexAuthMode  AgentAuthMode
+    error          String?
+    appliedAt      DateTime?
+    createdAt      DateTime                  @default(now())
+    updatedAt      DateTime                  @updatedAt
+
+    @@unique([teamUserId, machineId])
+    @@index([machineId, status])
+    @@index([teamUserId, status])
 }
 
 model SshCredential {

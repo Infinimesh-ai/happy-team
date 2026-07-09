@@ -3,6 +3,7 @@ import { z } from "zod";
 import { auth } from "@/app/auth/auth";
 import { type Fastify } from "@/app/api/types";
 import { db } from "@/storage/db";
+import { queueAgentAuthSyncForUser } from "@/team/agentAuth";
 import { getTeamPublicServerUrl, sendNodeArtifact, sendTeamCliArtifact } from "@/team/artifacts";
 import { writeTeamAudit } from "@/team/audit";
 import { consumeEnrollToken, createEnrollToken } from "@/team/enrollTokens";
@@ -176,6 +177,49 @@ export function teamRoutes(app: Fastify) {
         return reply.send({ success: true });
     });
 
+    app.patch("/v1/team/me/agent-auth", {
+        preHandler: app.authenticate,
+        schema: {
+            body: z.object({
+                claudeAuthMode: agentAuthModeSchema.optional(),
+                codexAuthMode: agentAuthModeSchema.optional(),
+            }),
+        },
+    }, async (request, reply) => {
+        const { teamUser, response } = await requireTeamUser(request, reply);
+        if (!teamUser) {
+            return response;
+        }
+        if (!request.body.claudeAuthMode && !request.body.codexAuthMode) {
+            return reply.code(400).send({ error: "At least one auth mode is required" });
+        }
+
+        const updated = await db.teamUser.update({
+            where: { id: teamUser.id },
+            data: {
+                ...(request.body.claudeAuthMode ? { claudeAuthMode: request.body.claudeAuthMode } : {}),
+                ...(request.body.codexAuthMode ? { codexAuthMode: request.body.codexAuthMode } : {}),
+            },
+        });
+        const agentAuthSync = await queueAgentAuthSyncForUser(updated);
+        await writeTeamAudit({
+            actorId: teamUser.id,
+            action: "self_update_agent_auth_mode",
+            target: updated.id,
+            detail: {
+                claudeAuthMode: updated.claudeAuthMode,
+                codexAuthMode: updated.codexAuthMode,
+                sync: {
+                    totalMachines: agentAuthSync.totalMachines,
+                    applied: agentAuthSync.applied,
+                    pending: agentAuthSync.pending,
+                    failed: agentAuthSync.failed,
+                },
+            },
+        });
+        return reply.send({ user: toSafeTeamUser(updated), agentAuthSync });
+    });
+
     app.get("/v1/team/admin/users", {
         preHandler: app.authenticate,
     }, async (request, reply) => {
@@ -285,6 +329,11 @@ export function teamRoutes(app: Fastify) {
         if (data.passwordHash) actions.push("reset_password");
         if (data.role && data.role !== target.role) actions.push("update_role");
         if (data.claudeAuthMode || data.codexAuthMode) actions.push("update_agent_auth_mode");
+        let agentAuthSync: Awaited<ReturnType<typeof queueAgentAuthSyncForUser>> | undefined;
+        if (data.claudeAuthMode || data.codexAuthMode) {
+            agentAuthSync = await queueAgentAuthSyncForUser(updated);
+        }
+
         for (const action of actions) {
             await writeTeamAudit({
                 actorId: admin.id,
@@ -296,6 +345,14 @@ export function teamRoutes(app: Fastify) {
                     status: updated.status,
                     claudeAuthMode: updated.claudeAuthMode,
                     codexAuthMode: updated.codexAuthMode,
+                    ...(action === "update_agent_auth_mode" && agentAuthSync ? {
+                        sync: {
+                            totalMachines: agentAuthSync.totalMachines,
+                            applied: agentAuthSync.applied,
+                            pending: agentAuthSync.pending,
+                            failed: agentAuthSync.failed,
+                        },
+                    } : {}),
                 },
             });
         }
@@ -303,6 +360,7 @@ export function teamRoutes(app: Fastify) {
         return reply.send({
             user: toSafeTeamUser(updated),
             temporaryPassword,
+            agentAuthSync,
         });
     });
 
@@ -527,6 +585,92 @@ export function teamRoutes(app: Fastify) {
             return reply.code(404).send({ error: "Provision job not found" });
         }
         return reply.send({ job: toSafeProvisionJob(job), queue: getProvisionQueueState() });
+    });
+
+    app.post("/v1/team/admin/provision-jobs/:id/retry", {
+        preHandler: app.authenticate,
+        schema: {
+            params: z.object({
+                id: z.string().min(1),
+            }),
+        },
+    }, async (request, reply) => {
+        const { teamUser: admin, response } = await requireAdmin(request, reply);
+        if (!admin) {
+            return response;
+        }
+
+        const original = await db.provisionJob.findUnique({ where: { id: request.params.id } });
+        if (!original) {
+            return reply.code(404).send({ error: "Provision job not found" });
+        }
+        if (original.status !== ProvisionStatus.FAILED) {
+            return reply.code(400).send({ error: "Only failed provision jobs can be retried" });
+        }
+        if (!original.credentialId) {
+            return reply.code(400).send({ error: "Provision job does not have an SSH credential to retry" });
+        }
+
+        const [credential, target] = await Promise.all([
+            db.sshCredential.findUnique({ where: { id: original.credentialId } }),
+            db.teamUser.findUnique({ where: { id: original.targetUserId } }),
+        ]);
+        if (!credential) {
+            return reply.code(400).send({ error: "Original SSH credential is no longer available" });
+        }
+        if (!target || target.status !== TeamUserStatus.ACTIVE) {
+            return reply.code(404).send({ error: "Active target user not found" });
+        }
+        if (credential.ownerUserId !== target.id) {
+            return reply.code(400).send({ error: "SSH credential owner must match target user" });
+        }
+
+        const serverUrl = getTeamPublicServerUrl(request);
+        const token = await createEnrollToken({
+            targetUserId: target.id,
+            actorId: admin.id,
+        });
+        const manualCommand = buildProvisionManualInstallCommand({
+            serverUrl,
+            token: token.token,
+            agents: original.agents,
+        });
+        const job = await db.provisionJob.create({
+            data: {
+                credentialId: credential.id,
+                hostSnapshot: JSON.stringify({
+                    host: credential.host,
+                    port: credential.port,
+                    username: credential.username,
+                    authType: credential.authType,
+                }),
+                targetUserId: target.id,
+                agents: original.agents,
+                status: ProvisionStatus.PENDING,
+                createdBy: admin.id,
+            },
+        });
+        await writeTeamAudit({
+            actorId: admin.id,
+            action: "provision_retry_created",
+            target: target.id,
+            detail: { jobId: job.id, previousJobId: original.id, credentialId: credential.id, agents: original.agents },
+        });
+
+        enqueueProvisionJob(job.id, {
+            enrollToken: token.token,
+            serverUrl,
+        });
+
+        return reply.code(201).send({
+            job: toSafeProvisionJob(job),
+            enrollToken: {
+                id: token.id,
+                token: token.token,
+                expiresAt: token.expiresAt.toISOString(),
+            },
+            manualCommand,
+        });
     });
 
     app.post("/v1/team/admin/provision-jobs", {

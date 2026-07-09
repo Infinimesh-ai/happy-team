@@ -15,6 +15,7 @@ MINIO_ROOT_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 24)
 ADMIN_EMAIL=admin@example.com
 ADMIN_INITIAL_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 18)
 HAPPY_PUBLIC_SERVER_URL=http://localhost:3005
+TEAM_PUBLIC_SERVER_URL=http://localhost:3005
 S3_PUBLIC_URL=http://localhost:9000/happy-team
 TEAM_ANTHROPIC_API_KEY=sk-ant-...
 TEAM_OPENAI_API_KEY=sk-proj-...
@@ -60,7 +61,7 @@ EOF
 docker compose --profile proxy up -d --build
 ```
 
-`HAPPY_PUBLIC_SERVER_URL` 同时用于 webapp 构建期 API 地址和 server 生成 enroll/manual/provisioning artifact URL；修改它后需重新 build `webapp` 并重启 `server`。目标机器必须能访问这个 URL。Docker 内网 E2E 可临时设为 `http://server:3005`，生产环境应设为真实 HTTPS API 域名。
+`HAPPY_PUBLIC_SERVER_URL` 用于 webapp 构建期 API 地址；`TEAM_PUBLIC_SERVER_URL` 用于 server 生成 enroll/manual/provisioning artifact URL。生产环境两者通常都是真实 HTTPS API 域名；Docker 内网 E2E 可把 `HAPPY_PUBLIC_SERVER_URL=http://localhost:3005`、`TEAM_PUBLIC_SERVER_URL=http://server:3005`，让宿主机浏览器和目标容器都能访问 server。修改 `HAPPY_PUBLIC_SERVER_URL` 后需重新 build `webapp`。
 
 ## 4. Team Provisioning
 
@@ -85,11 +86,31 @@ tar -czf .team-artifacts/happy-cli.tgz -C .team-artifacts/happy-cli .
 3. 选择要启用的 agent。默认 Claude Code 使用 `TEAM_ANTHROPIC_API_KEY`；Codex 使用 `TEAM_OPENAI_API_KEY`。
 4. 点击 Start Provisioning。server 会用 ssh2 连接目标机，安装 Node/CLI，执行 `happy enroll --server <url> --token <一次性token>`，写入 `~/.happy-team/agent.env`（权限 600），并拉起 user systemd daemon；没有 user systemd 时会尝试普通 daemon + crontab fallback。
 
-Provisioning 日志会脱敏 token、SSH 凭据、公司 API key。响应里的 Manual Command 是兜底安装命令，可复制到目标机器手工执行；一次性 token 默认 15 分钟有效，只能使用一次。
+Provisioning 日志会脱敏 token、SSH 凭据、公司 API key。响应里的 Manual Command 是兜底安装命令，可复制到目标机器手工执行；一次性 token 默认 15 分钟有效，只能使用一次。Manual Command 不包含公司 API key；它会导出 provisioned Node 的 `PATH`、完成 enroll 并启动 daemon，daemon 首次上线后由 server 通过加密 Machine RPC 写入当前成员的 `agent.env`。
 
-目标机器不需要 root 权限，也不需要访问公网；它只需要能通过 SSH 被 server 访问，并能访问 `HAPPY_PUBLIC_SERVER_URL`。
+目标机器不需要 root 权限，也不需要访问公网；它只需要能通过 SSH 被 server 访问，并能访问 `TEAM_PUBLIC_SERVER_URL` 指向的 server。
 
-## 5. M0 手动端到端验证
+失败的 provisioning job 会在列表里显示 Retry 按钮；重试会创建新的 job 和新的 enroll token，旧 token 不会复用。若 SSH 凭据已经被删除，需重新录入凭据后再发起新的 provisioning。
+
+## 5. Team 运维页面
+
+管理员页面入口：
+
+- Members: `http://localhost:8080/team/admin/users`
+- Machines: `http://localhost:8080/team/admin/machines`
+- Audit: `http://localhost:8080/team/admin/audit`
+- Provisioning: `http://localhost:8080/team/admin/provision`
+
+Audit 页可按 action 名称过滤，例如 `login`、`create_user`、`provision_succeeded`、`self_update_agent_auth_mode`。Machines 页展示成员归属、在线状态和最近心跳。
+
+成员在 Settings 里打开 Team Agent Access 可切换每个 agent 的认证模式：
+
+- Company API：daemon 的 `agent.env` 写入 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`，请求走公司 key。
+- Personal OAuth：daemon RPC 会重写 `agent.env` 并清除对应公司 key；成员随后通过网页远程会话在目标机器上完成一次 `claude` 或 `codex` 登录。
+
+机器离线时切换会进入 pending；daemon 下次上线后通过现有 Machine RPC 应用变更并自重启。切换回 Company API 要求 server 环境中仍配置对应的 `TEAM_ANTHROPIC_API_KEY` / `TEAM_OPENAI_API_KEY`。
+
+## 6. M0 手动端到端验证
 
 在一台 Linux 机器上安装 CLI，并让它指向自托管 server：
 
@@ -108,6 +129,6 @@ pnpm --filter happy exec happy daemon start
 
 然后打开 `http://localhost:8080`，完成现有 Happy 登录流程，确认能看到该机器并发起一次 Claude Code 会话：发送一条消息、看到输出、完成一次权限审批。
 
-## 6. 备份要求
+## 7. 备份要求
 
 Postgres 和 MinIO 数据卷必须备份。进入 M1 之后，Postgres 会包含托管 NaCl 私钥密文和 SSH 凭据密文，因此备份必须加密，且备份密钥与 `HANDY_MASTER_SECRET` 分开管理。

@@ -169,6 +169,21 @@ model ProvisionJob {
   finishedAt   DateTime?
 }
 
+model TeamAgentAuthUpdate {
+  id             String @id @default(cuid())
+  teamUserId     String                 // TeamUser.id
+  machineId      String                 // Machine.id
+  status         String                 // PENDING/APPLIED/FAILED
+  claudeAuthMode AgentAuthMode
+  codexAuthMode  AgentAuthMode
+  error          String?
+  appliedAt      DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([teamUserId, machineId])
+}
+
 model EnrollToken {
   id           String   @id @default(cuid())
   tokenHash    String   @unique       // 只存哈希
@@ -219,6 +234,7 @@ model TeamAuditLog {
 | POST/GET/DELETE | `/v1/team/admin/ssh-credentials` | 凭据 CRUD（响应中**永不回传**明文/密文凭据本体） |
 | POST | `/v1/team/admin/provision-jobs` | `{credentialId, targetUserId, agents[]}` → 创建 job 入队 |
 | GET | `/v1/team/admin/provision-jobs/:id` | job 状态 + 日志（前端轮询，间隔 2s 足够） |
+| POST | `/v1/team/admin/provision-jobs/:id/retry` | 仅失败 job 可重试；复用原 SSH 凭据创建新 job 与新 enroll token |
 | GET | `/v1/team/admin/provision-jobs` | job 列表 |
 | POST | `/v1/team/admin/enroll-token` | `{targetUserId}` → 一次性 token 明文（也用于"手动安装"场景：管理员把一行命令发给成员自己执行） |
 | GET | `/v1/team/admin/audit` | 审计日志分页查询 |
@@ -294,7 +310,7 @@ HAPPY_SERVER_URL=https://happy.yourco.com ~/.happy-team/bin/happy daemon start
 
 模式切换：
 - 成员在网页设置页自助切换（每个 agent 独立），或管理员在成员详情页代改。
-- 切换后需要更新目标机的 agent.env 并重启 daemon 才生效。实现方式：daemon 侧增加一个轻量 RPC（复用现有 RPC 通道）"重写 agent.env + 自重启"；机器离线时标记 pending，上线后应用。切 PERSONAL_OAUTH 时同时清除 agent.env 中的公司 key。
+- 切换后需要更新目标机的 agent.env 并重启 daemon 才生效。M3 代码事实：daemon 侧 RPC 方法名为 `team-apply-agent-env`，复用现有 Machine RPC 加密/房间机制；server 使用托管私钥解开 legacy/dataKey 机器密钥后加密 payload。机器离线时写 `TeamAgentAuthUpdate` pending 行，上线 `machine-alive` 后应用。切 PERSONAL_OAUTH 时同时清除 agent.env 中的公司 key。
 - 初始化向导中显示目标成员当前模式，允许管理员在发起 provisioning 时一并设定。
 
 ---
@@ -308,7 +324,7 @@ HAPPY_SERVER_URL=https://happy.yourco.com ~/.happy-team/bin/happy daemon start
 
 ### 10.2 管理后台（仅 ADMIN 可见，新路由组）
 1. **成员管理**：列表（含机器数、状态）、创建（显示一次性初始密码）、禁用/启用、重置密码。
-2. **机器初始化向导**：选成员 → 填/选 SSH 凭据 → 选 agents → 提交 → 实时步骤进度 + 滚动日志（轮询 job 接口）→ 成功页含机器名；失败页含日志与"手动安装命令"兜底。
+2. **机器初始化向导**：选成员 → 填/选 SSH 凭据 → 选 agents → 提交 → 实时步骤进度 + 滚动日志（轮询 job 接口）→ 成功页含机器名；失败页含日志、重试按钮与"手动安装命令"兜底。
 3. **机器总览**：全团队机器表（成员、主机名、在线状态、最近心跳、活跃会话数）。
 4. **SSH 凭据管理**：列表（只显示 label/host/user，永不显示秘密）、新增、删除、"用完即删"开关。
 5. **审计日志**：分页表格 + 按 action/actor 筛选。
@@ -411,3 +427,30 @@ services:
 - 2026-07-09：用真实 Linux 主机上的 Happy CLI，在隔离 `HAPPY_HOME_DIR=/tmp/happy-team-m1-member-home.4GwqDl` 下设置 `HAPPY_SERVER_URL=http://localhost:3005` / `HAPPY_WEBAPP_URL=http://localhost:8080`，通过成员浏览器会话批准 `terminal/connect#key=...`，生成机器 ID `8bc826d5-26f7-4f13-a2f2-c5cd198364c9` 并启动 daemon；CLI `auth status` 显示 authenticated、machine registered、daemon running，成员网页显示 `Terminals connected`，管理员成员页显示该 member 有 1 台机器。
 - 2026-07-09：管理员在真实浏览器 Team Members 页面禁用 `member-m1@happy-team.test`；列表刷新为 `member / disabled / 0 machines`，旧 CLI token 调 `/v1/team/me` 返回 HTTP 403 `{"error":"Account disabled"}`，被禁用成员再次在浏览器邮箱密码登录时停留在 `/team/login` 并显示 `User is disabled`。
 - 2026-07-09：审计接口 `/v1/team/admin/audit?limit=100` 验证存在关键动作：`create_user`、`reset_password`、`change_password`、`disable_user`、admin/member `login`、禁用后 `login_failed`。
+
+### M2 代码事实确认
+- `happy enroll --server <url> --token <token>` 由 CLI 自己换取托管 secretKey、调用 `/v1/auth`、写入 legacy credentials 与新 machineId；provisioner 不直接写 `~/.happy/` 内部文件。
+- server artifact 路由为 `GET /v1/team/artifacts/cli.tgz` 与 `GET /v1/team/artifacts/node/:platform/:arch`；M2 当前自动 Node 分发只验证 Linux x64/glibc。
+- Provisioning 队列限并发 3，状态步骤为 `connect -> detect -> install_node -> install_cli -> enroll -> setup_agents -> start_daemon -> verify`；`setup_agents` 写 `~/.happy-team/agent.env` 0600，`start_daemon` 优先 user systemd，fallback 为普通 daemon + `crontab @reboot`。
+
+### M2 验收记录
+- 2026-07-09：Docker compose 从空卷重放部署，server/webapp 镜像构建通过，`TEAM_ANTHROPIC_API_KEY` / `TEAM_OPENAI_API_KEY` 以占位 key 注入；管理员真实浏览器可打开 Provision Machine。
+- 2026-07-09：对干净 Ubuntu 24.04 sshd 容器执行 API provisioning 与浏览器 provisioning 均成功；目标机安装自包含 Node/CLI，执行 enroll，daemon online，`agent.env` 权限 600 且包含公司 key，`deleteAfterUse` 凭据清理生效。占位 key 只能验证注入与进程环境，不能验证真实 Claude/OpenAI 计费链路。
+
+### M3 代码事实确认
+- 新增 `TeamAgentAuthUpdate` 表记录每台机器的 agent-auth 应用状态；该表只保存模式和状态，不保存生成后的 `agent.env` 或 API key。
+- 成员自助接口为 `PATCH /v1/team/me/agent-auth`；管理员代改仍走 `PATCH /v1/team/admin/users/:id`。两者都会对该成员机器入队/尝试应用，并返回 `agentAuthSync` 汇总。
+- daemon 新增 Machine RPC `team-apply-agent-env`：原子重写 `~/.happy-team/agent.env`、0600 chmod、更新当前 daemon `process.env`、再调度自重启。server 内部通过现有 Socket.IO RPC room 找 daemon，payload 仍按机器 legacy/dataKey 加密。
+- 失败 provisioning job 的重试接口为 `POST /v1/team/admin/provision-jobs/:id/retry`，创建新 job 和新 enroll token，不复用旧 token。
+- 手动安装命令会导出 `PATH="$HOME/.happy-team/bin:$PATH"` 后启动 daemon；否则目标机无系统 Node 时 CLI wrapper 可启动，但 `happy daemon start` 内部 spawn `node` 会失败。手动 enroll 的机器首次 `machine-alive` 若尚无 `TeamAgentAuthUpdate` 行，server 会自动创建并应用当前成员的 agent-auth 配置，避免把公司 API key 明文嵌入手动命令。
+
+### M3 验收记录
+- 2026-07-09：M3 后再次执行 server typecheck 与 focused Vitest：`pnpm --filter happy-server-self-host typecheck` 通过；`pnpm --filter happy-server-self-host test -- sources/team/routes.spec.ts sources/team/provision/ssh.spec.ts` 通过（Vitest 依赖收集共 11 个文件 / 75 tests）。M3 之前已执行 `happy`、`happy-app` typecheck 通过。
+- 2026-07-09：从空卷重放 `deploy/README.md` / compose 部署，`sudo docker compose build` 成功，`sudo docker compose up -d` 后 Postgres/Redis/server healthy，server 应用迁移到 `20260709030000_add_team_agent_auth_updates`，webapp `/team/login` 与 server `/` 均可访问。
+- 2026-07-09：真实 Chromium 浏览器完成 admin 首登改密、Team Members 创建成员、Provision Machine 页面发起一台干净 Ubuntu 24.04 sshd 容器初始化；另用同一 live API 初始化两台干净 Ubuntu 24.04 sshd 容器。三台机器均在线并在 Team Machines 页面显示 owner：`member1@example.com` → `e638e530-12d0-47bb-a7e9-edb1f24dd052`，`member2@example.com` → `06038ca3-8f9d-40bb-a5c7-8a25a2ec5700`，`member3@example.com` → `6d49a3a8-0556-4c59-ae86-187b40cfa33e`。
+- 2026-07-09：Provisioning 页面显示三条成功 job；两条 `claude,codex` job 的 `agent.env` 为 0600 且含公司 Anthropic/OpenAI key（命令输出只做 key 名称验证，值已 redacted）。持久化 `ProvisionJob.log` 中搜索 SSH 密码、enroll token、占位 API key，命中数为 0。
+- 2026-07-09：Team Audit 页面在真实浏览器加载并按 `provision_succeeded` 过滤；审计中存在 `enroll` 3 条、`provision_succeeded` 3 条、`provision_retry_created` 1 条、`self_update_agent_auth_mode` 2 条。
+- 2026-07-09：创建 bad-password provisioning job 使其在 `connect` 阶段失败；浏览器 Provisioning 页面显示 Retry 按钮，点击后创建新 job 与新 enroll token，原失败 job 不复用 token，重试 job 因同一错误凭据再次按预期失败。
+- 2026-07-09：成员 `member1@example.com` 在真实浏览器打开 Team Agent Access，将 Claude Code 从 COMPANY_API 切到 PERSONAL_OAUTH 并保存；接口返回 `Applied 1 / Pending 0 / Failed 0`。目标机 `happy-team-m3-one` 的 `~/.happy-team/agent.env` 仍为 0600，`ANTHROPIC_API_KEY` 已清除，`OPENAI_API_KEY` 保留（Codex 仍为 COMPANY_API），daemon 进程时间更新为保存后的自重启时间。
+- 2026-07-09：离线 pending 验证：停止 `member2@example.com` 目标 daemon 后调用成员自助切换 Claude Code 为 PERSONAL_OAUTH，`TeamAgentAuthUpdate` 为 `PENDING` 且 error 为 `RPC method not available`；用 provisioned Node/CLI + PATH 重启 daemon 后，machine-alive 触发 pending 应用，行变为 `APPLIED`，目标 `agent.env` 清除 `ANTHROPIC_API_KEY`、保留 `OPENAI_API_KEY`、权限保持 0600，daemon 完成二次自重启。
+- 未完成的外部验收项：本地环境只有 Linux x64 Docker/主机，未验证 arm64 或 macOS 机器；`TEAM_ANTHROPIC_API_KEY` / `TEAM_OPENAI_API_KEY` 使用占位值，未能真实验证 Claude/OpenAI 计费链路；没有可用个人 Claude/Codex OAuth 账号，未能完成"切到 PERSONAL_OAUTH 后实际发起一次个人账号请求"的最终业务验收。

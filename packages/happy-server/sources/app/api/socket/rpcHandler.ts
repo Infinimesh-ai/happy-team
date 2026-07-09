@@ -80,6 +80,11 @@ function baseMethodName(prefixedMethod: string): string {
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 type RoomSockets = RemoteSocket<DefaultEventsMap, any>[];
+export type RegisteredRpcCallResult = {
+    ok: boolean;
+    result?: any;
+    error?: string;
+};
 
 /**
  * fetchSockets(room) wrapped with a caller-specified timeout. Returns `[]`
@@ -122,6 +127,30 @@ async function waitForRoomMember(io: Server, room: string, maxMs: number, metric
         }
         polls++;
         await sleep(RPC_RECONNECT_POLL_MS);
+    }
+}
+
+export async function callRegisteredRpcMethod(io: Server, userId: string, method: string, params: string): Promise<RegisteredRpcCallResult> {
+    const room = rpcRoom(userId, method);
+    let targets = await fetchRoomSockets(io, room, RPC_LOOKUP_FETCH_TIMEOUTS_MS[0]);
+    if (targets.length === 0) {
+        targets = await waitForRoomMember(io, room, RPC_RECONNECT_GRACE_MS, baseMethodName(method));
+    }
+
+    if (targets.length === 0) {
+        return { ok: false, error: 'RPC method not available' };
+    }
+    if (targets.length > 1) {
+        log({ module: 'websocket', level: 'warn' },
+            `Multiple sockets in ${room} (${targets.length}); using first`);
+    }
+
+    try {
+        const result = await targets[0].timeout(RPC_CALL_TIMEOUT_MS)
+            .emitWithAck('rpc-request', { method, params });
+        return { ok: true, result };
+    } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : 'RPC call failed' };
     }
 }
 

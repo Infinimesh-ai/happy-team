@@ -4,6 +4,10 @@
  */
 
 import { io, Socket } from 'socket.io-client';
+import { spawn } from 'node:child_process';
+import { chmod, mkdir, rename, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 import { MachineMetadata, DaemonState, Machine, Update, UpdateMachineBody } from './types';
@@ -30,6 +34,7 @@ import {
 } from '@/codex/codexThreadFork';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const TEAM_AGENT_ENV_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'OPENAI_API_KEY'] as const;
 
 interface ServerToDaemonEvents {
     update: (data: Update) => void;
@@ -95,6 +100,12 @@ type MachineRpcHandlers = {
     requestShutdown: () => void;
 }
 
+type TeamApplyAgentEnvParams = {
+    env?: Record<string, unknown>;
+    clearKeys?: unknown;
+    restart?: boolean;
+};
+
 function requireNonEmptyString(value: unknown, name: string): string {
     if (typeof value !== 'string' || value.length === 0) {
         throw new Error(`${name} is required`);
@@ -110,6 +121,105 @@ async function withCodexAppServerClient<T>(handler: (client: CodexAppServerClien
     } finally {
         await client.disconnect();
     }
+}
+
+function shellQuote(value: string): string {
+    return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+function normalizeTeamAgentEnv(params: TeamApplyAgentEnvParams): Record<string, string> {
+    const source = params.env && typeof params.env === 'object' ? params.env : {};
+    const env: Record<string, string> = {};
+    for (const key of TEAM_AGENT_ENV_KEYS) {
+        const value = source[key];
+        if (typeof value === 'string' && value.length > 0) {
+            env[key] = value;
+        }
+    }
+    return env;
+}
+
+function normalizeClearKeys(params: TeamApplyAgentEnvParams): string[] {
+    if (!Array.isArray(params.clearKeys)) {
+        return [...TEAM_AGENT_ENV_KEYS];
+    }
+    return params.clearKeys.filter((key): key is string => TEAM_AGENT_ENV_KEYS.includes(key as any));
+}
+
+function formatTeamAgentEnvFile(env: Record<string, string>): string {
+    const lines = [
+        '# Managed by Happy Team Edition. Rewrite through the team UI.',
+    ];
+    for (const key of TEAM_AGENT_ENV_KEYS) {
+        const value = env[key];
+        if (value) {
+            lines.push(`${key}=${shellQuote(value)}`);
+        }
+    }
+    return `${lines.join('\n')}\n`;
+}
+
+async function writeTeamAgentEnvFile(env: Record<string, string>): Promise<string> {
+    const dir = path.join(os.homedir(), '.happy-team');
+    const file = path.join(dir, 'agent.env');
+    const tmp = path.join(dir, `agent.env.${process.pid}.${Date.now()}.tmp`);
+    await mkdir(dir, { recursive: true });
+    await writeFile(tmp, formatTeamAgentEnvFile(env), { mode: 0o600 });
+    await chmod(tmp, 0o600);
+    await rename(tmp, file);
+    await chmod(file, 0o600);
+    return file;
+}
+
+function applyTeamAgentEnvToProcess(env: Record<string, string>, clearKeys: string[]): void {
+    for (const key of clearKeys) {
+        delete process.env[key];
+    }
+    for (const [key, value] of Object.entries(env)) {
+        process.env[key] = value;
+    }
+}
+
+function scheduleDaemonRestart(requestShutdown: () => void): boolean {
+    const entrypoint = process.argv[1];
+    if (!entrypoint) {
+        return false;
+    }
+
+    const nodeArgs = [...process.execArgv, entrypoint, 'daemon', 'start'];
+    const script = `
+const { spawn } = require('node:child_process');
+setTimeout(() => {
+  const child = spawn(process.execPath, ${JSON.stringify(nodeArgs)}, {
+    detached: true,
+    stdio: 'ignore',
+    env: process.env
+  });
+  child.unref();
+}, 2000);
+setTimeout(() => process.exit(0), 2500);
+`;
+    const child = spawn(process.execPath, ['-e', script], {
+        detached: true,
+        stdio: 'ignore',
+        env: process.env,
+    });
+    child.unref();
+    setTimeout(() => requestShutdown(), 200);
+    return true;
+}
+
+async function applyTeamAgentEnv(params: TeamApplyAgentEnvParams, requestShutdown: () => void) {
+    const env = normalizeTeamAgentEnv(params);
+    const clearKeys = normalizeClearKeys(params);
+    const path = await writeTeamAgentEnvFile(env);
+    applyTeamAgentEnvToProcess(env, clearKeys);
+    const restartScheduled = params.restart === false ? false : scheduleDaemonRestart(requestShutdown);
+    return {
+        applied: true,
+        envPath: path,
+        restartScheduled,
+    };
 }
 
 export class ApiMachineClient {
@@ -313,6 +423,11 @@ export class ApiMachineClient {
                 }
                 throw error;
             }
+        });
+
+        this.rpcHandlerManager.registerHandler('team-apply-agent-env', async (params: TeamApplyAgentEnvParams) => {
+            logger.debug('[API MACHINE] Received team agent env update request');
+            return applyTeamAgentEnv(params || {}, requestShutdown);
         });
 
         // Register stop daemon handler

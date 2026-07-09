@@ -4,7 +4,7 @@ import path from "path";
 import fastify from "fastify";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
-import { TeamRole } from "@prisma/client";
+import { AgentAuthMode, TeamAgentAuthUpdateStatus, TeamRole } from "@prisma/client";
 import { type Fastify } from "@/app/api/types";
 
 let app: Fastify;
@@ -41,6 +41,8 @@ describe("team routes", () => {
         process.env.DB_PROVIDER = "pglite";
         process.env.PGLITE_DIR = pgliteDir;
         process.env.HANDY_MASTER_SECRET = "team-routes-test-master-secret";
+        process.env.TEAM_ANTHROPIC_API_KEY = "sk-ant-routes-test";
+        process.env.TEAM_OPENAI_API_KEY = "sk-openai-routes-test";
 
         const { runMigrations } = await import("@/standalone");
         await runMigrations({
@@ -125,6 +127,7 @@ describe("team routes", () => {
         const enrollTokenBody = enrollToken.json<{ token: string; manualCommand: string }>();
         expect(enrollTokenBody.token).toMatch(/^hte_/);
         expect(enrollTokenBody.manualCommand).toContain("enroll --server");
+        expect(enrollTokenBody.manualCommand).toContain("PATH=\"$HOME/.happy-team/bin:$PATH\"; export PATH");
 
         const enroll = await postJson("/v1/team/enroll", {
             token: enrollTokenBody.token,
@@ -181,6 +184,60 @@ describe("team routes", () => {
         });
         expect(machines.statusCode).toBe(200);
         expect(machines.json<{ machines: unknown[] }>().machines).toEqual([]);
+
+        await db.machine.create({
+            data: {
+                id: "team-route-machine",
+                accountId: createMemberBody.user.accountId,
+                metadata: "encrypted-metadata",
+                active: false,
+                lastActiveAt: new Date(0),
+            },
+        });
+
+        const { applyPendingAgentAuthForMachine } = await import("@/team/agentAuth");
+        await applyPendingAgentAuthForMachine("team-route-machine");
+        const bootstrapAgentAuth = await db.teamAgentAuthUpdate.findUnique({
+            where: {
+                teamUserId_machineId: {
+                    teamUserId: createMemberBody.user.id,
+                    machineId: "team-route-machine",
+                },
+            },
+        });
+        expect(bootstrapAgentAuth?.status).toBe(TeamAgentAuthUpdateStatus.PENDING);
+        expect(bootstrapAgentAuth?.claudeAuthMode).toBe(AgentAuthMode.COMPANY_API);
+        expect(JSON.stringify(bootstrapAgentAuth)).not.toContain("sk-ant-routes-test");
+        expect(JSON.stringify(bootstrapAgentAuth)).not.toContain("sk-openai-routes-test");
+
+        const agentAuth = await patchJson("/v1/team/me/agent-auth", {
+            claudeAuthMode: AgentAuthMode.PERSONAL_OAUTH,
+            codexAuthMode: AgentAuthMode.COMPANY_API,
+        }, memberBody.happyToken);
+        expect(agentAuth.statusCode).toBe(200);
+        const agentAuthBody = agentAuth.json<{
+            user: { claudeAuthMode: AgentAuthMode; codexAuthMode: AgentAuthMode };
+            agentAuthSync: { totalMachines: number; pending: number; applied: number; failed: number };
+        }>();
+        expect(agentAuthBody.user.claudeAuthMode).toBe(AgentAuthMode.PERSONAL_OAUTH);
+        expect(agentAuthBody.agentAuthSync).toMatchObject({
+            totalMachines: 1,
+            pending: 1,
+            applied: 0,
+            failed: 0,
+        });
+        const queuedAgentAuth = await db.teamAgentAuthUpdate.findUnique({
+            where: {
+                teamUserId_machineId: {
+                    teamUserId: createMemberBody.user.id,
+                    machineId: "team-route-machine",
+                },
+            },
+        });
+        expect(queuedAgentAuth?.status).toBe(TeamAgentAuthUpdateStatus.PENDING);
+        expect(queuedAgentAuth?.claudeAuthMode).toBe(AgentAuthMode.PERSONAL_OAUTH);
+        expect(JSON.stringify(queuedAgentAuth)).not.toContain("sk-ant-routes-test");
+        expect(JSON.stringify(queuedAgentAuth)).not.toContain("sk-openai-routes-test");
 
         const changed = await postJson("/v1/team/auth/change-password", {
             oldPassword: createMemberBody.initialPassword,
