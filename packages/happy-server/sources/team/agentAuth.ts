@@ -25,11 +25,60 @@ export type TeamAgentAuthSyncResult = {
     }>;
 };
 
+export type TeamAgentAuthStatus = TeamAgentAuthSyncResult & {
+    machines: Array<TeamAgentAuthSyncResult["machines"][number] & {
+        claudeAuthMode: AgentAuthMode;
+        codexAuthMode: AgentAuthMode;
+        active: boolean;
+        activeAt: number;
+        appliedAt: string | null;
+        updatedAt: string | null;
+    }>;
+};
+
 export class TeamAgentAuthConfigError extends Error {
     constructor(message: string) {
         super(message);
         this.name = "TeamAgentAuthConfigError";
     }
+}
+
+export async function getAgentAuthStatusForUser(teamUser: TeamUser): Promise<TeamAgentAuthStatus> {
+    const machines = await db.machine.findMany({
+        where: { accountId: teamUser.accountId },
+        orderBy: { lastActiveAt: "desc" },
+    });
+    const updates = machines.length === 0
+        ? []
+        : await db.teamAgentAuthUpdate.findMany({
+            where: {
+                teamUserId: teamUser.id,
+                machineId: { in: machines.map((machine) => machine.id) },
+            },
+        });
+    const updatesByMachine = new Map(updates.map((update) => [update.machineId, update]));
+    const rows: TeamAgentAuthStatus["machines"] = machines.map((machine) => {
+        const update = updatesByMachine.get(machine.id);
+        return {
+            machineId: machine.id,
+            status: update?.status ?? TeamAgentAuthUpdateStatus.PENDING,
+            ...(update?.error ? { error: update.error } : {}),
+            claudeAuthMode: update?.claudeAuthMode ?? teamUser.claudeAuthMode,
+            codexAuthMode: update?.codexAuthMode ?? teamUser.codexAuthMode,
+            active: machine.active,
+            activeAt: machine.lastActiveAt.getTime(),
+            appliedAt: update?.appliedAt?.toISOString() ?? null,
+            updatedAt: update?.updatedAt?.toISOString() ?? null,
+        };
+    });
+
+    return {
+        totalMachines: rows.length,
+        applied: rows.filter((row) => row.status === TeamAgentAuthUpdateStatus.APPLIED).length,
+        pending: rows.filter((row) => row.status === TeamAgentAuthUpdateStatus.PENDING).length,
+        failed: rows.filter((row) => row.status === TeamAgentAuthUpdateStatus.FAILED).length,
+        machines: rows,
+    };
 }
 
 export async function queueAgentAuthSyncForUser(teamUser: TeamUser): Promise<TeamAgentAuthSyncResult> {

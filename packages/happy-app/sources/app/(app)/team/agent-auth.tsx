@@ -12,7 +12,7 @@ import { Text } from '@/components/StyledText';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { AgentAuthMode, getTeamMe, TeamAgentAuthSync, updateMyAgentAuth } from '@/team/api';
+import { AgentAuthMode, getMyAgentAuth, TeamAgentAuthStatus, TeamAgentAuthSync, updateMyAgentAuth } from '@/team/api';
 
 const styles = StyleSheet.create((theme) => ({
     form: {
@@ -45,6 +45,23 @@ function syncSummary(sync: TeamAgentAuthSync): string {
     });
 }
 
+type AgentAuthMachine = TeamAgentAuthStatus['machines'][number];
+
+function statusLabel(status: AgentAuthMachine['status']): string {
+    if (status === 'APPLIED') return 'Applied';
+    if (status === 'FAILED') return 'Failed';
+    return 'Pending';
+}
+
+function shortMachineId(id: string): string {
+    return id.length > 12 ? `${id.slice(0, 8)}...${id.slice(-4)}` : id;
+}
+
+function machineSubtitle(machine: AgentAuthMachine): string {
+    const modes = `${t('team.claudeCode')} ${modeLabel(machine.claudeAuthMode)} / ${t('team.codex')} ${modeLabel(machine.codexAuthMode)}`;
+    return machine.error ? `${modes} / ${machine.error}` : modes;
+}
+
 export default function TeamAgentAuthScreen() {
     const auth = useAuth();
     const router = useRouter();
@@ -55,6 +72,7 @@ export default function TeamAgentAuthScreen() {
     const [saving, setSaving] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
     const [lastSync, setLastSync] = React.useState<TeamAgentAuthSync | null>(null);
+    const [agentAuthStatus, setAgentAuthStatus] = React.useState<TeamAgentAuthStatus | null>(null);
 
     const refresh = React.useCallback(async () => {
         if (!auth.credentials) {
@@ -64,9 +82,10 @@ export default function TeamAgentAuthScreen() {
         setLoading(true);
         setError(null);
         try {
-            const result = await getTeamMe(auth.credentials);
+            const result = await getMyAgentAuth(auth.credentials);
             setClaudeAuthMode(result.user.claudeAuthMode);
             setCodexAuthMode(result.user.codexAuthMode);
+            setAgentAuthStatus(result.agentAuthStatus);
         } catch (e) {
             setError(e instanceof Error ? e.message : t('team.failedToLoadAgentAuth'));
         } finally {
@@ -87,7 +106,10 @@ export default function TeamAgentAuthScreen() {
                 claudeAuthMode,
                 codexAuthMode,
             });
+            setClaudeAuthMode(result.user.claudeAuthMode);
+            setCodexAuthMode(result.user.codexAuthMode);
             setLastSync(result.agentAuthSync);
+            await refresh();
             await Modal.alert(t('team.agentAuthUpdatedTitle'), syncSummary(result.agentAuthSync));
         } catch (e) {
             setError(e instanceof Error ? e.message : t('team.failedToUpdateAgentAuth'));
@@ -124,6 +146,26 @@ export default function TeamAgentAuthScreen() {
                         </>
                     )}
                 </ItemGroup>
+                {!loading && agentAuthStatus && (
+                    <ItemGroup title={t('team.machines')}>
+                        {agentAuthStatus.totalMachines === 0 ? (
+                            <Text style={styles.empty}>{t('team.noMachinesYet')}</Text>
+                        ) : (
+                            <>
+                                <Text style={styles.empty}>{syncSummary(agentAuthStatus)}</Text>
+                                {agentAuthStatus.machines.map((machine) => (
+                                    <Item
+                                        key={machine.machineId}
+                                        title={shortMachineId(machine.machineId)}
+                                        subtitle={machineSubtitle(machine)}
+                                        detail={statusLabel(machine.status)}
+                                        icon={<Ionicons name="desktop-outline" size={29} color={theme.colors.textSecondary} />}
+                                    />
+                                ))}
+                            </>
+                        )}
+                    </ItemGroup>
+                )}
                 <ItemGroup>
                     <View style={styles.form}>
                         {error && <Text style={styles.empty}>{error}</Text>}

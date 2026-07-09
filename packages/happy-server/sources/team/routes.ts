@@ -3,7 +3,7 @@ import { z } from "zod";
 import { auth } from "@/app/auth/auth";
 import { type Fastify } from "@/app/api/types";
 import { db } from "@/storage/db";
-import { queueAgentAuthSyncForUser } from "@/team/agentAuth";
+import { getAgentAuthStatusForUser, queueAgentAuthSyncForUser } from "@/team/agentAuth";
 import { getTeamPublicServerUrl, sendNodeArtifact, sendTeamCliArtifact } from "@/team/artifacts";
 import { writeTeamAudit } from "@/team/audit";
 import { consumeEnrollToken, createEnrollToken } from "@/team/enrollTokens";
@@ -134,6 +134,19 @@ export function teamRoutes(app: Fastify) {
             return response;
         }
         return reply.send({ user: toSafeTeamUser(teamUser) });
+    });
+
+    app.get("/v1/team/me/agent-auth", {
+        preHandler: app.authenticate,
+    }, async (request, reply) => {
+        const { teamUser, response } = await requireTeamUser(request, reply);
+        if (!teamUser) {
+            return response;
+        }
+        return reply.send({
+            user: toSafeTeamUser(teamUser),
+            agentAuthStatus: await getAgentAuthStatusForUser(teamUser),
+        });
     });
 
     app.post("/v1/team/auth/change-password", {

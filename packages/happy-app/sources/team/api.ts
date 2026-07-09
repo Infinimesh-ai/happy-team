@@ -91,6 +91,17 @@ export interface TeamAgentAuthSync {
     }>;
 }
 
+export interface TeamAgentAuthStatus extends TeamAgentAuthSync {
+    machines: Array<TeamAgentAuthSync['machines'][number] & {
+        claudeAuthMode: AgentAuthMode;
+        codexAuthMode: AgentAuthMode;
+        active: boolean;
+        activeAt: number;
+        appliedAt: string | null;
+        updatedAt: string | null;
+    }>;
+}
+
 export type TeamPreflightStatus = 'ok' | 'warning' | 'action_required';
 
 export interface TeamPreflightCheck {
@@ -157,6 +168,10 @@ export function changeTeamPassword(credentials: AuthCredentials, oldPassword: st
 
 export function getTeamMe(credentials: AuthCredentials): Promise<{ user: TeamUser }> {
     return teamRequest<{ user: TeamUser }>('/v1/team/me', { credentials });
+}
+
+export function getMyAgentAuth(credentials: AuthCredentials): Promise<{ user: TeamUser; agentAuthStatus: TeamAgentAuthStatus }> {
+    return teamRequest<{ user: TeamUser; agentAuthStatus: TeamAgentAuthStatus }>('/v1/team/me/agent-auth', { credentials });
 }
 
 export function listTeamUsers(credentials: AuthCredentials): Promise<{ users: TeamUser[] }> {

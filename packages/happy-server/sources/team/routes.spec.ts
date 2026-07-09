@@ -278,6 +278,34 @@ describe("team routes", () => {
         expect(JSON.stringify(bootstrapAgentAuth)).not.toContain("sk-ant-routes-test");
         expect(JSON.stringify(bootstrapAgentAuth)).not.toContain("sk-openai-routes-test");
 
+        const initialAgentAuthStatus = await app.inject({
+            method: "GET",
+            url: "/v1/team/me/agent-auth",
+            headers: { authorization: `Bearer ${memberBody.happyToken}` },
+        });
+        expect(initialAgentAuthStatus.statusCode).toBe(200);
+        expect(initialAgentAuthStatus.json()).toMatchObject({
+            user: {
+                claudeAuthMode: AgentAuthMode.COMPANY_API,
+                codexAuthMode: AgentAuthMode.COMPANY_API,
+            },
+            agentAuthStatus: {
+                totalMachines: 1,
+                pending: 1,
+                applied: 0,
+                failed: 0,
+                machines: [{
+                    machineId: "team-route-machine",
+                    status: TeamAgentAuthUpdateStatus.PENDING,
+                    claudeAuthMode: AgentAuthMode.COMPANY_API,
+                    codexAuthMode: AgentAuthMode.COMPANY_API,
+                    active: false,
+                }],
+            },
+        });
+        expect(JSON.stringify(initialAgentAuthStatus.json())).not.toContain("sk-ant-routes-test");
+        expect(JSON.stringify(initialAgentAuthStatus.json())).not.toContain("sk-openai-routes-test");
+
         const agentAuth = await patchJson("/v1/team/me/agent-auth", {
             claudeAuthMode: AgentAuthMode.PERSONAL_OAUTH,
             codexAuthMode: AgentAuthMode.COMPANY_API,
@@ -306,6 +334,31 @@ describe("team routes", () => {
         expect(queuedAgentAuth?.claudeAuthMode).toBe(AgentAuthMode.PERSONAL_OAUTH);
         expect(JSON.stringify(queuedAgentAuth)).not.toContain("sk-ant-routes-test");
         expect(JSON.stringify(queuedAgentAuth)).not.toContain("sk-openai-routes-test");
+
+        const updatedAgentAuthStatus = await app.inject({
+            method: "GET",
+            url: "/v1/team/me/agent-auth",
+            headers: { authorization: `Bearer ${memberBody.happyToken}` },
+        });
+        expect(updatedAgentAuthStatus.statusCode).toBe(200);
+        expect(updatedAgentAuthStatus.json()).toMatchObject({
+            user: {
+                claudeAuthMode: AgentAuthMode.PERSONAL_OAUTH,
+                codexAuthMode: AgentAuthMode.COMPANY_API,
+            },
+            agentAuthStatus: {
+                totalMachines: 1,
+                pending: 1,
+                machines: [{
+                    machineId: "team-route-machine",
+                    status: TeamAgentAuthUpdateStatus.PENDING,
+                    claudeAuthMode: AgentAuthMode.PERSONAL_OAUTH,
+                    codexAuthMode: AgentAuthMode.COMPANY_API,
+                }],
+            },
+        });
+        expect(JSON.stringify(updatedAgentAuthStatus.json())).not.toContain("sk-ant-routes-test");
+        expect(JSON.stringify(updatedAgentAuthStatus.json())).not.toContain("sk-openai-routes-test");
 
         const changed = await postJson("/v1/team/auth/change-password", {
             oldPassword: createMemberBody.initialPassword,
