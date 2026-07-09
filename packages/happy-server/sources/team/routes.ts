@@ -416,7 +416,7 @@ export function teamRoutes(app: Fastify) {
         if (!admin) {
             return response;
         }
-        return reply.send(getTeamDeploymentPreflight(request));
+        return reply.send(await getTeamDeploymentPreflight(request));
     });
 
     app.post("/v1/team/admin/enroll-token", {

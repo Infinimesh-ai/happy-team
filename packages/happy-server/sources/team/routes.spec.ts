@@ -151,6 +151,10 @@ describe("team routes", () => {
             "node_artifact_linux_arm64",
             "node_artifact_darwin_x64",
             "node_artifact_darwin_arm64",
+            "claude_sdk_binary_linux_x64",
+            "claude_sdk_binary_linux_arm64",
+            "claude_sdk_binary_darwin_x64",
+            "claude_sdk_binary_darwin_arm64",
             "team_anthropic_api_key",
             "team_openai_api_key",
         ]));

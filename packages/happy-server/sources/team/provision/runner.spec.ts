@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 import { describe, expect, it } from "vitest";
-import { buildStartDaemonCommand } from "@/team/provision/runner";
+import { buildInstallCliCommand, buildStartDaemonCommand } from "@/team/provision/runner";
 
 describe("provision daemon startup script", () => {
     const serverUrl = "https://happy.example.com/api?x=1&y=2";
@@ -38,6 +38,14 @@ describe("provision daemon startup script", () => {
         expect(command).not.toContain("TEAM_OPENAI_API_KEY");
         expect(command).not.toContain("ANTHROPIC_API_KEY=");
         expect(command).not.toContain("OPENAI_API_KEY=");
+    });
+
+    it("uses the selected Node runtime when installing the CLI", () => {
+        const command = buildInstallCliCommand(serverUrl, "/usr/local/bin/node");
+
+        expect(command).toContain("exec '/usr/local/bin/node' \"$HOME/.happy-team/cli/bin/happy.mjs\" \"$@\"");
+        expect(command).toContain("'/usr/local/bin/node' -e 'console.log(\"happy cli installed\")'");
+        expect(command).not.toContain("\"$HOME/.happy-team/bin/node\" -e");
     });
 
     it("loads Claude OAuth credentials in the macOS launchd wrapper without storing tokens in the plist", async () => {

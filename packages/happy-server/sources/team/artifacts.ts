@@ -1,6 +1,7 @@
 import { closeSync, createReadStream, existsSync, openSync, readSync, statSync } from "fs";
 import path from "path";
 import { type FastifyReply, type FastifyRequest } from "fastify";
+import { createGunzip } from "zlib";
 
 const DEFAULT_CLI_ARTIFACT_PATH = "/opt/happy-team/artifacts/happy-cli.tgz";
 const DEFAULT_NODE_ARTIFACT_DIR = "/opt/happy-team/artifacts/node";
@@ -13,6 +14,13 @@ type TeamNodeArtifactValidation = {
     detectedPlatform?: string;
     detectedArch?: string;
     error?: string;
+};
+type TeamCliClaudeSdkTarget = {
+    platform: NodeArtifactPlatform;
+    arch: NodeArtifactArch;
+    packageName: string;
+    entry: string;
+    exists: boolean;
 };
 
 export type NodeArtifactPlatform = typeof NODE_ARTIFACT_PLATFORMS[number];
@@ -31,6 +39,40 @@ export type TeamNodeArtifactInfo = {
     detectedArch?: string;
     validationError?: string;
 };
+export type TeamCliClaudeSdkInfo = {
+    path: string;
+    exists: boolean;
+    complete: boolean;
+    error?: string;
+    targets: TeamCliClaudeSdkTarget[];
+};
+
+const TEAM_CLAUDE_SDK_TARGETS: Array<Omit<TeamCliClaudeSdkTarget, "exists">> = [
+    {
+        platform: "linux",
+        arch: "x64",
+        packageName: "@anthropic-ai/claude-agent-sdk-linux-x64",
+        entry: "node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude",
+    },
+    {
+        platform: "linux",
+        arch: "arm64",
+        packageName: "@anthropic-ai/claude-agent-sdk-linux-arm64",
+        entry: "node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64/claude",
+    },
+    {
+        platform: "darwin",
+        arch: "x64",
+        packageName: "@anthropic-ai/claude-agent-sdk-darwin-x64",
+        entry: "node_modules/@anthropic-ai/claude-agent-sdk-darwin-x64/claude",
+    },
+    {
+        platform: "darwin",
+        arch: "arm64",
+        packageName: "@anthropic-ai/claude-agent-sdk-darwin-arm64",
+        entry: "node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude",
+    },
+];
 
 export function getTeamPublicServerUrl(request?: FastifyRequest): string {
     if (process.env.TEAM_PUBLIC_SERVER_URL) return process.env.TEAM_PUBLIC_SERVER_URL.replace(/\/$/, "");
@@ -63,6 +105,40 @@ export function getTeamCliArtifactInfo(): { path: string; exists: boolean; size?
     return { path: artifactPath, exists: true, size: stat.size };
 }
 
+export async function getTeamCliClaudeSdkInfo(): Promise<TeamCliClaudeSdkInfo> {
+    const artifact = getTeamCliArtifactInfo();
+    if (!artifact.exists) {
+        return {
+            path: artifact.path,
+            exists: false,
+            complete: false,
+            targets: TEAM_CLAUDE_SDK_TARGETS.map((target) => ({ ...target, exists: false })),
+        };
+    }
+
+    try {
+        const foundEntries = await findGzipTarEntries(artifact.path, TEAM_CLAUDE_SDK_TARGETS.map((target) => target.entry));
+        const targets = TEAM_CLAUDE_SDK_TARGETS.map((target) => ({
+            ...target,
+            exists: foundEntries.has(target.entry),
+        }));
+        return {
+            path: artifact.path,
+            exists: true,
+            complete: targets.every((target) => target.exists),
+            targets,
+        };
+    } catch (error) {
+        return {
+            path: artifact.path,
+            exists: true,
+            complete: false,
+            error: error instanceof Error ? error.message : "Unable to inspect CLI artifact",
+            targets: TEAM_CLAUDE_SDK_TARGETS.map((target) => ({ ...target, exists: false })),
+        };
+    }
+}
+
 export function sendTeamCliArtifact(reply: FastifyReply) {
     const info = getTeamCliArtifactInfo();
     if (!info.exists) {
@@ -75,6 +151,78 @@ export function sendTeamCliArtifact(reply: FastifyReply) {
         .type("application/gzip")
         .header("Content-Disposition", "attachment; filename=happy-cli.tgz")
         .send(createReadStream(info.path));
+}
+
+async function findGzipTarEntries(filePath: string, expectedEntries: string[]): Promise<Set<string>> {
+    const remaining = new Set(expectedEntries);
+    const found = new Set<string>();
+    let buffer = Buffer.alloc(0);
+    let skipBytes = 0;
+
+    const stream = createReadStream(filePath).pipe(createGunzip());
+    for await (const chunk of stream) {
+        buffer = Buffer.concat([buffer, chunk as Buffer]);
+
+        while (true) {
+            if (skipBytes > 0) {
+                const consumed = Math.min(skipBytes, buffer.length);
+                buffer = buffer.subarray(consumed);
+                skipBytes -= consumed;
+                if (skipBytes > 0) break;
+                continue;
+            }
+
+            if (buffer.length < 512) break;
+            const header = buffer.subarray(0, 512);
+            buffer = buffer.subarray(512);
+            if (isZeroTarBlock(header)) return found;
+
+            const entryName = normalizeTarEntryPath(readTarEntryName(header));
+            for (const expected of remaining) {
+                if (entryName === expected || entryName.endsWith(`/${expected}`)) {
+                    found.add(expected);
+                    remaining.delete(expected);
+                }
+            }
+            if (remaining.size === 0) return found;
+
+            const entrySize = readTarEntrySize(header);
+            skipBytes = Math.ceil(entrySize / 512) * 512;
+        }
+    }
+
+    return found;
+}
+
+function isZeroTarBlock(block: Buffer): boolean {
+    for (const byte of block) {
+        if (byte !== 0) return false;
+    }
+    return true;
+}
+
+function readTarEntryName(header: Buffer): string {
+    const name = readTarString(header, 0, 100);
+    const prefix = readTarString(header, 345, 155);
+    return prefix ? `${prefix}/${name}` : name;
+}
+
+function readTarEntrySize(header: Buffer): number {
+    const size = readTarString(header, 124, 12);
+    const parsed = Number.parseInt(size || "0", 8);
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function readTarString(header: Buffer, start: number, length: number): string {
+    return header
+        .subarray(start, start + length)
+        .toString("utf8")
+        .replace(/\0.*$/, "")
+        .trim();
+}
+
+function normalizeTarEntryPath(value: string): string {
+    return value.replace(/^\.\/+/, "").replace(/^\/+/, "");
 }
 
 export function sendNodeArtifact(reply: FastifyReply, platform: string, arch: string) {

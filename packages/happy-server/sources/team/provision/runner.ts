@@ -234,8 +234,12 @@ async function installNode(executor: SshExecutor, jobId: string, serverUrl: stri
 }
 
 async function installCli(executor: SshExecutor, jobId: string, serverUrl: string, nodePath: string, redactions: string[]): Promise<void> {
+    await runShell(executor, jobId, "install_cli", buildInstallCliCommand(serverUrl, nodePath), redactions, 180_000);
+}
+
+export function buildInstallCliCommand(serverUrl: string, nodePath: string): string {
     const cliUrl = `${serverUrl}/v1/team/artifacts/cli.tgz`;
-    const command = [
+    return [
         "mkdir -p \"$HOME/.happy-team/bin\" \"$HOME/.happy-team/cli.tmp\"",
         "rm -rf \"$HOME/.happy-team/cli.tmp\" \"$HOME/.happy-team/cli\"",
         "mkdir -p \"$HOME/.happy-team/cli.tmp\"",
@@ -248,9 +252,8 @@ async function installCli(executor: SshExecutor, jobId: string, serverUrl: strin
         "HAPPY_TEAM_SH",
         "chmod 700 \"$HOME/.happy-team/bin/happy\"",
         "test -s \"$HOME/.happy-team/cli/dist/index.mjs\"",
-        "\"$HOME/.happy-team/bin/node\" -e 'console.log(\"happy cli installed\")'",
+        `${shellQuote(nodePath)} -e 'console.log("happy cli installed")'`,
     ].join("\n");
-    await runShell(executor, jobId, "install_cli", command, redactions, 180_000);
 }
 
 async function setupAgents(

@@ -1,5 +1,5 @@
 import { type FastifyRequest } from "fastify";
-import { getTeamCliArtifactInfo, getTeamNodeArtifactInfo, getTeamPublicServerUrl } from "@/team/artifacts";
+import { getTeamCliArtifactInfo, getTeamCliClaudeSdkInfo, getTeamNodeArtifactInfo, getTeamPublicServerUrl } from "@/team/artifacts";
 
 type PreflightStatus = "ok" | "warning" | "action_required";
 
@@ -17,9 +17,10 @@ const NODE_TARGETS = [
     { platform: "darwin", arch: "arm64", required: false },
 ] as const;
 
-export function getTeamDeploymentPreflight(request?: FastifyRequest) {
+export async function getTeamDeploymentPreflight(request?: FastifyRequest) {
     const checks: PreflightCheck[] = [];
     const serverUrl = getTeamPublicServerUrl(request);
+    const nodeArtifactInfos = new Map<string, ReturnType<typeof getTeamNodeArtifactInfo>>();
 
     checks.push({
         key: "handy_master_secret",
@@ -54,6 +55,7 @@ export function getTeamDeploymentPreflight(request?: FastifyRequest) {
 
     for (const target of NODE_TARGETS) {
         const info = getTeamNodeArtifactInfo(target.platform, target.arch);
+        nodeArtifactInfos.set(`${target.platform}_${target.arch}`, info);
         const invalidArtifact = info.exists && info.valid === false;
         checks.push({
             key: `node_artifact_${target.platform}_${target.arch}`,
@@ -76,6 +78,33 @@ export function getTeamDeploymentPreflight(request?: FastifyRequest) {
                 source: info.source ?? null,
                 path: info.path,
                 size: info.size ?? null,
+            },
+        });
+    }
+
+    const cliClaudeSdkInfo = await getTeamCliClaudeSdkInfo();
+    for (const target of NODE_TARGETS) {
+        const sdkTarget = cliClaudeSdkInfo.targets.find((candidate) => candidate.platform === target.platform && candidate.arch === target.arch);
+        const nodeInfo = nodeArtifactInfos.get(`${target.platform}_${target.arch}`);
+        const requiredForConfiguredTarget = target.required || Boolean(nodeInfo?.exists);
+        const sdkBinaryReady = Boolean(cliClaudeSdkInfo.exists && !cliClaudeSdkInfo.error && sdkTarget?.exists);
+        checks.push({
+            key: `claude_sdk_binary_${target.platform}_${target.arch}`,
+            status: sdkBinaryReady ? "ok" : requiredForConfiguredTarget ? "action_required" : "warning",
+            message: sdkBinaryReady
+                ? `Claude SDK native binary for ${target.platform}/${target.arch} is included in the CLI artifact.`
+                : cliClaudeSdkInfo.error
+                ? `Unable to inspect Claude SDK native binary for ${target.platform}/${target.arch}: ${cliClaudeSdkInfo.error}`
+                : `Claude SDK native binary for ${target.platform}/${target.arch} is missing from the CLI artifact${requiredForConfiguredTarget ? "." : "; include it before provisioning this platform."}`,
+            detail: {
+                platform: target.platform,
+                arch: target.arch,
+                packageName: sdkTarget?.packageName ?? null,
+                entry: sdkTarget?.entry ?? null,
+                exists: sdkTarget?.exists ?? false,
+                cliArtifactPath: cliClaudeSdkInfo.path,
+                inspected: cliClaudeSdkInfo.exists && !cliClaudeSdkInfo.error,
+                error: cliClaudeSdkInfo.error ?? null,
             },
         });
     }

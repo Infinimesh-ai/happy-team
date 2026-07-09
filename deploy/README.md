@@ -101,9 +101,10 @@ pnpm team:node-artifacts -- --version 20.20.2 --target linux-arm64 --target darw
 
 目标机不访问公网；这些 Node 制品由企业 server 自分发。若 artifact 缺失，对应 provisioning job 会在 `install_node` 步骤失败并提示缺少的 server-side path。
 
-如果用源码直接跑 server，需要先生成同名 CLI artifact：
+如果用源码直接跑 server，需要先生成同名 CLI artifact。`pnpm install --force` 会安装所有 optional dependency，包括非当前构建机平台的 Claude Agent SDK native binaries；否则同一个 `happy-cli.tgz` 可能只能在构建机平台启动 Claude remote 模式：
 
 ```bash
+pnpm install --force
 mkdir -p .team-artifacts
 pnpm --filter happy build
 pnpm --filter happy deploy --prod --legacy .team-artifacts/happy-cli
@@ -152,7 +153,7 @@ curl -sS \
   "$TEAM_PUBLIC_SERVER_URL/v1/team/admin/preflight"
 ```
 
-返回只包含状态、artifact 路径/大小和布尔配置结果，不返回 `HANDY_MASTER_SECRET`、SSH 凭据、`TEAM_ANTHROPIC_API_KEY` 或 `TEAM_OPENAI_API_KEY` 的值。`status=action_required` 表示某个默认路径会阻止零配置 Company API provisioning；`status=warning` 通常表示当前部署可跑本机/Linux x64，但远程机器或非 x64/macOS 验收前还需要补 artifact 或替换 localhost URL。
+返回只包含状态、artifact 路径/大小和布尔配置结果，不返回 `HANDY_MASTER_SECRET`、SSH 凭据、`TEAM_ANTHROPIC_API_KEY` 或 `TEAM_OPENAI_API_KEY` 的值。预检还会检查 `happy-cli.tgz` 是否包含 Linux/macOS x64/arm64 的 Claude Agent SDK native binaries。`status=action_required` 表示某个默认路径会阻止零配置 Company API provisioning；`status=warning` 通常表示当前部署可跑本机/Linux x64，但远程机器或非 x64/macOS 验收前还需要补 artifact 或替换 localhost URL。
 
 至少在以下时间点跑一次预检：
 
