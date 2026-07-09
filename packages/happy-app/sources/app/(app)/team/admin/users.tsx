@@ -12,7 +12,7 @@ import { Text } from '@/components/StyledText';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { createTeamMember, listTeamUsers, TeamRole, TeamUser, updateTeamUser } from '@/team/api';
+import { AgentAuthMode, createTeamMember, listTeamUsers, TeamAgentAuthSync, TeamRole, TeamUser, updateTeamUser } from '@/team/api';
 
 const styles = StyleSheet.create((theme) => ({
     form: {
@@ -113,6 +113,7 @@ function RoleSegment(props: { role: TeamRole; onChange: (role: TeamRole) => void
 function UserActions(props: {
     user: TeamUser;
     busy: boolean;
+    onAgentAuth: () => void;
     onDisable: () => void;
     onEnable: () => void;
     onReset: () => void;
@@ -133,6 +134,14 @@ function UserActions(props: {
                 />
             </Pressable>
             <Pressable
+                accessibilityLabel={t('team.manageAgentAccess')}
+                disabled={props.busy}
+                onPress={props.onAgentAuth}
+                style={styles.iconButton}
+            >
+                <Ionicons name="shield-checkmark-outline" size={18} color={theme.colors.textSecondary} />
+            </Pressable>
+            <Pressable
                 accessibilityLabel={t('team.resetPassword')}
                 disabled={props.busy}
                 onPress={props.onReset}
@@ -142,6 +151,30 @@ function UserActions(props: {
             </Pressable>
         </View>
     );
+}
+
+function nextMode(mode: AgentAuthMode): AgentAuthMode {
+    return mode === 'COMPANY_API' ? 'PERSONAL_OAUTH' : 'COMPANY_API';
+}
+
+function modeLabel(mode: AgentAuthMode): string {
+    return mode === 'COMPANY_API' ? t('team.companyApiMode') : t('team.personalOAuthMode');
+}
+
+function syncSummary(sync: TeamAgentAuthSync): string {
+    return t('team.agentAuthSyncSummary', {
+        applied: sync.applied,
+        pending: sync.pending,
+        failed: sync.failed,
+    });
+}
+
+function mergeUpdatedUser(existing: TeamUser, updated: TeamUser): TeamUser {
+    return {
+        ...existing,
+        ...updated,
+        machineCount: updated.machineCount ?? existing.machineCount,
+    };
 }
 
 export default function TeamAdminUsersScreen() {
@@ -204,12 +237,63 @@ export default function TeamAdminUsersScreen() {
             const result = await updateTeamUser(auth.credentials, user.id, action === 'reset'
                 ? { resetPassword: true }
                 : { status: action === 'disable' ? 'DISABLED' : 'ACTIVE' });
-            setUsers((current) => current.map((item) => item.id === user.id ? result.user : item));
+            setUsers((current) => current.map((item) => item.id === user.id ? mergeUpdatedUser(item, result.user) : item));
             if (result.temporaryPassword) {
                 await Modal.alert(t('team.passwordResetTitle'), t('team.temporaryPassword', { password: result.temporaryPassword }));
             }
         } catch (e) {
             await Modal.alert(t('team.actionFailed'), e instanceof Error ? e.message : t('team.unableToUpdateMember'));
+        } finally {
+            setBusyUserId(null);
+        }
+    };
+
+    const manageAgentAuth = async (user: TeamUser) => {
+        if (!auth.credentials) return;
+        setBusyUserId(user.id);
+        try {
+            const nextClaudeMode = nextMode(user.claudeAuthMode);
+            const updateClaude = await Modal.confirm(
+                t('team.agentAuthForMemberTitle', { email: user.email }),
+                t('team.agentAuthSwitchConfirm', {
+                    agent: t('team.claudeCode'),
+                    mode: modeLabel(nextClaudeMode),
+                    email: user.email,
+                }),
+                {
+                    cancelText: t('team.agentAuthKeepCurrent'),
+                    confirmText: t('team.agentAuthSwitchTo', { mode: modeLabel(nextClaudeMode) }),
+                },
+            );
+
+            const nextCodexMode = nextMode(user.codexAuthMode);
+            const updateCodex = await Modal.confirm(
+                t('team.agentAuthForMemberTitle', { email: user.email }),
+                t('team.agentAuthSwitchConfirm', {
+                    agent: t('team.codex'),
+                    mode: modeLabel(nextCodexMode),
+                    email: user.email,
+                }),
+                {
+                    cancelText: t('team.agentAuthKeepCurrent'),
+                    confirmText: t('team.agentAuthSwitchTo', { mode: modeLabel(nextCodexMode) }),
+                },
+            );
+
+            const input: { claudeAuthMode?: AgentAuthMode; codexAuthMode?: AgentAuthMode } = {};
+            if (updateClaude) input.claudeAuthMode = nextClaudeMode;
+            if (updateCodex) input.codexAuthMode = nextCodexMode;
+            if (!input.claudeAuthMode && !input.codexAuthMode) {
+                return;
+            }
+
+            const result = await updateTeamUser(auth.credentials, user.id, input);
+            setUsers((current) => current.map((item) => item.id === user.id ? mergeUpdatedUser(item, result.user) : item));
+            if (result.agentAuthSync) {
+                await Modal.alert(t('team.agentAuthUpdatedTitle'), syncSummary(result.agentAuthSync));
+            }
+        } catch (e) {
+            await Modal.alert(t('team.actionFailed'), e instanceof Error ? e.message : t('team.failedToUpdateAgentAuth'));
         } finally {
             setBusyUserId(null);
         }
@@ -277,13 +361,18 @@ export default function TeamAdminUsersScreen() {
                                 role: user.role === 'ADMIN' ? t('team.adminRole') : t('team.memberRole'),
                                 status: user.status === 'ACTIVE' ? t('team.activeStatus') : t('team.disabledStatus'),
                                 count: user.machineCount ?? 0,
+                            }) + '\n' + t('team.userAgentAuthSubtitle', {
+                                claude: modeLabel(user.claudeAuthMode),
+                                codex: modeLabel(user.codexAuthMode),
                             })}
+                            subtitleLines={2}
                             detail={user.mustChangePassword ? t('team.mustChangePassword') : undefined}
                             showChevron={false}
                             rightElement={(
                                 <UserActions
                                     user={user}
                                     busy={busyUserId === user.id}
+                                    onAgentAuth={() => void manageAgentAuth(user)}
                                     onDisable={() => void patchUser(user, 'disable')}
                                     onEnable={() => void patchUser(user, 'enable')}
                                     onReset={() => void patchUser(user, 'reset')}

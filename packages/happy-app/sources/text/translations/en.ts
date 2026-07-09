@@ -839,6 +839,7 @@ export const en: TranslationStructure = {
         disableUser: 'Disable user',
         enableUser: 'Enable user',
         resetPassword: 'Reset password',
+        manageAgentAccess: 'Manage agent access',
         disableMemberTitle: 'Disable Member',
         disableMemberConfirm: ({ email }: { email: string }) => `Disable ${email}? Their existing sessions will stop working.`,
         disable: 'Disable',
@@ -846,6 +847,7 @@ export const en: TranslationStructure = {
         actionFailed: 'Action Failed',
         unableToUpdateMember: 'Unable to update member',
         userSubtitle: ({ role, status, count }: { role: string; status: string; count: number }) => `${role} / ${status} / ${count} ${count === 1 ? 'machine' : 'machines'}`,
+        userAgentAuthSubtitle: ({ claude, codex }: { claude: string; codex: string }) => `Claude ${claude} / Codex ${codex}`,
         mustChangePassword: 'must change password',
         administration: 'Administration',
         provisionTitle: 'Provision Machine',
@@ -918,6 +920,10 @@ export const en: TranslationStructure = {
         failedToUpdateAgentAuth: 'Failed to update agent access',
         agentAuthUpdatedTitle: 'Agent Access Updated',
         agentAuthSyncSummary: ({ applied, pending, failed }: { applied: number; pending: number; failed: number }) => `Applied ${applied} / Pending ${pending} / Failed ${failed}`,
+        agentAuthForMemberTitle: ({ email }: { email: string }) => `Agent access for ${email}`,
+        agentAuthSwitchConfirm: ({ agent, mode, email }: { agent: string; mode: string; email: string }) => `Switch ${agent} for ${email} to ${mode}?`,
+        agentAuthKeepCurrent: 'Keep current',
+        agentAuthSwitchTo: ({ mode }: { mode: string }) => `Switch to ${mode}`,
     },
 
     welcome: {

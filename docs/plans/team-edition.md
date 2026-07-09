@@ -310,7 +310,7 @@ HAPPY_SERVER_URL=https://happy.yourco.com ~/.happy-team/bin/happy daemon start
 - **PERSONAL_OAUTH（成员自选）**：不写入公司 key（注意：`ANTHROPIC_API_KEY` 存在会覆盖订阅登录，因此该模式下必须确保 agent.env 中无对应 key）。成员在该机器上完成一次 `claude` / `codex` 的 OAuth 登录即可——**可以直接通过网页开一个远程会话/终端完成**，无需物理接触机器；OAuth 交互本身无法由系统代劳，这是外部约束。
 
 模式切换：
-- 成员在网页设置页自助切换（每个 agent 独立），或管理员在成员详情页代改。
+- 成员在网页设置页自助切换（每个 agent 独立），或管理员在成员管理页代改。
 - 切换后需要更新目标机的 agent.env 并重启 daemon 才生效。M3 代码事实：daemon 侧 RPC 方法名为 `team-apply-agent-env`，复用现有 Machine RPC 加密/房间机制；server 使用托管私钥解开 legacy/dataKey 机器密钥后加密 payload。机器离线时写 `TeamAgentAuthUpdate` pending 行，上线 `machine-alive` 后应用。切 PERSONAL_OAUTH 时同时清除 agent.env 中的公司 key。
 - 初始化向导中显示目标成员当前模式，允许管理员在发起 provisioning 时一并设定。
 
@@ -324,7 +324,7 @@ HAPPY_SERVER_URL=https://happy.yourco.com ~/.happy-team/bin/happy daemon start
 - 登出需清空本地密钥存储（复用现有 logout/reset 逻辑）。
 
 ### 10.2 管理后台（仅 ADMIN 可见，新路由组）
-1. **成员管理**：列表（含机器数、状态）、创建（显示一次性初始密码）、禁用/启用、重置密码。
+1. **成员管理**：列表（含机器数、状态、agent 认证模式）、创建（显示一次性初始密码）、禁用/启用、重置密码、管理员代改 Claude/Codex agent 认证模式。
 2. **机器初始化向导**：选成员 → 填/选 SSH 凭据 → 选 agents → 提交 → 实时步骤进度 + 滚动日志（轮询 job 接口）→ 成功页含机器名；失败页含日志、重试按钮与"手动安装命令"兜底。
 3. **机器总览**：全团队机器表（成员、主机名、在线状态、最近心跳、活跃会话数）。
 4. **SSH 凭据管理**：列表（只显示 label/host/user，永不显示秘密）、新增、删除、"用完即删"开关。
@@ -447,6 +447,7 @@ services:
 - Provisioning 与 Manual Command 都按目标机 `uname -s` / `uname -m` 生成 Node artifact URL：`/v1/team/artifacts/node/$platform/$arch`，平台支持 `linux|darwin`、架构支持 `x64|arm64`。compose 默认把 host 侧 `.team-artifacts/node` 只读挂载到 `/opt/happy-team/artifacts/node` 供企业放置非 x64 制品。
 - CLI 内部自重启路径用 `process.execPath` 启动当前 Node runtime，不再依赖目标机 `PATH` 上存在系统 `node`；`happy daemon start` 等待 state file 的窗口从 5s 调整为 30s，以覆盖 arm64/qemu 与冷启动自包含 Node 的慢启动情况。
 - macOS provisioning 的 `start_daemon` 分支写用户级 `~/Library/LaunchAgents/com.happy-team.daemon.plist`，通过 `/bin/sh -lc` source `~/.happy-team/agent.env` 后执行 `happy daemon start-sync`；plist 文件本身不保存 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`。若 SSH 会话中 `launchctl bootstrap gui/$UID` / `launchctl load` 不可用，会退回一次性 detached `happy daemon start` 并在日志标 warning。
+- Team Members 管理页现在在每个成员行显示 Claude/Codex 当前认证模式，并通过 `Manage agent access` action 调用既有 `PATCH /v1/team/admin/users/:id` 完成管理员代改；前端合并更新响应时保留列表接口返回的 `machineCount`，避免 agent-auth 更新接口未带计数时把机器数显示为 0。
 
 ### M3 验收记录
 - 2026-07-09：M3 后再次执行 CLI/server typecheck 与 focused Vitest：`pnpm --filter happy typecheck` 通过；`pnpm --filter happy-server-self-host typecheck` 通过；`pnpm --filter happy-server-self-host test -- sources/team/provision/runner.spec.ts sources/team/artifacts.spec.ts sources/team/routes.spec.ts sources/team/provision/ssh.spec.ts` 通过（Vitest 依赖收集共 13 个文件 / 80 tests）。M3 之前已执行 `happy-app` typecheck 通过。
@@ -461,4 +462,6 @@ services:
 - 2026-07-09：用 `tonistiigi/binfmt` 启用 arm64 binfmt，在 Linux x64 主机上运行 Ubuntu 24.04 arm64/qemu sshd 目标机；host 侧 `.team-artifacts/node/linux-arm64/node` 使用 Node `v20.20.2` arm64 二进制，live server `GET /v1/team/artifacts/node/linux/arm64` 返回 200。retry job `cmrdaonhs000fqq2tryzxhbjj` 成功完成 `connect -> detect -> install_node -> install_cli -> enroll -> setup_agents -> start_daemon -> verify`，机器 `85dec7b0-f6e6-48b8-a555-cca0199966bf` 归属 `member-arm64c-1783588717@example.com` 且 online；目标机 `uname -m=aarch64`，provisioned Node 报 `linux arm64 v20.20.2`，`agent.env` 为 `600 happy:happy` 并含公司 Anthropic/OpenAI key，`deleteAfterUse` 凭据已删除。
 - 2026-07-09：同一 arm64/qemu 机器上，成员自助把 Claude/Codex 均切到 PERSONAL_OAUTH，接口返回 `Applied 1 / Pending 0 / Failed 0`，目标 `agent.env` 权限保持 0600 且公司 key 全部清除；随后切回 COMPANY_API，同样返回 `Applied 1 / Pending 0 / Failed 0`，公司 key 通过 daemon RPC 恢复。
 - 2026-07-09：补齐 macOS 用户级 launchd 分支；`buildStartDaemonCommand()` 生成的远端 shell 通过 `sh -n` 语法检查，Vitest 覆盖 launchd plist、Linux systemd/cron fallback、以及启动脚本不嵌入公司 API key 名称。`SshExecutor` 增加 baseline error listener，避免 ssh2 失败握手清理后的迟到 socket error 作为 unhandled exception 污染测试结果。
+- 2026-07-09：真实 Chromium 浏览器验证 Team Members 管理页的 `Manage agent access` action：管理员把 `member-arm64c-1783588717@example.com` 的 Claude Code 从 COMPANY_API 切到 PERSONAL_OAUTH、Codex 保持 COMPANY_API，页面显示 `Member / Active / 1 machine` 与 `Claude Personal OAuth / Codex Company API`，弹窗返回 `Applied 1 / Pending 0 / Failed 0`；目标 arm64/qemu 机器 `agent.env` 保持 `600 happy:happy`，`ANTHROPIC_API_KEY` 被清除、`OPENAI_API_KEY` 保留。
+- 2026-07-09：同一真实浏览器流程把该成员 Claude Code 切回 COMPANY_API，页面保持 `1 machine` 且显示 `Claude Company API / Codex Company API`；目标 arm64/qemu 机器 `agent.env` 恢复 Anthropic/OpenAI 两个公司 key。期间补修了更新用户响应缺少 `machineCount` 时前端把机器数短暂显示成 0 的问题，并重建 webapp 镜像复验。
 - 未完成的外部验收项：尚未在物理 Linux arm64 或 macOS 机器跑完端到端；macOS LaunchAgent 尚未在真实 macOS 重启后验证；`TEAM_ANTHROPIC_API_KEY` / `TEAM_OPENAI_API_KEY` 使用占位值，未能真实验证 Claude/OpenAI 计费链路；没有可用个人 Claude/Codex OAuth 账号，未能完成"切到 PERSONAL_OAUTH 后实际发起一次个人账号请求"的最终业务验收。
