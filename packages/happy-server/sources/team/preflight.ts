@@ -7,7 +7,7 @@ type PreflightCheck = {
     key: string;
     status: PreflightStatus;
     message: string;
-    detail?: Record<string, string | number | boolean | null>;
+    detail?: Record<string, string | number | boolean | string[] | null>;
 };
 
 const NODE_TARGETS = [
@@ -81,6 +81,7 @@ export async function getTeamDeploymentPreflight(request?: FastifyRequest) {
                 format: info.format ?? null,
                 detectedPlatform: info.detectedPlatform ?? null,
                 detectedArch: info.detectedArch ?? null,
+                neededLibraries: info.neededLibraries ?? null,
                 validationError: info.validationError ?? null,
                 source: info.source ?? null,
                 path: info.path,

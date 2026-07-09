@@ -15,6 +15,7 @@ type TeamNodeArtifactValidation = {
     format?: NodeArtifactFormat;
     detectedPlatform?: string;
     detectedArch?: string;
+    neededLibraries?: string[];
     error?: string;
 };
 type TeamCliClaudeSdkTarget = {
@@ -48,6 +49,7 @@ export type TeamNodeArtifactInfo = {
     format?: NodeArtifactFormat;
     detectedPlatform?: string;
     detectedArch?: string;
+    neededLibraries?: string[];
     validationError?: string;
 };
 export type TeamCliClaudeSdkInfo = {
@@ -361,6 +363,7 @@ export function sendNodeArtifact(reply: FastifyReply, platform: string, arch: st
             validationError: info.validationError,
             detectedPlatform: info.detectedPlatform,
             detectedArch: info.detectedArch,
+            neededLibraries: info.neededLibraries,
         });
     }
     const libcSuffix = info.libc && info.libc !== "glibc" ? `-${info.libc}` : "";
@@ -393,7 +396,7 @@ export function getTeamNodeArtifactInfo(platform: string, arch: string, libc?: s
     for (const candidate of candidates) {
         if (existsSync(candidate.path)) {
             const stat = statSync(candidate.path);
-            const validation = validateNodeArtifactBinary(candidate.path, normalizedPlatform, normalizedArch);
+            const validation = validateNodeArtifactBinary(candidate.path, normalizedPlatform, normalizedArch, normalizedLibc);
             return {
                 platform: normalizedPlatform,
                 arch: normalizedArch,
@@ -410,7 +413,7 @@ export function getTeamNodeArtifactInfo(platform: string, arch: string, libc?: s
 
     if (normalizedLibc !== "musl" && normalizedPlatform === process.platform && normalizedArch === process.arch && existsSync(process.execPath)) {
         const stat = statSync(process.execPath);
-        const validation = validateNodeArtifactBinary(process.execPath, normalizedPlatform, normalizedArch);
+        const validation = validateNodeArtifactBinary(process.execPath, normalizedPlatform, normalizedArch, normalizedLibc);
         return {
             platform: normalizedPlatform,
             arch: normalizedArch,
@@ -438,7 +441,7 @@ export function resolveTeamNodeArtifactDir(): string {
     return process.env.TEAM_NODE_ARTIFACT_DIR || DEFAULT_NODE_ARTIFACT_DIR;
 }
 
-export function validateNodeArtifactBinary(filePath: string, expectedPlatform: string, expectedArch: string): TeamNodeArtifactValidation {
+export function validateNodeArtifactBinary(filePath: string, expectedPlatform: string, expectedArch: string, expectedLibc?: NodeArtifactLibc): TeamNodeArtifactValidation {
     const header = Buffer.alloc(64);
     let fd: number | undefined;
     try {
@@ -469,13 +472,22 @@ export function validateNodeArtifactBinary(filePath: string, expectedPlatform: s
         };
     }
 
-    const valid = detected.platform === expectedPlatform && detected.arch === expectedArch;
+    const neededLibraries = detected.format === "elf" ? readElfNeededLibraries(filePath, header) : undefined;
+    const externalMuslLibraries = expectedPlatform === "linux" && expectedLibc === "musl"
+        ? (neededLibraries ?? []).filter((library) => !isAllowedMuslNodeLibrary(library))
+        : [];
+    const valid = detected.platform === expectedPlatform && detected.arch === expectedArch && externalMuslLibraries.length === 0;
     return {
         valid,
         format: detected.format,
         detectedPlatform: detected.platform,
         detectedArch: detected.arch,
-        error: valid ? undefined : `Expected ${expectedPlatform}/${expectedArch}, got ${detected.platform}/${detected.arch}`,
+        neededLibraries,
+        error: valid
+            ? undefined
+            : externalMuslLibraries.length > 0
+            ? `Musl Node artifact has external shared-library dependencies: ${externalMuslLibraries.join(", ")}`
+            : `Expected ${expectedPlatform}/${expectedArch}, got ${detected.platform}/${detected.arch}`,
     };
 }
 
@@ -652,12 +664,13 @@ function buildNodeArtifactCandidates(artifactDir: string, platform: string, arch
     ];
 }
 
-function toArtifactValidationInfo(validation: TeamNodeArtifactValidation): Pick<TeamNodeArtifactInfo, "valid" | "format" | "detectedPlatform" | "detectedArch" | "validationError"> {
+function toArtifactValidationInfo(validation: TeamNodeArtifactValidation): Pick<TeamNodeArtifactInfo, "valid" | "format" | "detectedPlatform" | "detectedArch" | "neededLibraries" | "validationError"> {
     return {
         valid: validation.valid,
         format: validation.format,
         detectedPlatform: validation.detectedPlatform,
         detectedArch: validation.detectedArch,
+        neededLibraries: validation.neededLibraries,
         validationError: validation.error,
     };
 }
@@ -681,6 +694,106 @@ function detectNodeBinaryHeader(header: Buffer): { format: NodeArtifactFormat; p
     }
 
     return null;
+}
+
+function readElfNeededLibraries(filePath: string, header: Buffer): string[] {
+    const programHeaderOffset = readSafeElfUInt64(header, 32);
+    const programHeaderEntrySize = header.readUInt16LE(54);
+    const programHeaderCount = header.readUInt16LE(56);
+    if (!programHeaderOffset || !programHeaderEntrySize || !programHeaderCount) return [];
+    if (programHeaderEntrySize < 56 || programHeaderCount > 256) return [];
+
+    const fileSize = statSync(filePath).size;
+    const programHeadersSize = programHeaderEntrySize * programHeaderCount;
+    if (programHeaderOffset + programHeadersSize > fileSize) return [];
+
+    let fd: number | undefined;
+    try {
+        fd = openSync(filePath, "r");
+        const programHeaders = Buffer.alloc(programHeadersSize);
+        readSync(fd, programHeaders, 0, programHeaders.length, programHeaderOffset);
+
+        const loadSegments: Array<{ offset: number; vaddr: number; filesz: number; memsz: number }> = [];
+        let dynamicSegment: { offset: number; filesz: number } | undefined;
+        for (let index = 0; index < programHeaderCount; index += 1) {
+            const base = index * programHeaderEntrySize;
+            const type = programHeaders.readUInt32LE(base);
+            const offset = readSafeElfUInt64(programHeaders, base + 8);
+            const vaddr = readSafeElfUInt64(programHeaders, base + 16);
+            const filesz = readSafeElfUInt64(programHeaders, base + 32);
+            const memsz = readSafeElfUInt64(programHeaders, base + 40);
+            if (offset === undefined || vaddr === undefined || filesz === undefined || memsz === undefined) continue;
+            if (type === 1) {
+                loadSegments.push({ offset, vaddr, filesz, memsz });
+            } else if (type === 2) {
+                dynamicSegment = { offset, filesz };
+            }
+        }
+
+        if (!dynamicSegment || dynamicSegment.filesz === 0 || dynamicSegment.offset + dynamicSegment.filesz > fileSize) return [];
+        const dynamic = Buffer.alloc(dynamicSegment.filesz);
+        readSync(fd, dynamic, 0, dynamic.length, dynamicSegment.offset);
+
+        const neededOffsets: number[] = [];
+        let stringTableVaddr: number | undefined;
+        let stringTableSize: number | undefined;
+        for (let offset = 0; offset + 16 <= dynamic.length; offset += 16) {
+            const tag = readSafeElfUInt64(dynamic, offset);
+            const value = readSafeElfUInt64(dynamic, offset + 8);
+            if (tag === undefined || value === undefined) continue;
+            if (tag === 0) break;
+            if (tag === 1) neededOffsets.push(value);
+            if (tag === 5) stringTableVaddr = value;
+            if (tag === 10) stringTableSize = value;
+        }
+        if (neededOffsets.length === 0 || stringTableVaddr === undefined) return [];
+
+        const stringTableOffset = elfVaddrToOffset(stringTableVaddr, loadSegments);
+        if (stringTableOffset === undefined || stringTableOffset >= fileSize) return [];
+        const fallbackSize = Math.max(...neededOffsets) + 4096;
+        const bytesToRead = Math.min(stringTableSize ?? fallbackSize, fileSize - stringTableOffset);
+        if (bytesToRead <= 0 || bytesToRead > 1024 * 1024) return [];
+        const stringTable = Buffer.alloc(bytesToRead);
+        readSync(fd, stringTable, 0, stringTable.length, stringTableOffset);
+        return neededOffsets
+            .map((offset) => readNullTerminatedString(stringTable, offset))
+            .filter((value): value is string => Boolean(value));
+    } catch {
+        return [];
+    } finally {
+        if (fd !== undefined) {
+            closeSync(fd);
+        }
+    }
+}
+
+function readSafeElfUInt64(buffer: Buffer, offset: number): number | undefined {
+    if (offset + 8 > buffer.length) return undefined;
+    const value = buffer.readBigUInt64LE(offset);
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) return undefined;
+    return Number(value);
+}
+
+function elfVaddrToOffset(vaddr: number, loadSegments: Array<{ offset: number; vaddr: number; filesz: number; memsz: number }>): number | undefined {
+    for (const segment of loadSegments) {
+        if (vaddr >= segment.vaddr && vaddr < segment.vaddr + segment.memsz) {
+            const delta = vaddr - segment.vaddr;
+            if (delta > segment.filesz) return undefined;
+            return segment.offset + delta;
+        }
+    }
+    return undefined;
+}
+
+function readNullTerminatedString(buffer: Buffer, offset: number): string | undefined {
+    if (offset < 0 || offset >= buffer.length) return undefined;
+    let end = offset;
+    while (end < buffer.length && buffer[end] !== 0) end += 1;
+    return buffer.subarray(offset, end).toString("utf8");
+}
+
+function isAllowedMuslNodeLibrary(library: string): boolean {
+    return /^libc\.musl-[a-z0-9_]+\.so\.1$/.test(library) || /^ld-musl-[a-z0-9_]+\.so\.1$/.test(library);
 }
 
 function isSupportedNodeArtifact(platform: string, arch: string, libc?: NodeArtifactLibc): boolean {

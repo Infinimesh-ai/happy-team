@@ -89,6 +89,39 @@ describe("team artifacts", () => {
         expect(missingMusl.path).not.toBe(process.execPath);
     });
 
+    it("rejects Linux musl Node artifacts with external shared-library dependencies", async () => {
+        const artifactDir = await mkdtemp(path.join(tmpdir(), "happy-team-musl-node-deps-"));
+        tempDirs.push(artifactDir);
+        process.env.TEAM_NODE_ARTIFACT_DIR = artifactDir;
+
+        const nodePath = path.join(artifactDir, "linux-x64-musl", "node");
+        await mkdir(path.dirname(nodePath), { recursive: true });
+        await writeFile(nodePath, elfWithNeededLibraries(0x3e, [
+            "libstdc++.so.6",
+            "libgcc_s.so.1",
+            "libc.musl-x86_64.so.1",
+        ]));
+
+        const info = getTeamNodeArtifactInfo("linux", "x64", "musl");
+        expect(info).toMatchObject({
+            platform: "linux",
+            arch: "x64",
+            libc: "musl",
+            exists: true,
+            supported: true,
+            valid: false,
+            format: "elf",
+            detectedPlatform: "linux",
+            detectedArch: "x64",
+            neededLibraries: [
+                "libstdc++.so.6",
+                "libgcc_s.so.1",
+                "libc.musl-x86_64.so.1",
+            ],
+            validationError: "Musl Node artifact has external shared-library dependencies: libstdc++.so.6, libgcc_s.so.1",
+        });
+    });
+
     it("detects configured Node artifacts that do not match the requested platform", async () => {
         const artifactDir = await mkdtemp(path.join(tmpdir(), "happy-team-wrong-node-artifacts-"));
         tempDirs.push(artifactDir);
@@ -262,6 +295,71 @@ function elfHeader(machine: number): Buffer {
     header[5] = 1;
     header.writeUInt16LE(machine, 18);
     return header;
+}
+
+function elfWithNeededLibraries(machine: number, libraries: string[]): Buffer {
+    const headerSize = 64;
+    const programHeaderSize = 56;
+    const programHeaderCount = 2;
+    const dynamicOffset = headerSize + programHeaderSize * programHeaderCount;
+    const stringTableOffset = dynamicOffset + (libraries.length + 3) * 16;
+    const baseVaddr = 0x400000;
+    const stringOffsets: number[] = [];
+    const stringTableParts = [Buffer.from([0])];
+    for (const library of libraries) {
+        stringOffsets.push(Buffer.concat(stringTableParts).length);
+        stringTableParts.push(Buffer.from(`${library}\0`, "utf8"));
+    }
+    const stringTable = Buffer.concat(stringTableParts);
+    const totalSize = stringTableOffset + stringTable.length;
+    const elf = Buffer.alloc(totalSize);
+    elfHeader(machine).copy(elf, 0);
+    elf.writeBigUInt64LE(BigInt(headerSize), 32);
+    elf.writeUInt16LE(headerSize, 52);
+    elf.writeUInt16LE(programHeaderSize, 54);
+    elf.writeUInt16LE(programHeaderCount, 56);
+
+    writeProgramHeader(elf, headerSize, {
+        type: 1,
+        offset: 0,
+        vaddr: baseVaddr,
+        filesz: totalSize,
+        memsz: totalSize,
+    });
+    writeProgramHeader(elf, headerSize + programHeaderSize, {
+        type: 2,
+        offset: dynamicOffset,
+        vaddr: baseVaddr + dynamicOffset,
+        filesz: (libraries.length + 3) * 16,
+        memsz: (libraries.length + 3) * 16,
+    });
+
+    let dynamicCursor = dynamicOffset;
+    for (const stringOffset of stringOffsets) {
+        writeDynamicEntry(elf, dynamicCursor, 1, stringOffset);
+        dynamicCursor += 16;
+    }
+    writeDynamicEntry(elf, dynamicCursor, 5, baseVaddr + stringTableOffset);
+    dynamicCursor += 16;
+    writeDynamicEntry(elf, dynamicCursor, 10, stringTable.length);
+    stringTable.copy(elf, stringTableOffset);
+    return elf;
+}
+
+function writeProgramHeader(buffer: Buffer, offset: number, input: { type: number; offset: number; vaddr: number; filesz: number; memsz: number }) {
+    buffer.writeUInt32LE(input.type, offset);
+    buffer.writeUInt32LE(5, offset + 4);
+    buffer.writeBigUInt64LE(BigInt(input.offset), offset + 8);
+    buffer.writeBigUInt64LE(BigInt(input.vaddr), offset + 16);
+    buffer.writeBigUInt64LE(BigInt(input.vaddr), offset + 24);
+    buffer.writeBigUInt64LE(BigInt(input.filesz), offset + 32);
+    buffer.writeBigUInt64LE(BigInt(input.memsz), offset + 40);
+    buffer.writeBigUInt64LE(BigInt(0x1000), offset + 48);
+}
+
+function writeDynamicEntry(buffer: Buffer, offset: number, tag: number, value: number) {
+    buffer.writeBigUInt64LE(BigInt(tag), offset);
+    buffer.writeBigUInt64LE(BigInt(value), offset + 8);
 }
 
 function machoHeader(cpuType: number): Buffer {
