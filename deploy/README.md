@@ -101,7 +101,7 @@ pnpm team:node-artifacts -- --version 20.20.2 --target linux-arm64 --target darw
 
 目标机不访问公网；这些 Node 制品由企业 server 自分发。若 artifact 缺失，对应 provisioning job 会在 `install_node` 步骤失败并提示缺少的 server-side path。
 
-如果用源码直接跑 server，需要先生成同名 CLI artifact。`pnpm install --force` 会安装所有 optional dependency，包括非当前构建机平台的 Claude Agent SDK native binaries；否则同一个 `happy-cli.tgz` 可能只能在构建机平台启动 Claude remote 模式：
+如果用源码直接跑 server，需要先生成同名 CLI artifact。仓库的 `pnpm-workspace.yaml` 已通过 `supportedArchitectures` 固定安装 Linux/macOS x64/arm64（含 glibc/musl）的 optional native binaries；执行 `pnpm install --force` 后再打包，`happy-cli.tgz` 才能同时覆盖非当前构建机平台的 Claude Agent SDK 与 Codex CLI：
 
 ```bash
 pnpm install --force
@@ -116,7 +116,7 @@ tar -czf .team-artifacts/happy-cli.tgz -C .team-artifacts/happy-cli .
 1. 选择目标成员。
 2. 选择该成员已保存的 SSH 凭据，或输入新的 SSH host、port、username 和密码/私钥。新的凭据可以先保存后复用，也可以直接用于本次 provisioning。
 3. 选择要启用的 agent。默认 Claude Code 使用 `TEAM_ANTHROPIC_API_KEY`；Codex 使用 `TEAM_OPENAI_API_KEY`。
-4. 点击 Start Provisioning。server 会用 ssh2 连接目标机，检测 `uname -s` / `uname -m` 后下载匹配 Node artifact，安装 CLI，执行 `happy enroll --server <url> --token <一次性token>`，写入 `~/.happy-team/agent.env`（权限 600），并拉起 daemon。Linux 优先写 user systemd unit；没有 user systemd 时会尝试普通 daemon + crontab fallback。macOS 写用户级 `~/Library/LaunchAgents/com.happy-team.daemon.plist` 和 `~/.happy-team/launchd-start.sh`，不需要 root 权限；plist 只引用 wrapper，不展开保存公司 API key 或 OAuth token。wrapper 会 source `agent.env`；Claude Personal OAuth 模式下，如果没有 `ANTHROPIC_API_KEY`，会在 daemon 启动时尝试从 `~/.claude/.credentials.json` 导出 `CLAUDE_CODE_OAUTH_TOKEN`，用于规避 launchd 脱离 GUI Keychain session 的限制。
+4. 点击 Start Provisioning。server 会用 ssh2 连接目标机，检测 `uname -s` / `uname -m` 后下载匹配 Node artifact，安装 CLI 并生成 `happy` / `claude` / `codex` wrappers，执行 `happy enroll --server <url> --token <一次性token>`，写入 `~/.happy-team/agent.env`（权限 600），并拉起 daemon。Linux 优先写 user systemd unit；没有 user systemd 时会尝试普通 daemon + crontab fallback。macOS 写用户级 `~/Library/LaunchAgents/com.happy-team.daemon.plist` 和 `~/.happy-team/launchd-start.sh`，不需要 root 权限；plist 只引用 wrapper，不展开保存公司 API key 或 OAuth token。wrapper 会 source `agent.env`；Claude Personal OAuth 模式下，如果没有 `ANTHROPIC_API_KEY`，会在 daemon 启动时尝试从 `~/.claude/.credentials.json` 导出 `CLAUDE_CODE_OAUTH_TOKEN`，用于规避 launchd 脱离 GUI Keychain session 的限制。
 
 Saved SSH Credentials 列表只显示 label/host/user/auth type 和 delete-after-use 标记，不显示密码、私钥或密文。Provisioning 日志会脱敏 token、SSH 凭据、公司 API key。响应里的 Manual Command 是兜底安装命令，可复制到目标机器手工执行；一次性 token 默认 15 分钟有效，只能使用一次。Manual Command 不包含公司 API key；它会导出 provisioned Node 的 `PATH`、完成 enroll 并启动 daemon，daemon 首次上线后由 server 通过加密 Machine RPC 写入当前成员的 `agent.env`。
 
@@ -139,7 +139,7 @@ Audit 页可按 action 名称过滤，例如 `login`、`create_user`、`provisio
 成员在 Settings 里打开 Team Agent Access 可切换每个 agent 的认证模式：
 
 - Company API：daemon 的 `agent.env` 写入 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`，请求走公司 key。
-- Personal OAuth：daemon RPC 会重写 `agent.env` 并清除对应公司 key；成员随后通过网页远程会话在目标机器上完成一次 `claude` 或 `codex` 登录。Provisioning 会提供 `~/.happy-team/bin/claude` wrapper（来自 CLI artifact 内置 Claude Agent SDK native binary），目标机没有系统级 `claude` 时可用 `~/.happy-team/bin/claude login`。
+- Personal OAuth：daemon RPC 会重写 `agent.env` 并清除对应公司 key；成员随后通过网页远程会话在目标机器上完成一次 `claude` 或 `codex` 登录。Provisioning 会提供 `~/.happy-team/bin/claude` 与 `~/.happy-team/bin/codex` wrapper（来自 CLI artifact 内置 native binaries），目标机没有系统级命令时可用 `~/.happy-team/bin/claude login` 或 `~/.happy-team/bin/codex login`。
 
 机器离线时切换会进入 pending；daemon 下次上线后通过现有 Machine RPC 应用变更并自重启。Team Agent Access 页面会显示每台机器的 agent-auth 应用状态，便于确认 pending/failed 机器。切换到 Claude Personal OAuth 时，daemon 会清除 `ANTHROPIC_API_KEY` 并尝试从本机 `~/.claude/.credentials.json` 重新导出 `CLAUDE_CODE_OAUTH_TOKEN` 供自重启后的进程使用；切回 Company API 时会清除旧的 `CLAUDE_CODE_OAUTH_TOKEN`。切换回 Company API 要求 server 环境中仍配置对应的 `TEAM_ANTHROPIC_API_KEY` / `TEAM_OPENAI_API_KEY`。
 
@@ -153,7 +153,7 @@ curl -sS \
   "$TEAM_PUBLIC_SERVER_URL/v1/team/admin/preflight"
 ```
 
-返回只包含状态、artifact 路径/大小和布尔配置结果，不返回 `HANDY_MASTER_SECRET`、SSH 凭据、`TEAM_ANTHROPIC_API_KEY` 或 `TEAM_OPENAI_API_KEY` 的值。预检还会检查 `happy-cli.tgz` 是否包含 Linux/macOS x64/arm64 的 Claude Agent SDK native binaries。`status=action_required` 表示某个默认路径会阻止零配置 Company API provisioning；`status=warning` 通常表示当前部署可跑本机/Linux x64，但远程机器或非 x64/macOS 验收前还需要补 artifact 或替换 localhost URL。
+返回只包含状态、artifact 路径/大小和布尔配置结果，不返回 `HANDY_MASTER_SECRET`、SSH 凭据、`TEAM_ANTHROPIC_API_KEY` 或 `TEAM_OPENAI_API_KEY` 的值。预检还会检查 `happy-cli.tgz` 是否包含 Linux/macOS x64/arm64 的 Claude Agent SDK 与 Codex CLI native binaries。`status=action_required` 表示某个默认路径会阻止零配置 Company API provisioning；`status=warning` 通常表示当前部署可跑本机/Linux x64，但远程机器或非 x64/macOS 验收前还需要补 artifact 或替换 localhost URL。
 
 至少在以下时间点跑一次预检：
 

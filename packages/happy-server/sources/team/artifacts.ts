@@ -22,6 +22,13 @@ type TeamCliClaudeSdkTarget = {
     entry: string;
     exists: boolean;
 };
+type TeamCliCodexTarget = {
+    platform: NodeArtifactPlatform;
+    arch: NodeArtifactArch;
+    packageName: string;
+    entry: string;
+    exists: boolean;
+};
 
 export type NodeArtifactPlatform = typeof NODE_ARTIFACT_PLATFORMS[number];
 export type NodeArtifactArch = typeof NODE_ARTIFACT_ARCHES[number];
@@ -45,6 +52,15 @@ export type TeamCliClaudeSdkInfo = {
     complete: boolean;
     error?: string;
     targets: TeamCliClaudeSdkTarget[];
+};
+export type TeamCliCodexInfo = {
+    path: string;
+    exists: boolean;
+    complete: boolean;
+    launcherExists: boolean;
+    launcherEntry: string;
+    error?: string;
+    targets: TeamCliCodexTarget[];
 };
 
 const TEAM_CLAUDE_SDK_TARGETS: Array<Omit<TeamCliClaudeSdkTarget, "exists">> = [
@@ -71,6 +87,33 @@ const TEAM_CLAUDE_SDK_TARGETS: Array<Omit<TeamCliClaudeSdkTarget, "exists">> = [
         arch: "arm64",
         packageName: "@anthropic-ai/claude-agent-sdk-darwin-arm64",
         entry: "node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude",
+    },
+];
+const TEAM_CODEX_LAUNCHER_ENTRY = "node_modules/@openai/codex/bin/codex.js";
+const TEAM_CODEX_TARGETS: Array<Omit<TeamCliCodexTarget, "exists">> = [
+    {
+        platform: "linux",
+        arch: "x64",
+        packageName: "@openai/codex-linux-x64",
+        entry: "node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex/codex",
+    },
+    {
+        platform: "linux",
+        arch: "arm64",
+        packageName: "@openai/codex-linux-arm64",
+        entry: "node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/codex/codex",
+    },
+    {
+        platform: "darwin",
+        arch: "x64",
+        packageName: "@openai/codex-darwin-x64",
+        entry: "node_modules/@openai/codex-darwin-x64/vendor/x86_64-apple-darwin/codex/codex",
+    },
+    {
+        platform: "darwin",
+        arch: "arm64",
+        packageName: "@openai/codex-darwin-arm64",
+        entry: "node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex/codex",
     },
 ];
 
@@ -135,6 +178,48 @@ export async function getTeamCliClaudeSdkInfo(): Promise<TeamCliClaudeSdkInfo> {
             complete: false,
             error: error instanceof Error ? error.message : "Unable to inspect CLI artifact",
             targets: TEAM_CLAUDE_SDK_TARGETS.map((target) => ({ ...target, exists: false })),
+        };
+    }
+}
+
+export async function getTeamCliCodexInfo(): Promise<TeamCliCodexInfo> {
+    const artifact = getTeamCliArtifactInfo();
+    if (!artifact.exists) {
+        return {
+            path: artifact.path,
+            exists: false,
+            complete: false,
+            launcherExists: false,
+            launcherEntry: TEAM_CODEX_LAUNCHER_ENTRY,
+            targets: TEAM_CODEX_TARGETS.map((target) => ({ ...target, exists: false })),
+        };
+    }
+
+    try {
+        const expectedEntries = [TEAM_CODEX_LAUNCHER_ENTRY, ...TEAM_CODEX_TARGETS.map((target) => target.entry)];
+        const foundEntries = await findGzipTarEntries(artifact.path, expectedEntries);
+        const launcherExists = foundEntries.has(TEAM_CODEX_LAUNCHER_ENTRY);
+        const targets = TEAM_CODEX_TARGETS.map((target) => ({
+            ...target,
+            exists: foundEntries.has(target.entry),
+        }));
+        return {
+            path: artifact.path,
+            exists: true,
+            complete: launcherExists && targets.every((target) => target.exists),
+            launcherExists,
+            launcherEntry: TEAM_CODEX_LAUNCHER_ENTRY,
+            targets,
+        };
+    } catch (error) {
+        return {
+            path: artifact.path,
+            exists: true,
+            complete: false,
+            launcherExists: false,
+            launcherEntry: TEAM_CODEX_LAUNCHER_ENTRY,
+            error: error instanceof Error ? error.message : "Unable to inspect CLI artifact",
+            targets: TEAM_CODEX_TARGETS.map((target) => ({ ...target, exists: false })),
         };
     }
 }
@@ -405,6 +490,7 @@ export function buildManualInstallCommand(input: {
         `printf '%s\\n' ${wrapperLines} > "$HOME/.happy-team/bin/happy"`,
         "chmod 700 \"$HOME/.happy-team/bin/happy\"",
         buildClaudeSdkCliWrapperCommand(),
+        buildCodexCliWrapperCommand(),
         "PATH=\"$HOME/.happy-team/bin:$PATH\"; export PATH",
         "\"$HOME/.happy-team/bin/happy\" enroll --server " + server + " --token " + token + " --force",
         "HAPPY_SERVER_URL=" + server + " \"$HOME/.happy-team/bin/happy\" daemon start",
@@ -455,6 +541,24 @@ export function buildClaudeSdkCliWrapperCommand(): string {
         wrapperScript,
         "HAPPY_TEAM_CLAUDE_SH",
         "chmod 700 \"$HOME/.happy-team/bin/claude\"",
+    ].join("\n");
+}
+
+export function buildCodexCliWrapperCommand(nodeCommand = "\"$HOME/.happy-team/bin/node\""): string {
+    const wrapperScript = [
+        "#!/bin/sh",
+        "codex_js=\"$HOME/.happy-team/cli/node_modules/@openai/codex/bin/codex.js\"",
+        "if [ ! -f \"$codex_js\" ]; then",
+        "  echo \"Codex CLI launcher missing at $codex_js. Run Deployment Preflight and rebuild happy-cli.tgz with @openai/codex installed.\" >&2",
+        "  exit 127",
+        "fi",
+        `exec ${nodeCommand} "$codex_js" "$@"`,
+    ].join("\n");
+    return [
+        "cat > \"$HOME/.happy-team/bin/codex\" <<'HAPPY_TEAM_CODEX_SH'",
+        wrapperScript,
+        "HAPPY_TEAM_CODEX_SH",
+        "chmod 700 \"$HOME/.happy-team/bin/codex\"",
     ].join("\n");
 }
 

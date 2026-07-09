@@ -1,5 +1,5 @@
 import { type FastifyRequest } from "fastify";
-import { getTeamCliArtifactInfo, getTeamCliClaudeSdkInfo, getTeamNodeArtifactInfo, getTeamPublicServerUrl } from "@/team/artifacts";
+import { getTeamCliArtifactInfo, getTeamCliClaudeSdkInfo, getTeamCliCodexInfo, getTeamNodeArtifactInfo, getTeamPublicServerUrl } from "@/team/artifacts";
 
 type PreflightStatus = "ok" | "warning" | "action_required";
 
@@ -105,6 +105,35 @@ export async function getTeamDeploymentPreflight(request?: FastifyRequest) {
                 cliArtifactPath: cliClaudeSdkInfo.path,
                 inspected: cliClaudeSdkInfo.exists && !cliClaudeSdkInfo.error,
                 error: cliClaudeSdkInfo.error ?? null,
+            },
+        });
+    }
+
+    const cliCodexInfo = await getTeamCliCodexInfo();
+    for (const target of NODE_TARGETS) {
+        const codexTarget = cliCodexInfo.targets.find((candidate) => candidate.platform === target.platform && candidate.arch === target.arch);
+        const nodeInfo = nodeArtifactInfos.get(`${target.platform}_${target.arch}`);
+        const requiredForConfiguredTarget = target.required || Boolean(nodeInfo?.exists);
+        const codexBinaryReady = Boolean(cliCodexInfo.exists && !cliCodexInfo.error && cliCodexInfo.launcherExists && codexTarget?.exists);
+        checks.push({
+            key: `codex_cli_binary_${target.platform}_${target.arch}`,
+            status: codexBinaryReady ? "ok" : requiredForConfiguredTarget ? "action_required" : "warning",
+            message: codexBinaryReady
+                ? `Codex CLI native binary for ${target.platform}/${target.arch} is included in the CLI artifact.`
+                : cliCodexInfo.error
+                ? `Unable to inspect Codex CLI native binary for ${target.platform}/${target.arch}: ${cliCodexInfo.error}`
+                : `Codex CLI native binary for ${target.platform}/${target.arch} is missing from the CLI artifact${requiredForConfiguredTarget ? "." : "; include it before provisioning this platform."}`,
+            detail: {
+                platform: target.platform,
+                arch: target.arch,
+                packageName: codexTarget?.packageName ?? null,
+                entry: codexTarget?.entry ?? null,
+                exists: codexTarget?.exists ?? false,
+                launcherEntry: cliCodexInfo.launcherEntry,
+                launcherExists: cliCodexInfo.launcherExists,
+                cliArtifactPath: cliCodexInfo.path,
+                inspected: cliCodexInfo.exists && !cliCodexInfo.error,
+                error: cliCodexInfo.error ?? null,
             },
         });
     }

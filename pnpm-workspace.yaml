@@ -6,3 +6,16 @@ packages:
   - "packages/happy-wire"
   - "packages/happy-app-logs"
   - "packages/codium"
+supportedArchitectures:
+  os:
+    - linux
+    - darwin
+    - current
+  cpu:
+    - x64
+    - arm64
+    - current
+  libc:
+    - glibc
+    - musl
+    - current

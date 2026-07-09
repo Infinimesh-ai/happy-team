@@ -53,6 +53,8 @@ describe("provision daemon startup script", () => {
         expect(command).toContain("'/usr/local/bin/node' -e 'console.log(\"happy cli installed\")'");
         expect(command).toContain("cat > \"$HOME/.happy-team/bin/claude\"");
         expect(command).toContain("@anthropic-ai/claude-agent-sdk-darwin-arm64");
+        expect(command).toContain("cat > \"$HOME/.happy-team/bin/codex\"");
+        expect(command).toContain("exec '/usr/local/bin/node' \"$codex_js\" \"$@\"");
         expect(command).not.toContain("\"$HOME/.happy-team/bin/node\" -e");
     });
 

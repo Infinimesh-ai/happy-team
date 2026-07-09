@@ -4,7 +4,7 @@ import { tmpdir } from "os";
 import path from "path";
 import { gzipSync } from "zlib";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildClaudeSdkCliWrapperCommand, buildManualInstallCommand, getTeamCliClaudeSdkInfo, getTeamNodeArtifactInfo, validateNodeArtifactBinary } from "@/team/artifacts";
+import { buildClaudeSdkCliWrapperCommand, buildCodexCliWrapperCommand, buildManualInstallCommand, getTeamCliClaudeSdkInfo, getTeamCliCodexInfo, getTeamNodeArtifactInfo, shellQuote, validateNodeArtifactBinary } from "@/team/artifacts";
 
 const originalCliArtifactPath = process.env.TEAM_CLI_ARTIFACT_PATH;
 const originalNodeArtifactDir = process.env.TEAM_NODE_ARTIFACT_DIR;
@@ -126,6 +126,8 @@ describe("team artifacts", () => {
         expect(command).toContain("PATH=\"$HOME/.happy-team/bin:$PATH\"; export PATH");
         expect(command).toContain("cat > \"$HOME/.happy-team/bin/claude\"");
         expect(command).toContain("@anthropic-ai/claude-agent-sdk-darwin-arm64");
+        expect(command).toContain("cat > \"$HOME/.happy-team/bin/codex\"");
+        expect(command).toContain("@openai/codex/bin/codex.js");
         expect(command).toContain("enroll --server");
         expect(command).not.toContain("TEAM_ANTHROPIC_API_KEY");
         expect(command).not.toContain("TEAM_OPENAI_API_KEY");
@@ -143,6 +145,26 @@ describe("team artifacts", () => {
 
         const info = await getTeamCliClaudeSdkInfo();
         expect(info.exists).toBe(true);
+        expect(info.complete).toBe(false);
+        expect(info.targets.find((target) => target.platform === "linux" && target.arch === "x64")?.exists).toBe(true);
+        expect(info.targets.find((target) => target.platform === "linux" && target.arch === "arm64")?.exists).toBe(false);
+        expect(info.targets.find((target) => target.platform === "darwin" && target.arch === "arm64")?.exists).toBe(true);
+    });
+
+    it("inspects CLI artifacts for Codex native binaries", async () => {
+        const artifactDir = await mkdtemp(path.join(tmpdir(), "happy-team-codex-artifact-"));
+        tempDirs.push(artifactDir);
+        const artifactPath = path.join(artifactDir, "happy-cli.tgz");
+        process.env.TEAM_CLI_ARTIFACT_PATH = artifactPath;
+        await writeFile(artifactPath, tarGzip([
+            "./node_modules/@openai/codex/bin/codex.js",
+            "./node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex/codex",
+            "./node_modules/@openai/codex-darwin-arm64/vendor/aarch64-apple-darwin/codex/codex",
+        ]));
+
+        const info = await getTeamCliCodexInfo();
+        expect(info.exists).toBe(true);
+        expect(info.launcherExists).toBe(true);
         expect(info.complete).toBe(false);
         expect(info.targets.find((target) => target.platform === "linux" && target.arch === "x64")?.exists).toBe(true);
         expect(info.targets.find((target) => target.platform === "linux" && target.arch === "arm64")?.exists).toBe(false);
@@ -167,6 +189,25 @@ describe("team artifacts", () => {
         expect(result.status).toBe(0);
         expect(result.stderr).toBe("");
         expect(result.stdout.trim()).toBe("fake-claude:--version");
+    });
+
+    it("creates a codex wrapper that executes the packaged CLI launcher", async () => {
+        const home = await mkdtemp(path.join(tmpdir(), "happy-team-codex-wrapper-"));
+        tempDirs.push(home);
+        await mkdir(path.join(home, ".happy-team", "bin"), { recursive: true });
+        await writeFakeCodexLauncher(home);
+
+        const result = spawnSync("sh", ["-c", `set -eu\n${buildCodexCliWrapperCommand(shellQuote(process.execPath))}\n"$HOME/.happy-team/bin/codex" --version`], {
+            env: {
+                ...process.env,
+                HOME: home,
+            },
+            encoding: "utf8",
+        });
+
+        expect(result.status).toBe(0);
+        expect(result.stderr).toBe("");
+        expect(result.stdout.trim()).toBe("fake-codex:--version");
     });
 });
 
@@ -220,4 +261,10 @@ async function writeFakeClaudeSdkBinary(home: string, packageName: string): Prom
     const binaryPath = path.join(home, ".happy-team", "cli", "node_modules", packageName, "claude");
     await mkdir(path.dirname(binaryPath), { recursive: true });
     await writeFile(binaryPath, "#!/bin/sh\nprintf 'fake-claude:%s\\n' \"$*\"\n", { mode: 0o700 });
+}
+
+async function writeFakeCodexLauncher(home: string): Promise<void> {
+    const launcherPath = path.join(home, ".happy-team", "cli", "node_modules", "@openai", "codex", "bin", "codex.js");
+    await mkdir(path.dirname(launcherPath), { recursive: true });
+    await writeFile(launcherPath, "console.log(`fake-codex:${process.argv.slice(2).join(' ')}`);\n", { mode: 0o700 });
 }

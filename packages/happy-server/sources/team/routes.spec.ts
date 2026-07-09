@@ -155,6 +155,10 @@ describe("team routes", () => {
             "claude_sdk_binary_linux_arm64",
             "claude_sdk_binary_darwin_x64",
             "claude_sdk_binary_darwin_arm64",
+            "codex_cli_binary_linux_x64",
+            "codex_cli_binary_linux_arm64",
+            "codex_cli_binary_darwin_x64",
+            "codex_cli_binary_darwin_arm64",
             "team_anthropic_api_key",
             "team_openai_api_key",
         ]));
