@@ -98,6 +98,35 @@ describe("team routes", () => {
         expect(adminBody.role).toBe(TeamRole.ADMIN);
         expect(Buffer.from(adminBody.secretKey, "base64url")).toHaveLength(32);
 
+        const adminPreflight = await app.inject({
+            method: "GET",
+            url: "/v1/team/admin/preflight",
+            headers: { authorization: `Bearer ${adminBody.happyToken}` },
+        });
+        expect(adminPreflight.statusCode).toBe(200);
+        const adminPreflightBody = adminPreflight.json<{
+            status: "ok" | "warning" | "action_required";
+            serverUrl: string;
+            checks: Array<{ key: string; status: string; detail?: Record<string, unknown> }>;
+        }>();
+        expect(["ok", "warning", "action_required"]).toContain(adminPreflightBody.status);
+        expect(adminPreflightBody.serverUrl).toBeTruthy();
+        expect(adminPreflightBody.checks.map((check) => check.key)).toEqual(expect.arrayContaining([
+            "handy_master_secret",
+            "team_public_server_url",
+            "team_cli_artifact",
+            "node_artifact_linux_x64",
+            "node_artifact_linux_arm64",
+            "node_artifact_darwin_x64",
+            "node_artifact_darwin_arm64",
+            "team_anthropic_api_key",
+            "team_openai_api_key",
+        ]));
+        const adminPreflightJson = JSON.stringify(adminPreflightBody);
+        expect(adminPreflightJson).not.toContain("team-routes-test-master-secret");
+        expect(adminPreflightJson).not.toContain("sk-ant-routes-test");
+        expect(adminPreflightJson).not.toContain("sk-openai-routes-test");
+
         const createMember = await postJson("/v1/team/admin/users", {
             email: "member@example.com",
             role: "MEMBER",
@@ -118,6 +147,13 @@ describe("team routes", () => {
         const memberBody = memberLogin.json<{ happyToken: string; secretKey: string; mustChangePassword: boolean }>();
         expect(memberBody.mustChangePassword).toBe(true);
         expect(Buffer.from(memberBody.secretKey, "base64url")).toHaveLength(32);
+
+        const memberPreflight = await app.inject({
+            method: "GET",
+            url: "/v1/team/admin/preflight",
+            headers: { authorization: `Bearer ${memberBody.happyToken}` },
+        });
+        expect(memberPreflight.statusCode).toBe(403);
 
         const enrollToken = await postJson("/v1/team/admin/enroll-token", {
             targetUserId: createMemberBody.user.id,

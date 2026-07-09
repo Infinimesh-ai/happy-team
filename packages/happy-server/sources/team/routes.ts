@@ -7,6 +7,7 @@ import { queueAgentAuthSyncForUser } from "@/team/agentAuth";
 import { getTeamPublicServerUrl, sendNodeArtifact, sendTeamCliArtifact } from "@/team/artifacts";
 import { writeTeamAudit } from "@/team/audit";
 import { consumeEnrollToken, createEnrollToken } from "@/team/enrollTokens";
+import { getTeamDeploymentPreflight } from "@/team/preflight";
 import { buildProvisionManualInstallCommand, enqueueProvisionJob, getProvisionQueueState } from "@/team/provision/runner";
 import { checkLoginRateLimit } from "@/team/rateLimit";
 import { getActiveAdminTeamUser, getActiveTeamUser } from "@/team/status";
@@ -393,6 +394,16 @@ export function teamRoutes(app: Fastify) {
             })),
             nextCursor: logs.length === request.query.limit ? logs[logs.length - 1]?.id : null,
         });
+    });
+
+    app.get("/v1/team/admin/preflight", {
+        preHandler: app.authenticate,
+    }, async (request, reply) => {
+        const { teamUser: admin, response } = await requireAdmin(request, reply);
+        if (!admin) {
+            return response;
+        }
+        return reply.send(getTeamDeploymentPreflight(request));
     });
 
     app.post("/v1/team/admin/enroll-token", {

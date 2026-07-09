@@ -127,7 +127,25 @@ Audit 页可按 action 名称过滤，例如 `login`、`create_user`、`provisio
 
 机器离线时切换会进入 pending；daemon 下次上线后通过现有 Machine RPC 应用变更并自重启。切换回 Company API 要求 server 环境中仍配置对应的 `TEAM_ANTHROPIC_API_KEY` / `TEAM_OPENAI_API_KEY`。
 
-## 6. M0 手动端到端验证
+## 6. 部署预检
+
+管理员可以在正式初始化机器前调用预检接口，确认 server 看到的公开 URL、CLI artifact、各平台 Node artifact 和 Company API key 配置状态：
+
+```bash
+curl -sS \
+  -H "Authorization: Bearer <admin happyToken>" \
+  "$TEAM_PUBLIC_SERVER_URL/v1/team/admin/preflight"
+```
+
+返回只包含状态、artifact 路径/大小和布尔配置结果，不返回 `HANDY_MASTER_SECRET`、SSH 凭据、`TEAM_ANTHROPIC_API_KEY` 或 `TEAM_OPENAI_API_KEY` 的值。`status=action_required` 表示某个默认路径会阻止零配置 Company API provisioning；`status=warning` 通常表示当前部署可跑本机/Linux x64，但远程机器或非 x64/macOS 验收前还需要补 artifact 或替换 localhost URL。
+
+至少在以下时间点跑一次预检：
+
+- 首次 `docker compose up -d` 后、创建 SSH 凭据前。
+- 放入 `linux-arm64` 或 `darwin-*` Node artifact 后。
+- 轮换 `HANDY_MASTER_SECRET`、公司 API key、域名或反代配置后。
+
+## 7. M0 手动端到端验证
 
 在一台 Linux 机器上安装 CLI，并让它指向自托管 server：
 
@@ -146,6 +164,6 @@ pnpm --filter happy exec happy daemon start
 
 然后打开 `http://localhost:8080`，完成现有 Happy 登录流程，确认能看到该机器并发起一次 Claude Code 会话：发送一条消息、看到输出、完成一次权限审批。
 
-## 7. 备份要求
+## 8. 备份要求
 
 Postgres 和 MinIO 数据卷必须备份。进入 M1 之后，Postgres 会包含托管 NaCl 私钥密文和 SSH 凭据密文，因此备份必须加密，且备份密钥与 `HANDY_MASTER_SECRET` 分开管理。
