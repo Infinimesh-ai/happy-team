@@ -85,6 +85,20 @@ Docker 部署时不需要额外构建 CLI artifact；`Dockerfile.server` 会在 
 .team-artifacts/node/linux/arm64/node
 ```
 
+可用内置脚本从 Node.js 官方 dist 下载并校验 SHA256 后生成上述目录。默认下载 `linux-arm64`、`darwin-arm64`、`darwin-x64` 的 Node `20.20.2` 制品：
+
+```bash
+pnpm team:node-artifacts
+```
+
+也可以显式指定版本和目标平台：
+
+```bash
+pnpm team:node-artifacts -- --version 20.20.2 --target linux-arm64 --target darwin-arm64 --target darwin-x64
+```
+
+脚本只在部署机准备 artifact 时访问公网；目标机器仍只从企业 server 下载这些制品，不需要外网。每次补充或替换 artifact 后，重启 server 容器或确认 compose 挂载目录已包含新文件，再打开 Deployment Preflight 检查对应平台是否变为 Ready。
+
 目标机不访问公网；这些 Node 制品由企业 server 自分发。若 artifact 缺失，对应 provisioning job 会在 `install_node` 步骤失败并提示缺少的 server-side path。
 
 如果用源码直接跑 server，需要先生成同名 CLI artifact：

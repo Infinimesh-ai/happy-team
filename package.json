@@ -4,6 +4,7 @@
     "scripts": {
         "cli": "pnpm --filter happy cli",
         "release": "node ./scripts/release.cjs",
+        "team:node-artifacts": "node ./scripts/team-node-artifacts.cjs",
         "web": "pnpm --filter happy-app web",
         "codium": "pnpm --filter codium dev",
         "app-logs": "pnpm --filter happy-app-logs start",
