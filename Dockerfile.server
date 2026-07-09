@@ -31,10 +31,14 @@ FROM deps AS builder
 
 COPY packages/happy-wire ./packages/happy-wire
 COPY packages/happy-server ./packages/happy-server
+COPY packages/happy-cli ./packages/happy-cli
 COPY packages/happy-app/sources/sync ./packages/happy-app/sources/sync
 
 RUN pnpm --filter @slopus/happy-wire build
 RUN pnpm --filter happy-server-self-host typecheck
+RUN pnpm --filter happy build
+RUN pnpm --filter happy deploy --prod --legacy /repo/.team-artifacts/happy-cli \
+    && tar -czf /repo/.team-artifacts/happy-cli.tgz -C /repo/.team-artifacts/happy-cli .
 
 # Stage 3: runtime
 FROM node:20 AS runner
@@ -52,6 +56,7 @@ ENV NODE_ENV=production
 COPY --from=builder /repo/node_modules /repo/node_modules
 COPY --from=builder /repo/packages/happy-wire /repo/packages/happy-wire
 COPY --from=builder /repo/packages/happy-server /repo/packages/happy-server
+COPY --from=builder /repo/.team-artifacts/happy-cli.tgz /opt/happy-team/artifacts/happy-cli.tgz
 
 # Expose the port the app will run on
 EXPOSE 3005

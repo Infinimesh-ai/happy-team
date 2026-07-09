@@ -217,9 +217,9 @@ model TeamAuditLog {
 | PATCH | `/v1/team/admin/users/:id` | 禁用/启用、重置密码（返回一次性临时密码）、代改 agent 认证模式 |
 | GET | `/v1/team/admin/machines` | 全团队机器聚合：归属成员、在线状态、最近心跳（复用现有 Machine 数据） |
 | POST/GET/DELETE | `/v1/team/admin/ssh-credentials` | 凭据 CRUD（响应中**永不回传**明文/密文凭据本体） |
-| POST | `/v1/team/admin/provision` | `{credentialId, targetUserId, agents[]}` → 创建 job 入队 |
-| GET | `/v1/team/admin/provision/:id` | job 状态 + 日志（前端轮询，间隔 2s 足够） |
-| GET | `/v1/team/admin/provision` | job 列表 |
+| POST | `/v1/team/admin/provision-jobs` | `{credentialId, targetUserId, agents[]}` → 创建 job 入队 |
+| GET | `/v1/team/admin/provision-jobs/:id` | job 状态 + 日志（前端轮询，间隔 2s 足够） |
+| GET | `/v1/team/admin/provision-jobs` | job 列表 |
 | POST | `/v1/team/admin/enroll-token` | `{targetUserId}` → 一次性 token 明文（也用于"手动安装"场景：管理员把一行命令发给成员自己执行） |
 | GET | `/v1/team/admin/audit` | 审计日志分页查询 |
 
@@ -256,8 +256,8 @@ PENDING → RUNNING(connect → detect → install_node → install_cli
 | step | 内容 | 失败处理 |
 |---|---|---|
 | connect | SSH 连接（密码或私钥） | 明确报错：认证失败/不可达/超时 |
-| detect | `uname -sm`、`node -v`、`command -v happy`、是否 systemd、是否有出网代理 env | 不支持的 OS 直接 FAILED（首版支持 Linux x64/arm64，其次 macOS） |
-| install_node | 无 Node≥20 时，下载自包含 Node 二进制解压到 `~/.happy-team/node/`（**不依赖 root 与系统包管理器**）。二进制从企业服务器自身分发（server 启动时预置多平台 tarball 到 S3/本地），不依赖目标机访问外网 nodejs.org | 下载失败给出代理配置提示 |
+| detect | `uname -sm`、`node -v`、`command -v happy`、是否 systemd、是否有出网代理 env | 不支持的 OS 直接 FAILED（M2 代码事实：当前自动分发只验证 Linux x64/glibc；arm64/macOS 放到后续里程碑） |
+| install_node | 无 Node≥20 时，下载自包含 Node 二进制到 `~/.happy-team/bin/node`（**不依赖 root 与系统包管理器**）。M2 代码事实：`/v1/team/artifacts/node/linux/x64` 从 server 镜像自身 Node runtime 分发 Linux x64/glibc 二进制，不依赖目标机访问外网 nodejs.org；Alpine/musl 目标机在 E2E 中验证为不兼容，需要后续提供 musl/多平台制品 | 下载失败给出代理配置提示 |
 | install_cli | 从企业服务器分发 fork 版 CLI tarball，`npm install -g` 到用户级前缀（`~/.happy-team/prefix`），或直接解包运行 | |
 | enroll | 服务端为目标成员生成一次性 EnrollToken → 远端执行 `happy enroll --server <url> --token <t>` | token 单次有效，日志中脱敏 |
 | setup_agents | 检测 `claude` / `codex` 是否可用（缺失则从企业服务器分发安装）；按目标成员的 agentAuthMode（§9.5）生成 `~/.happy-team/agent.env`：COMPANY_API 模式写入公司 API key 环境变量，PERSONAL_OAUTH 模式不写 key 并在 job 结果标注"待成员完成一次 OAuth 登录" | 缺 agent 且无法安装不算 FAILED，标 warning |
@@ -274,13 +274,15 @@ PENDING → RUNNING(connect → detect → install_node → install_cli
 ### 9.3 手动安装兜底（必须实现，成本极低）
 管理后台提供"复制安装命令"：
 ```bash
-npx <fork-cli-package> enroll --server https://happy.yourco.com --token <t> && happy daemon start
+curl/wget https://happy.yourco.com/v1/team/artifacts/cli.tgz ... &&
+~/.happy-team/bin/happy enroll --server https://happy.yourco.com --token <t> --force &&
+HAPPY_SERVER_URL=https://happy.yourco.com ~/.happy-team/bin/happy daemon start
 ```
 覆盖 SSH 不可达/Windows 等场景，成员自己粘贴执行即可。
 
 ### 9.4 首版平台矩阵
-- Linux (x64/arm64, systemd)：完整支持 —— 主要目标场景（成员服务器）。
-- Linux 无 systemd / macOS：daemon 持久化降级方案（cron @reboot / launchd），best effort。
+- M2 代码事实：Linux x64/glibc 已通过 Ubuntu 24.04 sshd 容器端到端验证；Linux 无 systemd 走普通 daemon + `crontab @reboot` fallback。
+- 待补：Linux arm64、多平台 Node tarball、macOS launchd、Alpine/musl Node 兼容。
 - Windows：不支持 SSH 初始化，走手动安装兜底。
 
 ### 9.5 Agent 认证模式（默认公司 API，成员可选个人 OAuth）

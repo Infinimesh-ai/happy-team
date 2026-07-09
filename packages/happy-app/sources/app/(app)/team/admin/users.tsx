@@ -244,6 +244,14 @@ export default function TeamAdminUsersScreen() {
                     </View>
                 </ItemGroup>
 
+                <ItemGroup title={t('team.administration')}>
+                    <Item
+                        title={t('team.provisionMachine')}
+                        subtitle={t('team.provisionMachineSubtitle')}
+                        onPress={() => router.push('/team/admin/provision')}
+                    />
+                </ItemGroup>
+
                 <ItemGroup title={t('team.members')}>
                     {loading ? (
                         <View style={styles.form}>

@@ -27,6 +27,7 @@ import { handleAuthCommand } from './commands/auth'
 import { handleConnectCommand } from './commands/connect'
 import { handleSandboxCommand } from './commands/sandbox'
 import { handleServerCommand } from './commands/server'
+import { handleEnrollCommand } from './commands/enroll'
 import { spawnHappyCLI } from './utils/spawnHappyCLI'
 import { claudeCliPath } from './claude/claudeLocal'
 import { execFileSync } from 'node:child_process'
@@ -113,6 +114,17 @@ Conversation history is preserved on the server, but in-flight tool calls are in
   } else if (subcommand === 'server') {
     try {
       await handleServerCommand(args.slice(1));
+    } catch (error) {
+      console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error')
+      if (process.env.DEBUG) {
+        console.error(error)
+      }
+      process.exit(1)
+    }
+    return;
+  } else if (subcommand === 'enroll') {
+    try {
+      await handleEnrollCommand(args.slice(1));
     } catch (error) {
       console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error')
       if (process.env.DEBUG) {
@@ -680,6 +692,7 @@ ${chalk.bold('Usage:')}
   happy codex             Start Codex mode
   happy gemini            Start Gemini mode (ACP)
   happy acp               Start a generic ACP-compatible agent
+  happy enroll            Enroll this machine with Happy Team
   happy connect           Connect AI vendor API keys
   happy sandbox           Configure and manage OS-level sandboxing
   happy notify            Send push notification

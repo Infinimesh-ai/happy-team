@@ -1,17 +1,23 @@
-import { AgentAuthMode, TeamRole, TeamUserStatus } from "@prisma/client";
+import { AgentAuthMode, ProvisionStatus, SshAuthType, TeamRole, TeamUserStatus } from "@prisma/client";
 import { z } from "zod";
 import { auth } from "@/app/auth/auth";
 import { type Fastify } from "@/app/api/types";
 import { db } from "@/storage/db";
+import { getTeamPublicServerUrl, sendNodeArtifact, sendTeamCliArtifact } from "@/team/artifacts";
 import { writeTeamAudit } from "@/team/audit";
+import { consumeEnrollToken, createEnrollToken } from "@/team/enrollTokens";
+import { buildProvisionManualInstallCommand, enqueueProvisionJob, getProvisionQueueState } from "@/team/provision/runner";
 import { checkLoginRateLimit } from "@/team/rateLimit";
 import { getActiveAdminTeamUser, getActiveTeamUser } from "@/team/status";
 import { assertValidPassword, generateTemporaryPassword, hashPassword, normalizeEmail, verifyPassword } from "@/team/passwords";
+import { createSshCredential, deleteSshCredential, toSafeSshCredential } from "@/team/sshCredentials";
 import { buildTeamLoginResponse, createTeamUser, toSafeTeamUser } from "@/team/teamUsers";
 
 const teamRoleSchema = z.enum([TeamRole.ADMIN, TeamRole.MEMBER]);
 const teamStatusSchema = z.enum([TeamUserStatus.ACTIVE, TeamUserStatus.DISABLED]);
 const agentAuthModeSchema = z.enum([AgentAuthMode.COMPANY_API, AgentAuthMode.PERSONAL_OAUTH]);
+const sshAuthTypeSchema = z.enum([SshAuthType.PASSWORD, SshAuthType.PRIVATE_KEY]);
+const provisionAgentSchema = z.enum(["claude", "codex"]);
 
 async function requireTeamUser(request: { userId: string }, reply: { code: (code: number) => { send: (body: unknown) => unknown } }) {
     const teamUser = await getActiveTeamUser(request.userId);
@@ -30,6 +36,35 @@ async function requireAdmin(request: { userId: string }, reply: { code: (code: n
 }
 
 export function teamRoutes(app: Fastify) {
+    app.get("/v1/team/artifacts/cli.tgz", async (_request, reply) => {
+        return sendTeamCliArtifact(reply);
+    });
+
+    app.get("/v1/team/artifacts/node/:platform/:arch", {
+        schema: {
+            params: z.object({
+                platform: z.string().min(1),
+                arch: z.string().min(1),
+            }),
+        },
+    }, async (request, reply) => {
+        return sendNodeArtifact(reply, request.params.platform, request.params.arch);
+    });
+
+    app.post("/v1/team/enroll", {
+        schema: {
+            body: z.object({
+                token: z.string().min(1),
+            }),
+        },
+    }, async (request, reply) => {
+        const consumed = await consumeEnrollToken(request.body.token);
+        if (!consumed.ok) {
+            return reply.code(consumed.statusCode).send({ error: consumed.error });
+        }
+        return reply.send({ secretKey: consumed.secretKey });
+    });
+
     app.post("/v1/team/auth/login", {
         schema: {
             body: z.object({
@@ -301,4 +336,304 @@ export function teamRoutes(app: Fastify) {
             nextCursor: logs.length === request.query.limit ? logs[logs.length - 1]?.id : null,
         });
     });
+
+    app.post("/v1/team/admin/enroll-token", {
+        preHandler: app.authenticate,
+        schema: {
+            body: z.object({
+                targetUserId: z.string().min(1),
+                agents: z.array(provisionAgentSchema).default(["claude"]),
+                ttlMinutes: z.number().int().min(1).max(60).optional(),
+            }),
+        },
+    }, async (request, reply) => {
+        const { teamUser: admin, response } = await requireAdmin(request, reply);
+        if (!admin) {
+            return response;
+        }
+        const target = await db.teamUser.findUnique({ where: { id: request.body.targetUserId } });
+        if (!target || target.status !== TeamUserStatus.ACTIVE) {
+            return reply.code(404).send({ error: "Active target user not found" });
+        }
+
+        const serverUrl = getTeamPublicServerUrl(request);
+        const token = await createEnrollToken({
+            targetUserId: target.id,
+            actorId: admin.id,
+            ttlMs: (request.body.ttlMinutes ?? 15) * 60 * 1000,
+        });
+
+        return reply.code(201).send({
+            id: token.id,
+            token: token.token,
+            expiresAt: token.expiresAt.toISOString(),
+            manualCommand: buildProvisionManualInstallCommand({
+                serverUrl,
+                token: token.token,
+                agents: request.body.agents,
+            }),
+        });
+    });
+
+    app.get("/v1/team/admin/machines", {
+        preHandler: app.authenticate,
+    }, async (request, reply) => {
+        const { teamUser: admin, response } = await requireAdmin(request, reply);
+        if (!admin) {
+            return response;
+        }
+        const users = await db.teamUser.findMany({
+            orderBy: { email: "asc" },
+            select: { id: true, email: true, accountId: true },
+        });
+        const userByAccount = new Map(users.map((user) => [user.accountId, user]));
+        const machines = await db.machine.findMany({
+            where: { accountId: { in: users.map((user) => user.accountId) } },
+            orderBy: { lastActiveAt: "desc" },
+        });
+        return reply.send({
+            machines: machines.map((machine) => {
+                const owner = userByAccount.get(machine.accountId);
+                return {
+                    id: machine.id,
+                    accountId: machine.accountId,
+                    ownerUserId: owner?.id ?? null,
+                    ownerEmail: owner?.email ?? null,
+                    active: machine.active,
+                    activeAt: machine.lastActiveAt.getTime(),
+                    createdAt: machine.createdAt.toISOString(),
+                    updatedAt: machine.updatedAt.toISOString(),
+                };
+            }),
+        });
+    });
+
+    app.get("/v1/team/admin/ssh-credentials", {
+        preHandler: app.authenticate,
+    }, async (request, reply) => {
+        const { teamUser: admin, response } = await requireAdmin(request, reply);
+        if (!admin) {
+            return response;
+        }
+        const credentials = await db.sshCredential.findMany({
+            orderBy: { createdAt: "desc" },
+        });
+        return reply.send({ credentials: credentials.map(toSafeSshCredential) });
+    });
+
+    app.post("/v1/team/admin/ssh-credentials", {
+        preHandler: app.authenticate,
+        schema: {
+            body: z.object({
+                ownerUserId: z.string().min(1),
+                label: z.string().min(1).max(120),
+                host: z.string().min(1).max(255),
+                port: z.number().int().min(1).max(65535).default(22),
+                username: z.string().min(1).max(128),
+                authType: sshAuthTypeSchema,
+                password: z.string().min(1).optional(),
+                privateKey: z.string().min(1).optional(),
+                passphrase: z.string().optional(),
+                deleteAfterUse: z.boolean().default(false),
+            }),
+        },
+    }, async (request, reply) => {
+        const { teamUser: admin, response } = await requireAdmin(request, reply);
+        if (!admin) {
+            return response;
+        }
+        const owner = await db.teamUser.findUnique({ where: { id: request.body.ownerUserId } });
+        if (!owner || owner.status !== TeamUserStatus.ACTIVE) {
+            return reply.code(404).send({ error: "Active owner user not found" });
+        }
+        if (request.body.authType === SshAuthType.PASSWORD && !request.body.password) {
+            return reply.code(400).send({ error: "password is required for PASSWORD auth" });
+        }
+        if (request.body.authType === SshAuthType.PRIVATE_KEY && !request.body.privateKey) {
+            return reply.code(400).send({ error: "privateKey is required for PRIVATE_KEY auth" });
+        }
+
+        const credential = await createSshCredential({
+            ownerUserId: owner.id,
+            label: request.body.label,
+            host: request.body.host,
+            port: request.body.port,
+            username: request.body.username,
+            deleteAfterUse: request.body.deleteAfterUse,
+            createdBy: admin.id,
+            auth: request.body.authType === SshAuthType.PASSWORD
+                ? { type: SshAuthType.PASSWORD, password: request.body.password! }
+                : { type: SshAuthType.PRIVATE_KEY, privateKey: request.body.privateKey!, passphrase: request.body.passphrase },
+        });
+
+        return reply.code(201).send({ credential });
+    });
+
+    app.delete("/v1/team/admin/ssh-credentials/:id", {
+        preHandler: app.authenticate,
+        schema: {
+            params: z.object({
+                id: z.string().min(1),
+            }),
+        },
+    }, async (request, reply) => {
+        const { teamUser: admin, response } = await requireAdmin(request, reply);
+        if (!admin) {
+            return response;
+        }
+        const deleted = await deleteSshCredential(request.params.id, admin.id);
+        if (!deleted) {
+            return reply.code(404).send({ error: "SSH credential not found" });
+        }
+        return reply.send({ success: true });
+    });
+
+    app.get("/v1/team/admin/provision-jobs", {
+        preHandler: app.authenticate,
+        schema: {
+            querystring: z.object({
+                limit: z.coerce.number().int().min(1).max(100).default(50),
+            }),
+        },
+    }, async (request, reply) => {
+        const { teamUser: admin, response } = await requireAdmin(request, reply);
+        if (!admin) {
+            return response;
+        }
+        const jobs = await db.provisionJob.findMany({
+            orderBy: { createdAt: "desc" },
+            take: request.query.limit,
+        });
+        return reply.send({
+            jobs: jobs.map(toSafeProvisionJob),
+            queue: getProvisionQueueState(),
+        });
+    });
+
+    app.get("/v1/team/admin/provision-jobs/:id", {
+        preHandler: app.authenticate,
+        schema: {
+            params: z.object({
+                id: z.string().min(1),
+            }),
+        },
+    }, async (request, reply) => {
+        const { teamUser: admin, response } = await requireAdmin(request, reply);
+        if (!admin) {
+            return response;
+        }
+        const job = await db.provisionJob.findUnique({ where: { id: request.params.id } });
+        if (!job) {
+            return reply.code(404).send({ error: "Provision job not found" });
+        }
+        return reply.send({ job: toSafeProvisionJob(job), queue: getProvisionQueueState() });
+    });
+
+    app.post("/v1/team/admin/provision-jobs", {
+        preHandler: app.authenticate,
+        schema: {
+            body: z.object({
+                credentialId: z.string().min(1),
+                targetUserId: z.string().min(1),
+                agents: z.array(provisionAgentSchema).default(["claude"]),
+            }),
+        },
+    }, async (request, reply) => {
+        const { teamUser: admin, response } = await requireAdmin(request, reply);
+        if (!admin) {
+            return response;
+        }
+        const [credential, target] = await Promise.all([
+            db.sshCredential.findUnique({ where: { id: request.body.credentialId } }),
+            db.teamUser.findUnique({ where: { id: request.body.targetUserId } }),
+        ]);
+        if (!credential) {
+            return reply.code(404).send({ error: "SSH credential not found" });
+        }
+        if (!target || target.status !== TeamUserStatus.ACTIVE) {
+            return reply.code(404).send({ error: "Active target user not found" });
+        }
+        if (credential.ownerUserId !== target.id) {
+            return reply.code(400).send({ error: "SSH credential owner must match target user" });
+        }
+
+        const serverUrl = getTeamPublicServerUrl(request);
+        const token = await createEnrollToken({
+            targetUserId: target.id,
+            actorId: admin.id,
+        });
+        const manualCommand = buildProvisionManualInstallCommand({
+            serverUrl,
+            token: token.token,
+            agents: request.body.agents,
+        });
+        const job = await db.provisionJob.create({
+            data: {
+                credentialId: credential.id,
+                hostSnapshot: JSON.stringify({
+                    host: credential.host,
+                    port: credential.port,
+                    username: credential.username,
+                    authType: credential.authType,
+                }),
+                targetUserId: target.id,
+                agents: request.body.agents,
+                status: ProvisionStatus.PENDING,
+                createdBy: admin.id,
+            },
+        });
+        await writeTeamAudit({
+            actorId: admin.id,
+            action: "provision_created",
+            target: target.id,
+            detail: { jobId: job.id, credentialId: credential.id, agents: request.body.agents },
+        });
+
+        enqueueProvisionJob(job.id, {
+            enrollToken: token.token,
+            serverUrl,
+        });
+
+        return reply.code(201).send({
+            job: toSafeProvisionJob(job),
+            enrollToken: {
+                id: token.id,
+                token: token.token,
+                expiresAt: token.expiresAt.toISOString(),
+            },
+            manualCommand,
+        });
+    });
+}
+
+function toSafeProvisionJob(job: {
+    id: string;
+    credentialId: string | null;
+    hostSnapshot: string;
+    targetUserId: string;
+    agents: string[];
+    status: ProvisionStatus;
+    step: string | null;
+    log: string;
+    machineId: string | null;
+    error: string | null;
+    createdBy: string;
+    createdAt: Date;
+    finishedAt: Date | null;
+}) {
+    return {
+        id: job.id,
+        credentialId: job.credentialId,
+        hostSnapshot: job.hostSnapshot,
+        targetUserId: job.targetUserId,
+        agents: job.agents,
+        status: job.status,
+        step: job.step,
+        log: job.log,
+        machineId: job.machineId,
+        error: job.error,
+        createdBy: job.createdBy,
+        createdAt: job.createdAt.toISOString(),
+        finishedAt: job.finishedAt?.toISOString() ?? null,
+    };
 }
