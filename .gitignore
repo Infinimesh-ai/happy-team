@@ -74,5 +74,8 @@ happy-workspaces/
 .happy-fully-local/
 .happy-dev/
 
+# local Team Edition artifacts; deploy docs describe how to populate these
+.team-artifacts/
+
 # third party tools
 .supervibe/

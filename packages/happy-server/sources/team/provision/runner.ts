@@ -1,6 +1,6 @@
 import { AgentAuthMode, ProvisionStatus, type TeamUser } from "@prisma/client";
 import { db } from "@/storage/db";
-import { buildManualInstallCommand, downloadCommand, shellQuote } from "@/team/artifacts";
+import { buildManualInstallCommand, buildNodeArtifactDownloadCommand, downloadCommand, shellQuote } from "@/team/artifacts";
 import { buildSshConnectionInput, SshExecutor, type SshExecResult } from "@/team/provision/ssh";
 import { decryptSshCredentialAuth } from "@/team/sshCredentials";
 import { writeTeamAudit } from "@/team/audit";
@@ -214,13 +214,12 @@ async function runShell(
 }
 
 async function installNode(executor: SshExecutor, jobId: string, serverUrl: string, redactions: string[]): Promise<string> {
-    const nodeUrl = `${serverUrl}/v1/team/artifacts/node/linux/x64`;
     const command = [
         "mkdir -p \"$HOME/.happy-team/bin\"",
         "if command -v node >/dev/null 2>&1 && node -e 'const v=Number(process.versions.node.split(\".\")[0]); process.exit(v >= 20 ? 0 : 1)' >/dev/null 2>&1; then",
         "  command -v node",
         "else",
-        `  ${downloadCommand(nodeUrl, "\"$HOME/.happy-team/bin/node\"")}`,
+        buildNodeArtifactDownloadCommand(serverUrl, "\"$HOME/.happy-team/bin/node\"").split("\n").map((line) => `  ${line}`).join("\n"),
         "  chmod 700 \"$HOME/.happy-team/bin/node\"",
         "  printf '%s\\n' \"$HOME/.happy-team/bin/node\"",
         "fi",

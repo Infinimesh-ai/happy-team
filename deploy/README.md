@@ -16,6 +16,7 @@ ADMIN_EMAIL=admin@example.com
 ADMIN_INITIAL_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 18)
 HAPPY_PUBLIC_SERVER_URL=http://localhost:3005
 TEAM_PUBLIC_SERVER_URL=http://localhost:3005
+TEAM_NODE_ARTIFACT_HOST_DIR=./.team-artifacts/node
 S3_PUBLIC_URL=http://localhost:9000/happy-team
 TEAM_ANTHROPIC_API_KEY=sk-ant-...
 TEAM_OPENAI_API_KEY=sk-proj-...
@@ -68,9 +69,25 @@ docker compose --profile proxy up -d --build
 M2 起 server 镜像会内置 `happy-cli.tgz`，并通过以下只读接口分发给目标机器：
 
 - `GET /v1/team/artifacts/cli.tgz`
-- `GET /v1/team/artifacts/node/linux/x64`（M2 当前分发 server 镜像内的 Linux x64/glibc Node runtime）
+- `GET /v1/team/artifacts/node/:platform/:arch`（支持 `linux|darwin` 与 `x64|arm64`）
 
-Docker 部署时不需要额外构建 artifact；`Dockerfile.server` 会在 build 阶段运行 CLI deploy，并把 artifact 放到 `/opt/happy-team/artifacts/happy-cli.tgz`。如果用源码直接跑 server，需要先生成同名 artifact：
+Docker 部署时不需要额外构建 CLI artifact；`Dockerfile.server` 会在 build 阶段运行 CLI deploy，并把 artifact 放到 `/opt/happy-team/artifacts/happy-cli.tgz`。Linux x64 Node 默认从 server 容器自身的 `process.execPath` 分发。其他平台需要把对应 Node 20+ 单文件二进制放入 host 侧 `TEAM_NODE_ARTIFACT_HOST_DIR`（compose 会只读挂载到容器内 `/opt/happy-team/artifacts/node`），例如：
+
+```text
+.team-artifacts/node/linux-arm64/node
+.team-artifacts/node/darwin-arm64/node
+.team-artifacts/node/darwin-x64/node
+```
+
+也可以使用分层目录：
+
+```text
+.team-artifacts/node/linux/arm64/node
+```
+
+目标机不访问公网；这些 Node 制品由企业 server 自分发。若 artifact 缺失，对应 provisioning job 会在 `install_node` 步骤失败并提示缺少的 server-side path。
+
+如果用源码直接跑 server，需要先生成同名 CLI artifact：
 
 ```bash
 mkdir -p .team-artifacts
@@ -84,7 +101,7 @@ tar -czf .team-artifacts/happy-cli.tgz -C .team-artifacts/happy-cli .
 1. 选择目标成员。
 2. 输入 SSH host、port、username 和密码或私钥。
 3. 选择要启用的 agent。默认 Claude Code 使用 `TEAM_ANTHROPIC_API_KEY`；Codex 使用 `TEAM_OPENAI_API_KEY`。
-4. 点击 Start Provisioning。server 会用 ssh2 连接目标机，安装 Node/CLI，执行 `happy enroll --server <url> --token <一次性token>`，写入 `~/.happy-team/agent.env`（权限 600），并拉起 user systemd daemon；没有 user systemd 时会尝试普通 daemon + crontab fallback。
+4. 点击 Start Provisioning。server 会用 ssh2 连接目标机，检测 `uname -s` / `uname -m` 后下载匹配 Node artifact，安装 CLI，执行 `happy enroll --server <url> --token <一次性token>`，写入 `~/.happy-team/agent.env`（权限 600），并拉起 user systemd daemon；没有 user systemd 时会尝试普通 daemon + crontab fallback。
 
 Provisioning 日志会脱敏 token、SSH 凭据、公司 API key。响应里的 Manual Command 是兜底安装命令，可复制到目标机器手工执行；一次性 token 默认 15 分钟有效，只能使用一次。Manual Command 不包含公司 API key；它会导出 provisioned Node 的 `PATH`、完成 enroll 并启动 daemon，daemon 首次上线后由 server 通过加密 Machine RPC 写入当前成员的 `agent.env`。
 

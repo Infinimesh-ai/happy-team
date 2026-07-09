@@ -519,9 +519,11 @@ Conversation history is preserved on the server, but in-flight tool calls are in
       });
       child.unref();
 
-      // Wait for daemon to write state file (up to 5 seconds)
+      // Wait for daemon to write state file. Slower machines, emulated arm64
+      // targets, and cold self-contained Node installs can take more than a
+      // few seconds before the detached daemon has initialized auth and state.
       let started = false;
-      for (let i = 0; i < 50; i++) {
+      for (let i = 0; i < 300; i++) {
         if (await checkIfDaemonRunningAndCleanupStaleState()) {
           started = true;
           break;

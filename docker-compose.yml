@@ -78,6 +78,7 @@ services:
       PUBLIC_URL: ${HAPPY_PUBLIC_SERVER_URL:-http://localhost:3005}
       TEAM_PUBLIC_SERVER_URL: ${TEAM_PUBLIC_SERVER_URL:-${HAPPY_PUBLIC_SERVER_URL:-http://localhost:3005}}
       TEAM_CLI_ARTIFACT_PATH: /opt/happy-team/artifacts/happy-cli.tgz
+      TEAM_NODE_ARTIFACT_DIR: ${TEAM_NODE_ARTIFACT_DIR:-/opt/happy-team/artifacts/node}
       TEAM_ANTHROPIC_API_KEY: ${TEAM_ANTHROPIC_API_KEY:-}
       TEAM_ANTHROPIC_BASE_URL: ${TEAM_ANTHROPIC_BASE_URL:-}
       TEAM_OPENAI_API_KEY: ${TEAM_OPENAI_API_KEY:-}
@@ -89,6 +90,8 @@ services:
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?Set MINIO_ROOT_PASSWORD in .env before starting}
       S3_BUCKET: ${MINIO_BUCKET:-happy-team}
       S3_PUBLIC_URL: ${S3_PUBLIC_URL:-http://localhost:9000/happy-team}
+    volumes:
+      - ${TEAM_NODE_ARTIFACT_HOST_DIR:-./.team-artifacts/node}:/opt/happy-team/artifacts/node:ro
     command: >
       sh -c "pnpm --filter happy-server-self-host exec prisma migrate deploy --schema=prisma/schema.prisma &&
       exec pnpm --filter happy-server-self-host start"
