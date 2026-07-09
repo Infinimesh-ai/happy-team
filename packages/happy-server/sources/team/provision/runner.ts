@@ -361,11 +361,13 @@ function buildLinuxStartDaemonCommand(serverUrl: string): string {
 
 function buildMacLaunchdStartCommand(serverUrl: string): string {
     const macPath = "$HOME/.happy-team/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+    const claudeOauthExport = buildMacClaudeOauthExportSnippet();
     const detachedStartShell = [
         `PATH="${macPath}"; export PATH`,
         "set -a",
         ". \"$HOME/.happy-team/agent.env\"",
         "set +a",
+        claudeOauthExport,
         "\"$HOME/.happy-team/bin/happy\" daemon start",
     ].join("; ");
     const fallbackStart = [
@@ -373,16 +375,30 @@ function buildMacLaunchdStartCommand(serverUrl: string): string {
         "\"$HOME/.happy-team/bin/happy\" daemon stop >/dev/null 2>&1 || true",
         `HAPPY_SERVER_URL=${shellQuote(serverUrl)} HAPPY_HOME_DIR="$HOME/.happy" sh -lc ${shellQuote(detachedStartShell)}`,
     ].join("\n");
+    const launchdScript = [
+        "#!/bin/sh",
+        `PATH="${macPath}"`,
+        "export PATH",
+        "set -a",
+        ". \"$HOME/.happy-team/agent.env\"",
+        "set +a",
+        claudeOauthExport,
+        "exec \"$HOME/.happy-team/bin/happy\" daemon start-sync",
+        "",
+    ].join("\n");
 
     return [
         "label=com.happy-team.daemon",
         "plist=\"$HOME/Library/LaunchAgents/$label.plist\"",
+        "launch_script=\"$HOME/.happy-team/launchd-start.sh\"",
         "mkdir -p \"$HOME/Library/LaunchAgents\" \"$HOME/.happy\"",
+        `cat > "$launch_script" <<'HAPPY_TEAM_LAUNCHD_SH'\n${launchdScript}HAPPY_TEAM_LAUNCHD_SH`,
+        "chmod 700 \"$launch_script\"",
         "xml_escape() { sed -e 's/&/\\&amp;/g' -e 's/</\\&lt;/g' -e 's/>/\\&gt;/g' -e 's/\"/\\&quot;/g'; }",
         `server_xml=$(printf '%s' ${shellQuote(serverUrl)} | xml_escape)`,
         "home_xml=$(printf '%s' \"$HOME\" | xml_escape)",
-        `daemon_command="PATH=\\"${macPath}\\"; export PATH; set -a; . \\"$HOME/.happy-team/agent.env\\"; set +a; exec \\"$HOME/.happy-team/bin/happy\\" daemon start-sync"`,
-        "daemon_command_xml=$(printf '%s' \"$daemon_command\" | xml_escape)",
+        "launch_command=\"exec \\\"$launch_script\\\"\"",
+        "launch_command_xml=$(printf '%s' \"$launch_command\" | xml_escape)",
         `path_xml=$(printf '%s' "${macPath}" | xml_escape)`,
         "cat > \"$plist\" <<HAPPY_TEAM_PLIST",
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
@@ -395,7 +411,7 @@ function buildMacLaunchdStartCommand(serverUrl: string): string {
         "  <array>",
         "    <string>/bin/sh</string>",
         "    <string>-lc</string>",
-        "    <string>$daemon_command_xml</string>",
+        "    <string>$launch_command_xml</string>",
         "  </array>",
         "  <key>EnvironmentVariables</key>",
         "  <dict>",
@@ -431,6 +447,38 @@ function buildMacLaunchdStartCommand(serverUrl: string): string {
         "else",
         "  echo 'launchctl unavailable; daemon started without launchd fallback'",
         fallbackStart.split("\n").map((line) => `  ${line}`).join("\n"),
+        "fi",
+    ].join("\n");
+}
+
+function buildMacClaudeOauthExportSnippet(): string {
+    return [
+        "if [ -z \"${ANTHROPIC_API_KEY:-}\" ] && [ -z \"${CLAUDE_CODE_OAUTH_TOKEN:-}\" ] && [ -x \"$HOME/.happy-team/bin/node\" ]; then",
+        "  token=$(",
+        "    \"$HOME/.happy-team/bin/node\" 2>/dev/null <<'HAPPY_TEAM_CLAUDE_TOKEN' || true",
+        "const fs = require('node:fs');",
+        "const os = require('node:os');",
+        "const path = require('node:path');",
+        "const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');",
+        "const credentialsPath = path.join(configDir, '.credentials.json');",
+        "try {",
+        "  const credentials = JSON.parse(fs.readFileSync(credentialsPath, 'utf8'));",
+        "  const candidates = [",
+        "    credentials?.claudeAiOauth?.accessToken,",
+        "    credentials?.claudeAiOauth?.access_token,",
+        "    credentials?.oauth?.accessToken,",
+        "    credentials?.oauth?.access_token,",
+        "    credentials?.accessToken,",
+        "    credentials?.access_token,",
+        "    credentials?.token,",
+        "  ];",
+        "  const token = candidates.find((value) => typeof value === 'string' && value.length > 0);",
+        "  if (token) process.stdout.write(token);",
+        "} catch {}",
+        "HAPPY_TEAM_CLAUDE_TOKEN",
+        "  )",
+        "  if [ -n \"$token\" ]; then export CLAUDE_CODE_OAUTH_TOKEN=\"$token\"; fi",
+        "  unset token",
         "fi",
     ].join("\n");
 }
