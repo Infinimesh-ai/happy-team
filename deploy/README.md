@@ -100,7 +100,7 @@ pnpm team:node-artifacts
 pnpm team:node-artifacts -- --version 20.20.2 --target linux-arm64 --target darwin-arm64 --target darwin-x64
 ```
 
-脚本只在部署机准备 artifact 时访问公网；目标机器仍只从企业 server 下载这些制品，不需要外网。Node.js 官方 dist 不提供 musl 单文件 tarball，Alpine/musl 目标需要企业自行提供经过审计的 Node 20+ musl 二进制到 `linux-x64-musl/node`、`linux-arm64-musl/node` 或分层 `linux/<arch>/musl/node`。每次补充或替换 artifact 后，重启 server 容器或确认 compose 挂载目录已包含新文件，再打开 Deployment Preflight 检查对应平台是否变为 Ready。Preflight 会读取 Node 二进制头并校验 ELF/Mach-O 平台架构；如果把 Linux artifact 放到 Darwin 目录这类路径与二进制不匹配，预检会标为 action required，artifact 下载接口也会返回 503。
+脚本只在部署机准备 artifact 时访问公网；目标机器仍只从企业 server 下载这些制品，不需要外网。Node.js 官方 dist 不提供 musl 单文件 tarball，Alpine/musl 目标需要企业自行提供经过审计的 Node 20+ musl artifact 到 `linux-x64-musl/node`、`linux-arm64-musl/node` 或分层 `linux/<arch>/musl/node`。这个 artifact 必须在目标基础镜像上无需 root 安装额外共享库即可运行；server 预检只能校验 ELF/Mach-O 平台架构，不能证明 `libstdc++`、`libgcc_s` 等动态依赖在所有目标机上存在。每次补充或替换 artifact 后，重启 server 容器或确认 compose 挂载目录已包含新文件，再打开 Deployment Preflight 检查对应平台是否变为 Ready。Preflight 会读取 Node 二进制头并校验 ELF/Mach-O 平台架构；如果把 Linux artifact 放到 Darwin 目录这类路径与二进制不匹配，预检会标为 action required，artifact 下载接口也会返回 503。
 
 目标机不访问公网；这些 Node 制品由企业 server 自分发。若 artifact 缺失，对应 provisioning job 会在 `install_node` 步骤失败并提示缺少的 server-side path。
 
