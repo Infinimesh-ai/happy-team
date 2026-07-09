@@ -311,7 +311,7 @@ HAPPY_SERVER_URL=https://happy.yourco.com ~/.happy-team/bin/happy daemon start
 
 模式切换：
 - 成员在网页设置页自助切换（每个 agent 独立），或管理员在成员管理页代改。
-- 切换后需要更新目标机的 agent.env 并重启 daemon 才生效。M3 代码事实：daemon 侧 RPC 方法名为 `team-apply-agent-env`，复用现有 Machine RPC 加密/房间机制；server 使用托管私钥解开 legacy/dataKey 机器密钥后加密 payload。机器离线时写 `TeamAgentAuthUpdate` pending 行，上线 `machine-alive` 后应用。切 PERSONAL_OAUTH 时同时清除 agent.env 中的公司 key。
+- 切换后需要更新目标机的 agent.env 并重启 daemon 才生效。M3 代码事实：daemon 侧 RPC 方法名为 `team-apply-agent-env`，复用现有 Machine RPC 加密/房间机制；server 使用托管私钥解开 legacy/dataKey 机器密钥后加密 payload。机器离线时写 `TeamAgentAuthUpdate` pending 行，上线 `machine-alive` 后应用。切 PERSONAL_OAUTH 时同时清除 agent.env 中的公司 key；CLI daemon 进程也会清理旧 `CLAUDE_CODE_OAUTH_TOKEN`，Claude Personal OAuth 模式下再从本机 `~/.claude/.credentials.json` 注入 token 供自重启继承，切回 COMPANY_API 时不保留该 token。
 - 初始化向导中显示目标成员当前模式，允许管理员在发起 provisioning 时一并设定。
 
 ---
@@ -475,4 +475,5 @@ services:
 - 2026-07-09：新增 `pnpm team:node-artifacts` artifact 准备脚本；`--dry-run` 验证默认目标 URL/输出路径，真实下载 `darwin-arm64` Node `20.20.2` 到临时目录并用官方 `SHASUMS256.txt` 完成 SHA256 校验和 `tar` 提取，生成的 `darwin-arm64/node` 为 executable Mach-O arm64 二进制。
 - 2026-07-09：Node artifact 分发增加二进制头校验：Linux x64/arm64 识别 64-bit little-endian ELF `e_machine`，Darwin x64/arm64 识别 64-bit Mach-O `cputype`；配置目录若把 Linux arm64 ELF 放到 `darwin-arm64/node` 会在 `getTeamNodeArtifactInfo()` 中标记 `valid=false`，preflight 显示 action_required，下载接口拒绝分发。执行 `pnpm --filter happy-server-self-host typecheck` 通过；`pnpm --filter happy-server-self-host test -- sources/team/artifacts.spec.ts sources/team/routes.spec.ts --reporter=dot` 通过（Vitest 依赖收集共 13 个文件 / 83 tests）。
 - 2026-07-09：补强 macOS launchd wrapper：`start_daemon` 现在写 `~/.happy-team/launchd-start.sh`，plist 只引用 wrapper；wrapper source `agent.env` 后执行 daemon，且 Claude Personal OAuth 模式下会尝试从 `~/.claude/.credentials.json` 导出 `CLAUDE_CODE_OAUTH_TOKEN`，不把 token 写入 plist。Vitest 抽取生成的 wrapper 跑 `sh -n`，并用临时 HOME + fake `happy` 验证 OAuth token 可从 credentials JSON 进入 daemon 启动环境。执行 `pnpm --filter happy-server-self-host typecheck` 通过；`pnpm --filter happy-server-self-host test -- sources/team/provision/runner.spec.ts --reporter=dot` 通过（Vitest 依赖收集共 13 个文件 / 84 tests）。
+- 2026-07-09：补强 daemon RPC 自重启路径：`team-apply-agent-env` 应用 PERSONAL_OAUTH 时除了重写 `agent.env`，还会清除旧公司 key/旧 `CLAUDE_CODE_OAUTH_TOKEN`，在无 `ANTHROPIC_API_KEY` 时从 `~/.claude/.credentials.json` 重新注入 `CLAUDE_CODE_OAUTH_TOKEN`，确保 UI 切换触发的自重启路径和 launchd wrapper 首启路径一致；切回 COMPANY_API 时旧 OAuth token 不会留在 daemon 进程环境或 `agent.env`。执行 `pnpm --filter happy typecheck` 通过；`pnpm --filter happy exec vitest run --project unit src/api/apiMachine.test.ts` 通过（3 tests）。
 - 未完成的外部验收项：尚未在物理 Linux arm64 或 macOS 机器跑完端到端；macOS LaunchAgent 尚未在真实 macOS 重启后验证；`TEAM_ANTHROPIC_API_KEY` / `TEAM_OPENAI_API_KEY` 使用占位值，未能真实验证 Claude/OpenAI 计费链路；没有可用个人 Claude/Codex OAuth 账号，未能完成"切到 PERSONAL_OAUTH 后实际发起一次个人账号请求"的最终业务验收。

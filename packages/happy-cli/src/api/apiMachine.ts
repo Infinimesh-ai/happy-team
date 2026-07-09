@@ -5,7 +5,7 @@
 
 import { io, Socket } from 'socket.io-client';
 import { spawn } from 'node:child_process';
-import { chmod, mkdir, rename, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { logger } from '@/ui/logger';
@@ -35,6 +35,7 @@ import {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TEAM_AGENT_ENV_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'OPENAI_API_KEY'] as const;
+const CLAUDE_CODE_OAUTH_TOKEN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN';
 
 interface ServerToDaemonEvents {
     update: (data: Update) => void;
@@ -171,12 +172,45 @@ async function writeTeamAgentEnvFile(env: Record<string, string>): Promise<strin
     return file;
 }
 
-function applyTeamAgentEnvToProcess(env: Record<string, string>, clearKeys: string[]): void {
-    for (const key of clearKeys) {
+export function extractClaudeCodeOAuthToken(credentials: unknown): string | null {
+    if (!credentials || typeof credentials !== 'object') {
+        return null;
+    }
+    const record = credentials as Record<string, any>;
+    const candidates = [
+        record.claudeAiOauth?.accessToken,
+        record.claudeAiOauth?.access_token,
+        record.oauth?.accessToken,
+        record.oauth?.access_token,
+        record.accessToken,
+        record.access_token,
+        record.token,
+    ];
+    return candidates.find((value) => typeof value === 'string' && value.length > 0) ?? null;
+}
+
+export async function resolveClaudeCodeOAuthTokenFromDisk(): Promise<string | null> {
+    const configDir = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+    const credentialsPath = path.join(configDir, '.credentials.json');
+    try {
+        return extractClaudeCodeOAuthToken(JSON.parse(await readFile(credentialsPath, 'utf8')));
+    } catch {
+        return null;
+    }
+}
+
+async function applyTeamAgentEnvToProcess(env: Record<string, string>, clearKeys: string[]): Promise<void> {
+    for (const key of new Set([...clearKeys, CLAUDE_CODE_OAUTH_TOKEN_ENV])) {
         delete process.env[key];
     }
     for (const [key, value] of Object.entries(env)) {
         process.env[key] = value;
+    }
+    if (!process.env.ANTHROPIC_API_KEY && !process.env[CLAUDE_CODE_OAUTH_TOKEN_ENV]) {
+        const token = await resolveClaudeCodeOAuthTokenFromDisk();
+        if (token) {
+            process.env[CLAUDE_CODE_OAUTH_TOKEN_ENV] = token;
+        }
     }
 }
 
@@ -209,11 +243,11 @@ setTimeout(() => process.exit(0), 2500);
     return true;
 }
 
-async function applyTeamAgentEnv(params: TeamApplyAgentEnvParams, requestShutdown: () => void) {
+export async function applyTeamAgentEnv(params: TeamApplyAgentEnvParams, requestShutdown: () => void) {
     const env = normalizeTeamAgentEnv(params);
     const clearKeys = normalizeClearKeys(params);
     const path = await writeTeamAgentEnvFile(env);
-    applyTeamAgentEnvToProcess(env, clearKeys);
+    await applyTeamAgentEnvToProcess(env, clearKeys);
     const restartScheduled = params.restart === false ? false : scheduleDaemonRestart(requestShutdown);
     return {
         applied: true,
