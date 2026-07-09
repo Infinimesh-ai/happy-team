@@ -53,6 +53,116 @@ model Account {
     UserFeedItem        UserFeedItem[]
     UserKVStore         UserKVStore[]
     VoiceConversation   VoiceConversation[]
+    TeamUser            TeamUser?
+}
+
+enum TeamRole {
+    ADMIN
+    MEMBER
+}
+
+enum TeamUserStatus {
+    ACTIVE
+    DISABLED
+}
+
+enum SshAuthType {
+    PASSWORD
+    PRIVATE_KEY
+}
+
+enum AgentAuthMode {
+    COMPANY_API
+    PERSONAL_OAUTH
+}
+
+enum ProvisionStatus {
+    PENDING
+    RUNNING
+    SUCCEEDED
+    FAILED
+}
+
+model TeamUser {
+    id                 String         @id @default(cuid())
+    email              String         @unique
+    passwordHash       String
+    role               TeamRole       @default(MEMBER)
+    status             TeamUserStatus @default(ACTIVE)
+    mustChangePassword Boolean        @default(false)
+    accountId          String         @unique
+    account            Account        @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    encSecretKey       Bytes
+    claudeAuthMode     AgentAuthMode  @default(COMPANY_API)
+    codexAuthMode      AgentAuthMode  @default(COMPANY_API)
+    createdAt          DateTime       @default(now())
+    updatedAt          DateTime       @updatedAt
+
+    @@index([status])
+    @@index([role])
+}
+
+model SshCredential {
+    id             String      @id @default(cuid())
+    ownerUserId    String
+    label          String
+    host           String
+    port           Int         @default(22)
+    username       String
+    authType       SshAuthType
+    encAuth        Bytes
+    deleteAfterUse Boolean     @default(false)
+    createdBy      String
+    createdAt      DateTime    @default(now())
+
+    @@index([ownerUserId])
+    @@index([createdBy])
+}
+
+model ProvisionJob {
+    id           String          @id @default(cuid())
+    credentialId String?
+    hostSnapshot String
+    targetUserId String
+    agents       String[]
+    status       ProvisionStatus @default(PENDING)
+    step         String?
+    log          String          @default("")
+    machineId    String?
+    error        String?
+    createdBy    String
+    createdAt    DateTime        @default(now())
+    finishedAt   DateTime?
+
+    @@index([targetUserId])
+    @@index([createdBy])
+    @@index([status, createdAt])
+}
+
+model EnrollToken {
+    id           String    @id @default(cuid())
+    tokenHash    String    @unique
+    targetUserId String
+    expiresAt    DateTime
+    usedAt       DateTime?
+    createdBy    String
+    createdAt    DateTime  @default(now())
+
+    @@index([targetUserId])
+    @@index([expiresAt])
+}
+
+model TeamAuditLog {
+    id        String   @id @default(cuid())
+    actorId   String?
+    action    String
+    target    String?
+    detail    Json?
+    createdAt DateTime @default(now())
+
+    @@index([actorId, createdAt])
+    @@index([action, createdAt])
+    @@index([createdAt])
 }
 
 model TerminalAuthRequest {

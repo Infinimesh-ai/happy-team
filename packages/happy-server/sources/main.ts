@@ -10,6 +10,7 @@ import { startDatabaseMetricsUpdater } from "@/app/monitoring/metrics2";
 import { initEncrypt } from "./modules/encrypt";
 import { initGithub } from "./modules/github";
 import { loadFiles } from "./storage/files";
+import { seedTeamAdmin } from "@/team/seedAdmin";
 
 async function main() {
 
@@ -32,6 +33,7 @@ async function main() {
     await initGithub();
     await loadFiles();
     await auth.init();
+    await seedTeamAdmin();
 
     //
     // Start

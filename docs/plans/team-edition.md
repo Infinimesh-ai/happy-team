@@ -395,3 +395,17 @@ services:
 - 2026-07-09：使用显式 `HANDY_MASTER_SECRET`、`POSTGRES_PASSWORD`、`MINIO_ROOT_PASSWORD` 从空卷启动 compose 全套服务；server/webapp 镜像构建通过，Postgres/Redis/server healthcheck 通过，MinIO live healthcheck 通过，Prisma migrations 应用数量为 37。
 - 2026-07-09：在真实 Linux 主机上用原版 Happy CLI 源码构建产物，设置 `HAPPY_SERVER_URL=http://localhost:3005` 与 `HAPPY_WEBAPP_URL=http://localhost:8080`，完成 web auth、daemon 启动、机器上线；机器页显示 `dev-xps-ubuntu` online，Claude/Codex installed。
 - 2026-07-09：用真实 Chromium 浏览器打开自托管 webapp，创建 Happy 账号，发起 Claude Code session，收到 `HAPPY_TEAM_M0_OK` 输出；切到 Plan 模式后完成 plan approval 与 Bash tool approval，并验证 `/tmp/happy-team-m0-plan-approval.txt` 内容为 `HAPPY_TEAM_PLAN_APPROVED`。
+
+### M1 代码事实确认
+- `happy-app` 的 restore-from-key 路径可直接桥接：`AuthProvider.login(token, secret)` 会把 `{token, secret}` 写入 `TokenStorage` 并调用 `syncCreate()`；根布局启动时会从 `TokenStorage.getCredentials()` 读取并执行 `syncRestore(credentials)`。因此 Team 登录接口返回 Happy JWT 与 32 字节 NaCl seed 的 base64url 字符串即可复用现有同步/加密初始化路径，无需修改原有协议。
+- 手输恢复页 `restore/manual.tsx` 的 `authGetToken(secretBytes)` 只是在客户端用 seed 签名挑战并换取 Happy JWT；Team 登录由服务端托管 seed 后直接签发 JWT，前端调用同一个 `auth.login()` 写入凭据。
+- 当前依赖树已包含纯 JS `@noble/hashes`；M1 将其声明为 server 直接依赖，用 `argon2id` 生成 PHC 格式密码哈希，避免新增 native postinstall 依赖。
+- DISABLED 成员的 Happy JWT 失效通过两处保证：HTTP `app.authenticate` 成功验 token 后检查 `TeamUser.status`，WebSocket 握手与后续 socket event middleware 也检查同一状态；普通非 Team Happy Account 不受影响。
+- Team admin users 更新接口使用 `PATCH /v1/team/admin/users/:id`；现有 Fastify CORS method 白名单需要包含 `PATCH`，否则浏览器只会完成 OPTIONS 预检而不会发出禁用/重置请求。M1 已把 `PATCH` 加入 `packages/happy-server/sources/app/api/api.ts` 的 CORS methods。
+
+### M1 验收记录
+- 2026-07-09：从 M0 compose 栈升级到 M1 schema，`prisma migrate deploy` 应用 `20260709010000_add_team_edition_core` 后迁移数量为 38；server 启动时用 `ADMIN_EMAIL=admin@happy-team.test` / `ADMIN_INITIAL_PASSWORD=AdminPass12345` 播种 ADMIN，首次登录强制改密。
+- 2026-07-09：真实 Chromium 浏览器访问 `http://localhost:8080/team/login`，管理员邮箱密码登录后强制把密码改为 `AdminPassM145`，进入 `Team Members`；通过页面创建 `member-m1@happy-team.test`，随后成员邮箱密码登录并强制把临时密码改为 `MemberPassM145`，登录后进入原 Happy 主界面。
+- 2026-07-09：用真实 Linux 主机上的 Happy CLI，在隔离 `HAPPY_HOME_DIR=/tmp/happy-team-m1-member-home.4GwqDl` 下设置 `HAPPY_SERVER_URL=http://localhost:3005` / `HAPPY_WEBAPP_URL=http://localhost:8080`，通过成员浏览器会话批准 `terminal/connect#key=...`，生成机器 ID `8bc826d5-26f7-4f13-a2f2-c5cd198364c9` 并启动 daemon；CLI `auth status` 显示 authenticated、machine registered、daemon running，成员网页显示 `Terminals connected`，管理员成员页显示该 member 有 1 台机器。
+- 2026-07-09：管理员在真实浏览器 Team Members 页面禁用 `member-m1@happy-team.test`；列表刷新为 `member / disabled / 0 machines`，旧 CLI token 调 `/v1/team/me` 返回 HTTP 403 `{"error":"Account disabled"}`，被禁用成员再次在浏览器邮箱密码登录时停留在 `/team/login` 并显示 `User is disabled`。
+- 2026-07-09：审计接口 `/v1/team/admin/audit?limit=100` 验证存在关键动作：`create_user`、`reset_password`、`change_password`、`disable_user`、admin/member `login`、禁用后 `login_failed`。

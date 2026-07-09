@@ -152,6 +152,30 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="team/login"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('team.loginTitle'),
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
+                name="team/change-password"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('team.changePasswordTitle'),
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
+                name="team/admin/users"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('team.membersTitle'),
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
                 name="changelog"
                 options={{
                     headerShown: true,

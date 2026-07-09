@@ -1,6 +1,6 @@
 # Happy Team Edition 部署说明
 
-M0 使用现有 Happy server/webapp/CLI，不改业务源码。根目录 `docker-compose.yml` 会启动 Postgres、Redis、MinIO、server、webapp；Caddy 作为生产反代 profile 可选启用。
+根目录 `docker-compose.yml` 会启动 Postgres、Redis、MinIO、server、webapp；Caddy 作为生产反代 profile 可选启用。M1 起服务端会在首次启动时用环境变量播种一个 Team ADMIN。
 
 ## 1. 准备环境
 
@@ -12,12 +12,14 @@ cat > .env <<EOF
 HANDY_MASTER_SECRET=${HANDY_MASTER_SECRET}
 POSTGRES_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 24)
 MINIO_ROOT_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 24)
+ADMIN_EMAIL=admin@example.com
+ADMIN_INITIAL_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 18)
 HAPPY_PUBLIC_SERVER_URL=http://localhost:3005
 S3_PUBLIC_URL=http://localhost:9000/happy-team
 EOF
 ```
 
-生产环境必须把 `HANDY_MASTER_SECRET` 放在密管里保存。这个值用于服务端 token/密文派生，后续 Team Edition 还会用来加密托管私钥和 SSH 凭据；丢失后密文不可恢复，泄漏后需要轮换并重置相关秘密。
+`ADMIN_INITIAL_PASSWORD` 只用于无 ADMIN 时的首次播种，管理员首登会被要求修改密码。生产环境必须把 `HANDY_MASTER_SECRET` 放在密管里保存。这个值用于服务端 token/密文派生，也用于加密托管私钥和 SSH 凭据；丢失后密文不可恢复，泄漏后需要轮换并重置相关秘密。
 
 ## 2. 启动
 
@@ -38,6 +40,8 @@ docker compose ps
 ```bash
 docker compose logs -f server
 ```
+
+Team Edition 登录入口是 `http://localhost:8080/team/login`。用 `.env` 里的 `ADMIN_EMAIL` / `ADMIN_INITIAL_PASSWORD` 登录，按提示完成首次改密后即可进入成员管理页。
 
 ## 3. 生产域名与 TLS
 

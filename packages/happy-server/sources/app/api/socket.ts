@@ -14,6 +14,7 @@ import { sessionUpdateHandler } from "./socket/sessionUpdateHandler";
 import { machineUpdateHandler } from "./socket/machineUpdateHandler";
 import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
+import { isTeamAccountDisabled } from "@/team/status";
 
 export function startSocket(app: Fastify) {
     const io = new Server(app.server, {
@@ -109,6 +110,12 @@ export function startSocket(app: Fastify) {
             next(new Error('Invalid authentication token'));
             return;
         }
+        if (await isTeamAccountDisabled(verified.userId)) {
+            auth.invalidateUserTokens(verified.userId);
+            log({ module: 'websocket' }, `Disabled team user rejected: ${verified.userId}`);
+            next(new Error('Account disabled'));
+            return;
+        }
 
         socket.data.userId = verified.userId;
         socket.data.clientType = clientType;
@@ -128,6 +135,16 @@ export function startSocket(app: Fastify) {
         const labels = getMetricsLabelsFromSocket(socket);
 
         log({ module: 'websocket' }, `Token verified: ${userId}, clientType: ${clientType || 'user-scoped'}, client: ${labels.client}, sessionId: ${sessionId || 'none'}, machineId: ${machineId || 'none'}, socketId: ${socket.id}`);
+
+        socket.use(async (_packet, next) => {
+            if (await isTeamAccountDisabled(userId)) {
+                auth.invalidateUserTokens(userId);
+                socket.disconnect(true);
+                next(new Error('Account disabled'));
+                return;
+            }
+            next();
+        });
 
         // Store connection based on type
         const metadata = { clientType: clientType || 'user-scoped', sessionId, machineId };

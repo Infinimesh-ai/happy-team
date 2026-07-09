@@ -72,6 +72,8 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-happy}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env before starting}@postgres:5432/${POSTGRES_DB:-happy}?schema=public
       REDIS_URL: redis://redis:6379
       HANDY_MASTER_SECRET: ${HANDY_MASTER_SECRET:?Set HANDY_MASTER_SECRET to a strong random value before starting}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:?Set ADMIN_EMAIL for the initial Team admin before starting}
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:?Set ADMIN_INITIAL_PASSWORD for the initial Team admin before starting}
       PORT: 3005
       PUBLIC_URL: ${HAPPY_PUBLIC_SERVER_URL:-http://localhost:3005}
       METRICS_ENABLED: ${METRICS_ENABLED:-false}

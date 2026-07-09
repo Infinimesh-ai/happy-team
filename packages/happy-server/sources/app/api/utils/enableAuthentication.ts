@@ -1,6 +1,7 @@
 import { Fastify } from "../types";
 import { log } from "@/utils/log";
 import { auth } from "@/app/auth/auth";
+import { isTeamAccountDisabled } from "@/team/status";
 
 export function enableAuthentication(app: Fastify) {
     app.decorate('authenticate', async function (request: any, reply: any) {
@@ -17,6 +18,11 @@ export function enableAuthentication(app: Fastify) {
             if (!verified) {
                 log({ module: 'auth-decorator' }, `Auth failed - invalid token`);
                 return reply.code(401).send({ error: 'Invalid token' });
+            }
+            if (await isTeamAccountDisabled(verified.userId)) {
+                auth.invalidateUserTokens(verified.userId);
+                log({ module: 'auth-decorator' }, `Auth failed - disabled team user: ${verified.userId}`);
+                return reply.code(403).send({ error: 'Account disabled' });
             }
 
             log({ module: 'auth-decorator' }, `Auth success - user: ${verified.userId}`);

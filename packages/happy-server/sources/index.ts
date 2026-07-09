@@ -10,6 +10,7 @@ import { startApi, StartApiOptions } from "./app/api/api";
 import { startDatabaseMetricsUpdater } from "./app/monitoring/metrics2";
 import { startTimeout } from "./app/presence/timeout";
 import { onShutdown } from "./utils/shutdown";
+import { seedTeamAdmin } from "@/team/seedAdmin";
 
 export { runMigrations } from "./standalone";
 export type { StartApiOptions } from "./app/api/api";
@@ -36,6 +37,7 @@ export async function startServer(opts: StartServerOptions): Promise<{ port: num
     await initGithub();
     await loadFiles();
     await auth.init();
+    await seedTeamAdmin();
 
     const { port, host } = await startApi({
         port: opts.port,
