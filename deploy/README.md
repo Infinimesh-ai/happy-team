@@ -117,6 +117,7 @@ Saved SSH Credentials 列表只显示 label/host/user/auth type 和 delete-after
 - Machines: `http://localhost:8080/team/admin/machines`
 - Audit: `http://localhost:8080/team/admin/audit`
 - Provisioning: `http://localhost:8080/team/admin/provision`
+- Preflight: `http://localhost:8080/team/admin/preflight`
 
 Audit 页可按 action 名称过滤，例如 `login`、`create_user`、`provision_succeeded`、`self_update_agent_auth_mode`。Machines 页展示成员归属、在线状态和最近心跳。
 
@@ -129,7 +130,7 @@ Audit 页可按 action 名称过滤，例如 `login`、`create_user`、`provisio
 
 ## 6. 部署预检
 
-管理员可以在正式初始化机器前调用预检接口，确认 server 看到的公开 URL、CLI artifact、各平台 Node artifact 和 Company API key 配置状态：
+管理员可以在正式初始化机器前打开 `http://localhost:8080/team/admin/preflight`，或调用预检接口，确认 server 看到的公开 URL、CLI artifact、各平台 Node artifact 和 Company API key 配置状态：
 
 ```bash
 curl -sS \

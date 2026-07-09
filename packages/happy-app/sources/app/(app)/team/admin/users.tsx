@@ -344,6 +344,11 @@ export default function TeamAdminUsersScreen() {
                         subtitle={t('team.provisionMachineSubtitle')}
                         onPress={() => router.push('/team/admin/provision')}
                     />
+                    <Item
+                        title={t('team.preflightTitle')}
+                        subtitle={t('team.preflightSubtitle')}
+                        onPress={() => router.push('/team/admin/preflight')}
+                    />
                 </ItemGroup>
 
                 <ItemGroup title={t('team.members')}>

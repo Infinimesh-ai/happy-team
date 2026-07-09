@@ -208,6 +208,14 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="team/admin/preflight"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('team.preflightTitle'),
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
                 name="changelog"
                 options={{
                     headerShown: true,

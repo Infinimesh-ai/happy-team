@@ -91,6 +91,22 @@ export interface TeamAgentAuthSync {
     }>;
 }
 
+export type TeamPreflightStatus = 'ok' | 'warning' | 'action_required';
+
+export interface TeamPreflightCheck {
+    key: string;
+    status: TeamPreflightStatus;
+    message: string;
+    detail?: Record<string, string | number | boolean | null>;
+}
+
+export interface TeamDeploymentPreflight {
+    status: TeamPreflightStatus;
+    checkedAt: string;
+    serverUrl: string;
+    checks: TeamPreflightCheck[];
+}
+
 async function readResponse<T>(response: Response): Promise<T> {
     const text = await response.text();
     const body = text ? JSON.parse(text) : {};
@@ -191,6 +207,10 @@ export function listTeamAudit(credentials: AuthCredentials, input: { limit?: num
     if (input.action) params.set('action', input.action);
     const query = params.toString();
     return teamRequest<{ logs: TeamAuditLog[]; nextCursor: string | null }>(`/v1/team/admin/audit${query ? `?${query}` : ''}`, { credentials });
+}
+
+export function getTeamPreflight(credentials: AuthCredentials): Promise<TeamDeploymentPreflight> {
+    return teamRequest<TeamDeploymentPreflight>('/v1/team/admin/preflight', { credentials });
 }
 
 export function listSshCredentials(credentials: AuthCredentials): Promise<{ credentials: SshCredential[] }> {
