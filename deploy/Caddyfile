@@ -1,0 +1,9 @@
+{$HAPPY_WEB_HOST:happy.localhost} {
+    encode zstd gzip
+    reverse_proxy webapp:80
+}
+
+{$HAPPY_API_HOST:api.happy.localhost} {
+    encode zstd gzip
+    reverse_proxy server:3005
+}
