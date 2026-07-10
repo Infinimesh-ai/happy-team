@@ -17,7 +17,16 @@
 - [x] C0.8 推送通知：阶段推进 / 失败 / 交付完成（复用现有通知通道）
 - [x] C0.9 前端：任务发起页 + 任务看板（计划 §10.2 第 1、2 项；审批卡留 C1）— 代码完成，视觉/交互随 C0.11 真机浏览器验收
 - [x] C0.10 服务端/CLI 测试补齐（状态机转移、worktree 与交付对本地裸仓库测）
-- [ ] C0.11 ⏸ C0 端到端人工验收（计划 §11 C0 验收清单：真实机器、并行两任务、直推 base 被拒、手机跟进）
+- [ ] C0.11 ⏸ C0 端到端人工验收（计划 §11 C0 验收清单：真实机器、并行两任务、直推 base 被拒、手机跟进）— 待业主执行，步骤见下
+
+  **前置**：一台已 Team provision 的常驻机器（daemon 在线、`gh` 已认证、Git 有 push 权限的真实 GitHub 仓库）；server 已部署含本分支；网页/手机已登录该成员账号。
+  1. **发起 T1**：网页 设置 → Tasks → New Task，选该机器、填仓库路径、模板 `execute-only`、base `main`、写一句目标（如“在 README 加一行”）、模式随意 → Create。看板出现任务，状态从 PENDING→PREPARING→RUNNING。
+  2. **自动跑完**：worktree 内 Claude 会话自动执行、写 `.happy-task/pr.md`、提交；会话退出后 daemon push 分支并 `gh pr create`。看板任务转 SUCCEEDED，详情页出现 PR 链接（点开可达 GitHub PR）。
+  3. **并行两任务**：对同一机器/仓库同时发起第二个任务，确认两者各自独立 worktree/分支互不干扰，均能交付。
+  4. **禁推 base**：构造一个 workBranch 非 `happy/` 前缀或直推 base 的情形（可用 daemon 日志验证 `task-deliver` 对非 `happy/` 分支或 base 分支拒绝）——确认被拒绝、任务不误交付到 base。
+  5. **手机跟进**：手机端收到阶段/交付推送；进入任务详情能打开当前阶段会话并可追加消息。
+  6. **取消**：对一个 RUNNING 任务点 Cancel，确认状态转 CANCELLED、活动会话被停止、worktree 保留（可 `cd` 进去）。
+  验收通过后由业主将本项打勾并记录机器/仓库/PR 链接。
 
 ## C1 多阶段 + task-control MCP + supervised
 
