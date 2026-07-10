@@ -127,6 +127,7 @@
 
 | 日期 | 项 | 决策 | 理由 |
 |---|---|---|---|
+| 2026-07-10 | 复核修复 C0.7/C1.4/C1.5 | 阶段 prompt/permissionMode/model 经 spawn env（`HAPPY_TASK_PROMPT`/`_PERMISSION_MODE`/`_MODEL`）送达；CLI 新模块 `taskSessionBootstrap` 统一读取——claude 入口注入消息队列并设初始权限模式，codex 入口经 `startSession(initialPrompt)`。auto 阶段沿用 CLI 无人值守默认（yolo），仅 plan 阶段覆盖为 `plan`。task-mcp 的 serverUrl 回退 `configuration.serverUrl`（`HAPPY_SERVER_URL` 仅为 dev 覆盖）。 | 复核发现 `spawn-happy-session` 无首消息参数，真实 gateway 将状态机渲染好的 prompt/permissionMode **静默丢弃**（假 gateway 测试收到完整 effect，掩盖了缝隙）——真机上阶段会话将空转、plan 阶段以可写权限运行、生产 daemon 不导出 `HAPPY_SERVER_URL` 时 task-mcp 直接退出。 |
 | 2026-07-09 | C0.1 | 三张新表不加外键关系，仅用带索引的 String 列（`ownerUserId`/`machineId`/`sessionId`/`taskId`）。 | 计划 §5「原有 Session/Machine 及 Team 版各表一律不改」；Prisma 关系需双向反向字段会改动既有表，故沿用 §5 快照的裸 String 建模。 |
 | 2026-07-09 | C0.1 | 迁移 SQL 手写，命名 `20260709040000_add_team_tasks`，未跑 `prisma migrate dev`。 | `migrate diff`/`migrate dev` 需真实 Postgres 连接，本仓库标准开发用 PGlite；沿用 Team 版既有迁移（`20260709010000`/`030000`）的手写格式，已用 PGlite 全量迁移 + 列/枚举/默认值 round-trip 验证通过。 |
 | 2026-07-09 | C0.2 | 模板用 `interface` + 字符串字面量联合（非 enum），`deliver` 只作为转移目标不入 `stages`；额外加入 `renderStagePrompt`（`{{token}}` 占位替换，未知 token→空串）与注册表 helper。 | 遵循包 CLAUDE.md「interfaces over types / avoid enums」；`deliver` 是 daemon 机械步骤（计划 §8）非 agent 会话；占位渲染是模板结构的直接配套且可单测，避免后续 spawn 接线时散落。默认 execute agent=claude、model 留空用会话默认，发起时可 stageOverrides 覆盖。 |

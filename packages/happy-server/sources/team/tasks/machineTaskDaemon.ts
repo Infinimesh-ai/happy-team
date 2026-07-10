@@ -33,14 +33,24 @@ export function createMachineTaskDaemon(call: MachineRpcCall): TaskDaemonGateway
         },
 
         async spawnStage(input) {
+            // The stage prompt, permission mode and model ride in as environment
+            // variables: spawn-happy-session has no first-message parameter, so
+            // the spawned CLI reads HAPPY_TASK_* at startup (taskSessionBootstrap)
+            // and seeds its own message queue / initial mode from them.
+            const environmentVariables: Record<string, string> = {
+                HAPPY_TASK_ID: input.taskId,
+                HAPPY_TASK_TOKEN: input.token,
+                HAPPY_TASK_STAGE: input.stage,
+                HAPPY_TASK_PROMPT: input.prompt,
+                HAPPY_TASK_PERMISSION_MODE: input.permissionMode,
+            };
+            if (input.model) {
+                environmentVariables.HAPPY_TASK_MODEL = input.model;
+            }
             const result = await call("spawn-happy-session", {
                 directory: input.worktreePath,
                 agent: input.agent,
-                environmentVariables: {
-                    HAPPY_TASK_ID: input.taskId,
-                    HAPPY_TASK_TOKEN: input.token,
-                    HAPPY_TASK_STAGE: input.stage,
-                },
+                environmentVariables,
             });
             if (result.type !== "success" || typeof result.sessionId !== "string") {
                 throw new Error("spawn-happy-session did not return a session id");

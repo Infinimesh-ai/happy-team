@@ -51,7 +51,12 @@ describe('resolveTaskMcpConfigFromEnv', () => {
             .toEqual({ serverUrl: 'https://s', taskId: 't', token: 'k' });
     });
 
-    it('returns null when the env is incomplete', () => {
-        expect(resolveTaskMcpConfigFromEnv({ HAPPY_TASK_ID: 't' } as NodeJS.ProcessEnv)).toBeNull();
+    it('falls back to the configured server URL when HAPPY_SERVER_URL is not exported', () => {
+        expect(resolveTaskMcpConfigFromEnv({ HAPPY_TASK_ID: 't', HAPPY_TASK_TOKEN: 'k' } as NodeJS.ProcessEnv, 'https://configured'))
+            .toEqual({ serverUrl: 'https://configured', taskId: 't', token: 'k' });
+    });
+
+    it('returns null when the task id or token is missing', () => {
+        expect(resolveTaskMcpConfigFromEnv({ HAPPY_TASK_ID: 't' } as NodeJS.ProcessEnv, 'https://configured')).toBeNull();
     });
 });

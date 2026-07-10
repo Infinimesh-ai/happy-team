@@ -10,6 +10,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { configuration } from '@/configuration';
 
 export interface TaskMcpConfig {
     serverUrl: string;
@@ -108,11 +109,16 @@ export function createTaskMcpServer(config: TaskMcpConfig): McpServer {
     return mcp;
 }
 
-/** Resolve config from the environment injected at spawn time. */
-export function resolveTaskMcpConfigFromEnv(env: NodeJS.ProcessEnv = process.env): TaskMcpConfig | null {
+/**
+ * Resolve config from the environment injected at spawn time. The server URL
+ * falls back to the CLI's configured endpoint — spawn only injects the task
+ * id/token, and HAPPY_SERVER_URL is a dev override that production daemons
+ * typically don't export.
+ */
+export function resolveTaskMcpConfigFromEnv(env: NodeJS.ProcessEnv = process.env, fallbackServerUrl?: string): TaskMcpConfig | null {
     const taskId = env.HAPPY_TASK_ID;
     const token = env.HAPPY_TASK_TOKEN;
-    const serverUrl = env.HAPPY_SERVER_URL;
+    const serverUrl = env.HAPPY_SERVER_URL || fallbackServerUrl || configuration.serverUrl;
     if (!taskId || !token || !serverUrl) return null;
     return { serverUrl, taskId, token };
 }
@@ -121,7 +127,7 @@ export function resolveTaskMcpConfigFromEnv(env: NodeJS.ProcessEnv = process.env
 export async function runTaskMcp(): Promise<void> {
     const config = resolveTaskMcpConfigFromEnv();
     if (!config) {
-        process.stderr.write('happy task-mcp: HAPPY_TASK_ID, HAPPY_TASK_TOKEN and HAPPY_SERVER_URL must be set\n');
+        process.stderr.write('happy task-mcp: HAPPY_TASK_ID and HAPPY_TASK_TOKEN must be set\n');
         process.exitCode = 1;
         return;
     }

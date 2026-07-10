@@ -29,7 +29,7 @@ describe("machine task daemon", () => {
         });
     });
 
-    it("spawns a stage via spawn-happy-session with worktree directory and HAPPY_TASK_ID", async () => {
+    it("spawns a stage via spawn-happy-session carrying prompt, mode and token in the environment", async () => {
         const { call, calls } = recorder({ "spawn-happy-session": { type: "success", sessionId: "sess-9" } });
         const daemon = createMachineTaskDaemon(call);
         const result = await daemon.spawnStage({
@@ -43,11 +43,34 @@ describe("machine task daemon", () => {
         });
         expect(result).toEqual({ sessionId: "sess-9" });
         expect(calls[0].method).toBe("spawn-happy-session");
-        expect(calls[0].payload).toMatchObject({
+        expect(calls[0].payload).toEqual({
             directory: "/wt",
             agent: "claude",
-            environmentVariables: { HAPPY_TASK_ID: "t1", HAPPY_TASK_TOKEN: "tok-abc", HAPPY_TASK_STAGE: "execute" },
+            environmentVariables: {
+                HAPPY_TASK_ID: "t1",
+                HAPPY_TASK_TOKEN: "tok-abc",
+                HAPPY_TASK_STAGE: "execute",
+                HAPPY_TASK_PROMPT: "do it",
+                HAPPY_TASK_PERMISSION_MODE: "auto",
+            },
         });
+    });
+
+    it("includes HAPPY_TASK_MODEL only when the stage sets a model", async () => {
+        const { call, calls } = recorder({ "spawn-happy-session": { type: "success", sessionId: "sess-10" } });
+        const daemon = createMachineTaskDaemon(call);
+        await daemon.spawnStage({
+            taskId: "t1",
+            stage: "plan",
+            agent: "claude",
+            model: "claude-opus-4-8",
+            worktreePath: "/wt",
+            prompt: "plan it",
+            permissionMode: "plan",
+            token: "tok-def",
+        });
+        expect((calls[0].payload.environmentVariables as Record<string, string>).HAPPY_TASK_MODEL).toBe("claude-opus-4-8");
+        expect((calls[0].payload.environmentVariables as Record<string, string>).HAPPY_TASK_PERMISSION_MODE).toBe("plan");
     });
 
     it("throws when spawn-happy-session does not return success", async () => {
