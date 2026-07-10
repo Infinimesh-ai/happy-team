@@ -25,6 +25,8 @@ export interface SpawnStageEffect {
     worktreePath: string;
     prompt: string;
     permissionMode: "plan" | "auto";
+    /** Short-lived task-control token injected into the session (plan §7). */
+    token: string;
 }
 
 export interface CheckArtifactsEffect {

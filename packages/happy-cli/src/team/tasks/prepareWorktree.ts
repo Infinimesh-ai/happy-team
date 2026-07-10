@@ -12,7 +12,7 @@
  * to C3; {@link injectTeamSkills} is the mount point left in place here.
  */
 import { existsSync } from 'fs';
-import { mkdir } from 'fs/promises';
+import { appendFile, mkdir, readFile, writeFile } from 'fs/promises';
 import { homedir } from 'os';
 import path from 'path';
 import { configuration } from '@/configuration';
@@ -100,6 +100,7 @@ export async function prepareTaskWorktree(
     if (existing.includes(worktreePath)) {
         logger.debug(`[TASK PREPARE] Reusing existing worktree ${worktreePath}`);
         await ensureArtifactDir(worktreePath);
+        await writeTaskMcpConfig(worktreePath);
         const { skillsCommit } = await injectTeamSkills(worktreePath);
         return { worktreePath, workBranch: await currentBranch(worktreePath) || workBranch, baseBranch, skillsCommit };
     }
@@ -114,6 +115,7 @@ export async function prepareTaskWorktree(
     await runGit(repoPath, ['worktree', 'add', worktreePath, '-b', workBranch, `origin/${baseBranch}`]);
 
     await ensureArtifactDir(worktreePath);
+    await writeTaskMcpConfig(worktreePath);
     const { skillsCommit } = await injectTeamSkills(worktreePath);
 
     logger.debug(`[TASK PREPARE] Prepared worktree ${worktreePath} on branch ${workBranch}`);
@@ -122,4 +124,39 @@ export async function prepareTaskWorktree(
 
 async function ensureArtifactDir(worktreePath: string): Promise<void> {
     await mkdir(path.join(worktreePath, TASK_ARTIFACT_DIR), { recursive: true });
+}
+
+/** Machine-local `.mcp.json` filename registering the task-control MCP server. */
+export const TASK_MCP_CONFIG = '.mcp.json';
+
+/**
+ * Register the task-control MCP server for the worktree's agent session by
+ * writing a machine-local `.mcp.json` (plan §7). The file is git-excluded via
+ * `.git/info/exclude` so it never lands in the delivered branch. The per-session
+ * token/id flow in through the environment injected at spawn time, so the config
+ * itself carries no secrets and is stable across stages.
+ */
+export async function writeTaskMcpConfig(worktreePath: string, happyCommand = 'happy'): Promise<void> {
+    const configPath = path.join(worktreePath, TASK_MCP_CONFIG);
+    const config = {
+        mcpServers: {
+            'happy-task': { command: happyCommand, args: ['task-mcp'] },
+        },
+    };
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+    await excludeLocally(worktreePath, TASK_MCP_CONFIG);
+}
+
+/** Add a path to the worktree's local `.git/info/exclude` (never committed). */
+async function excludeLocally(worktreePath: string, entry: string): Promise<void> {
+    try {
+        const { stdout } = await runGit(worktreePath, ['rev-parse', '--git-path', 'info/exclude']);
+        const excludePath = path.isAbsolute(stdout.trim()) ? stdout.trim() : path.join(worktreePath, stdout.trim());
+        const existing = existsSync(excludePath) ? await readFile(excludePath, 'utf8') : '';
+        if (!existing.split('\n').some((line) => line.trim() === entry)) {
+            await appendFile(excludePath, `${existing.endsWith('\n') || existing.length === 0 ? '' : '\n'}${entry}\n`);
+        }
+    } catch (error) {
+        logger.debug(`[TASK PREPARE] could not exclude ${entry}: ${error}`);
+    }
 }

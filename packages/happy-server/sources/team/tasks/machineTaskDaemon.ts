@@ -36,7 +36,11 @@ export function createMachineTaskDaemon(call: MachineRpcCall): TaskDaemonGateway
             const result = await call("spawn-happy-session", {
                 directory: input.worktreePath,
                 agent: input.agent,
-                environmentVariables: { HAPPY_TASK_ID: input.taskId },
+                environmentVariables: {
+                    HAPPY_TASK_ID: input.taskId,
+                    HAPPY_TASK_TOKEN: input.token,
+                    HAPPY_TASK_STAGE: input.stage,
+                },
             });
             if (result.type !== "success" || typeof result.sessionId !== "string") {
                 throw new Error("spawn-happy-session did not return a session id");

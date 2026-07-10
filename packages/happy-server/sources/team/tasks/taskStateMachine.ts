@@ -20,7 +20,7 @@ import { inTx } from "@/storage/inTx";
 import { writeTeamAudit } from "@/team/audit";
 import { DELIVER_STAGE, getEntryStage, getTaskTemplate, renderStagePrompt, TASK_ARTIFACTS, type TaskTemplate } from "./templates";
 import { noopTaskNotifier, type TaskDaemonGateway, type TaskNotifier } from "./taskDaemon";
-import type { TaskTokenClaims } from "./taskToken";
+import { issueTaskToken, type TaskTokenClaims } from "./taskToken";
 
 /** An agent-declared intent arriving via the task-control MCP (plan §7). */
 export type TaskIntent =
@@ -166,6 +166,7 @@ export function createTaskStateMachine(deps: TaskStateMachineDeps): TaskStateMac
         await db.teamTask.update({ where: { id: task.id }, data: { currentStage: stage, round, status: TaskStatus.RUNNING } });
 
         const prompt = renderStagePrompt(template, stage, { goalPrompt: task.goalPrompt });
+        const token = issueTaskToken({ taskId: task.id, stage, round });
         try {
             const { sessionId } = await daemon.spawnStage({
                 taskId: task.id,
@@ -175,6 +176,7 @@ export function createTaskStateMachine(deps: TaskStateMachineDeps): TaskStateMac
                 worktreePath: task.worktreePath,
                 prompt,
                 permissionMode: definition.permissionMode,
+                token,
             });
             await db.teamTaskStageRun.update({ where: { id: stageRun.id }, data: { sessionId } });
         } catch (error) {

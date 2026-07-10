@@ -39,13 +39,14 @@ describe("machine task daemon", () => {
             worktreePath: "/wt",
             prompt: "do it",
             permissionMode: "auto",
+            token: "tok-abc",
         });
         expect(result).toEqual({ sessionId: "sess-9" });
         expect(calls[0].method).toBe("spawn-happy-session");
         expect(calls[0].payload).toMatchObject({
             directory: "/wt",
             agent: "claude",
-            environmentVariables: { HAPPY_TASK_ID: "t1" },
+            environmentVariables: { HAPPY_TASK_ID: "t1", HAPPY_TASK_TOKEN: "tok-abc", HAPPY_TASK_STAGE: "execute" },
         });
     });
 
@@ -53,7 +54,7 @@ describe("machine task daemon", () => {
         const { call } = recorder({ "spawn-happy-session": { type: "error" } });
         const daemon = createMachineTaskDaemon(call);
         await expect(
-            daemon.spawnStage({ taskId: "t1", stage: "execute", agent: "claude", worktreePath: "/wt", prompt: "x", permissionMode: "auto" }),
+            daemon.spawnStage({ taskId: "t1", stage: "execute", agent: "claude", worktreePath: "/wt", prompt: "x", permissionMode: "auto", token: "t" }),
         ).rejects.toThrow(/session id/);
     });
 

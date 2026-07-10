@@ -8,7 +8,8 @@ import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { prepareTaskWorktree, TASK_ARTIFACT_DIR } from './prepareWorktree';
+import { readFile } from 'fs/promises';
+import { prepareTaskWorktree, TASK_ARTIFACT_DIR, TASK_MCP_CONFIG } from './prepareWorktree';
 import { currentBranch, listWorktreePaths } from './taskGit';
 
 const tempDirs: string[] = [];
@@ -62,6 +63,19 @@ describe('prepareTaskWorktree', () => {
         expect(existsSync(path.join(result.worktreePath, TASK_ARTIFACT_DIR))).toBe(true);
         expect(await currentBranch(result.worktreePath)).toBe('happy/alice/add-widget');
         expect(await listWorktreePaths(repoPath)).toContain(result.worktreePath);
+    });
+
+    it('writes a git-excluded .mcp.json registering the task-control MCP server', async () => {
+        const { repoPath, worktreesDir } = await makeRepo();
+        const { worktreePath } = await prepareTaskWorktree(
+            { taskId: 'mcp1', repoPath, baseBranch: 'main', workBranch: 'happy/a/mcp' },
+            { worktreesDir },
+        );
+        const config = JSON.parse(await readFile(path.join(worktreePath, TASK_MCP_CONFIG), 'utf8'));
+        expect(config.mcpServers['happy-task']).toEqual({ command: 'happy', args: ['task-mcp'] });
+        // git must treat .mcp.json as excluded (not an untracked, committable file).
+        const status = execFileSync('git', ['-C', worktreePath, 'status', '--porcelain', '--ignored'], { stdio: 'pipe' }).toString();
+        expect(status).not.toMatch(/^\?\? \.mcp\.json/m);
     });
 
     it('rejects a work branch without the happy/ prefix', async () => {
