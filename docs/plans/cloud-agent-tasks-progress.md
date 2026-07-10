@@ -9,7 +9,7 @@
 
 - [x] C0.1 Prisma 迁移：`TeamTask` / `TeamTaskStageRun` / `TeamTaskTransition`（计划 §5；原有表零改动）
 - [x] C0.2 模板定义结构 `TaskTemplate` + T1 `execute-only`（`sources/team/tasks/templates.ts`，计划 §6）
-- [ ] C0.3 daemon RPC `task-prepare-worktree`：fetch → worktree add -b `happy/<user>/<slug>` → `.happy-task/` 创建（计划 §8；Skills 注入留到 C3，本项只留挂载点）
+- [x] C0.3 daemon RPC `task-prepare-worktree`：fetch → worktree add -b `happy/<user>/<slug>` → `.happy-task/` 创建（计划 §8；Skills 注入留到 C3，本项只留挂载点）
 - [ ] C0.4 daemon RPC `task-deliver`（分支前缀校验、push、remote 探测、`gh pr create` / `glab mr create`、pr.md 兜底）与 `task-cleanup`（默认保留 worktree）
 - [ ] C0.5 server 状态机最小实现（PENDING→PREPARING→RUNNING→SUCCEEDED/FAILED/CANCELLED）+ 完成判定（会话退出 + 产物存在）+ 阶段超时
 - [ ] C0.6 任务 API：POST/GET `/v1/team/tasks`、`/:id`、`/:id/cancel`、GET `/templates`（计划 §10.1；鉴权/审计沿用 Team 版模式）
@@ -56,3 +56,4 @@
 | 2026-07-09 | C0.1 | 三张新表不加外键关系，仅用带索引的 String 列（`ownerUserId`/`machineId`/`sessionId`/`taskId`）。 | 计划 §5「原有 Session/Machine 及 Team 版各表一律不改」；Prisma 关系需双向反向字段会改动既有表，故沿用 §5 快照的裸 String 建模。 |
 | 2026-07-09 | C0.1 | 迁移 SQL 手写，命名 `20260709040000_add_team_tasks`，未跑 `prisma migrate dev`。 | `migrate diff`/`migrate dev` 需真实 Postgres 连接，本仓库标准开发用 PGlite；沿用 Team 版既有迁移（`20260709010000`/`030000`）的手写格式，已用 PGlite 全量迁移 + 列/枚举/默认值 round-trip 验证通过。 |
 | 2026-07-09 | C0.2 | 模板用 `interface` + 字符串字面量联合（非 enum），`deliver` 只作为转移目标不入 `stages`；额外加入 `renderStagePrompt`（`{{token}}` 占位替换，未知 token→空串）与注册表 helper。 | 遵循包 CLAUDE.md「interfaces over types / avoid enums」；`deliver` 是 daemon 机械步骤（计划 §8）非 agent 会话；占位渲染是模板结构的直接配套且可单测，避免后续 spawn 接线时散落。默认 execute agent=claude、model 留空用会话默认，发起时可 stageOverrides 覆盖。 |
+| 2026-07-09 | C0.3 | CLI 任务 RPC 走新模块树 `src/team/tasks/`，经 `registerTaskHandlers(rpcHandlerManager)` 在 apiMachine 单点注册（毗邻 `team-apply-agent-env`）；git 用 `execFile`（无 shell）；worktree 根 `<happyHomeDir>/worktrees/<taskId>`；prepare 幂等（已注册 worktree 直接复用）；Skills 注入 = `injectTeamSkills` 空实现挂载点（C3 落地）。 | §1.3「CLI 新代码独立模块 + 入口单点注册」；execFile 避免 shell 注入；happyHomeDir 兼顾 dev/prod 变体；幂等符合重试安全；C0.3 明确「本项只留挂载点」。机器本地配置重建（link-project.sh 吸收）随 Skills 一并留到 C3。 |
