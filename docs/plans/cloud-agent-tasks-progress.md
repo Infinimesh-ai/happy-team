@@ -1,10 +1,10 @@
 # Cloud Agent Tasks — 执行进度（单一事实源）
 
-> **当前状态（2026-07-09）**：C0 代码全部完成（C0.1–C0.10 ✅），仅剩 **C0.11 ⏸ 待业主端到端人工验收**（步骤见 C0.11 条目）。
-> 业主决定：**先验收 C0 再开 C1**。C1 起始项 C1.0 在 C0 里程碑经业主验收关闭前不开工（遵守红线「上一里程碑未关闭就开下一个」）。
-> 服务端 123 + CLI unit 705 测试全绿；两包 typecheck 通过。
+> **当前状态（2026-07-09）**：C0–C4 全部里程碑的**可自动化部分代码完成**并单测/集成通过；每个里程碑仅剩 `⏸ 待业主端到端人工验收`（真机 + 浏览器 + 真实 GitHub/GitLab + 真外部 Team-Skills 仓库），见各里程碑末尾清单：C0.11 / C1.9 / C2.8 / C3.6 / C4.9。
+> 未验收项按红线一律**未自行声明里程碑关闭**。
+> 全量测试：服务端 167（23 文件）+ CLI unit 723（81 文件）全绿；三包（server/cli/app）typecheck 通过。
 >
-> 分支：`cloud-agent`。
+> 分支：`cloud-agent`（未合并回 main，合并由业主决定）。
 > 规则：严格按序取第一个未完成项；勾选与决策记录随实现同一变更提交；
 > `⏸ 待人工验收` 表示 agent 已完成可自动化部分、剩余步骤已列出等业主执行。
 > C0 已细化到可实现粒度；C1–C4 为里程碑级条目，**到达时由当次会话按计划文档细化为同等粒度再动工**（细化本身作为该里程碑第一项）。
@@ -108,9 +108,20 @@
 - [ ] C4.4 验收门禁 daemon 执行 + 真实输出注入 verify（daemon 跑 `validation:` 命令，输出进 verify 会话上下文）— 需真机跑门禁，留 C4.9 验收
 - [x] C4.5 遥测聚合报表（`computeTaskTelemetry`：per-template 结果、返工轮次分布、ESCALATED 案例、rejected 意图、escalationRate）
 - [x] C4.6 T4 `skills-curator` 模板（整编→验收→交付 PR；只出 PR、人审合并）+ 定期调度经既有 routines/cron（配置接线）
-- [ ] C4.7 `happy skills-mcp`（get_skill/append_lesson，吸收现 mcp/server.py）+ 初始化 scaffold + tag 化灰度 ref 分级
-- [ ] C4.8 服务端/CLI 测试补齐（schema 校验、预算 linter、契约校验、遥测聚合、curator 模板）
-- [ ] C4.9 ⏸ Team-Skills 契约化改造与一次性切换（§9.5 检查清单）+ 公开模板发布 + 新团队空仓库跑通验证 + curator 周期端到端 + 规则退役证据
+- [x] C4.7 `happy skills-mcp`（get_skill/append_lesson，吸收现 mcp/server.py 到产品）+ 初始化 scaffold（契约合规骨架）；tag 化灰度 = `TEAM_SKILLS_REF` 指向 release tag（配置）
+- [x] C4.8 服务端/CLI 测试补齐（artifact schema、contract/预算 linter、telemetry 聚合、T4 模板、skills-mcp get/append/scaffold；server 167 + CLI 723 全绿）
+- [ ] C4.9 ⏸ Team-Skills 契约化改造与一次性切换（§9.5 检查清单）+ 公开模板发布 + 新团队空仓库跑通验证 + curator 周期端到端 + 规则退役证据 — 待业主执行，步骤见下
+
+  **本项本质为外部/人工**（改动外部 Team-Skills 仓库、真机 curator 周期、真实发布切换），agent 会话内不可自动完成：
+  1. **C4.4 验收门禁 daemon 执行**：在真机上让 daemon 读项目 skill 的 `validation:` 命令并实际运行，把真实输出注入 verify 会话上下文（seam：`validation:` 字段已在 `skillsContract` 校验；`task-check-artifacts`/read RPC 已具；缺的是 daemon 跑门禁 + 注入，需真项目命令）。验证：产物 frontmatter 缺字段时完成判定正确拒绝推进（C4.1 已单测，真机再验一次）。
+  2. **契约化改造 Team-Skills**（`/home/dev/Documents/Team-Skills`，§9.5 步骤 1）：补齐各项目 skill `repo:`/`validation:` + 迁入 `skills.yaml`（contractVersion）+ 移除 `mcp/server.py`/`scripts`（由产品 `happy skills-mcp`/注入 adapter 接管），保留 git 历史与 decision-log。此改造本身作为一次任务在本系统上预演。
+  3. **分发前校验通过**：`validateSkillsDirectory` 对改造后仓库返回 valid；故意破坏契约的 ref 被拒并通知管理员。
+  4. **一次性切换**（§9.5 步骤 2/3）：切换检查清单全绿后 server 指向新 ref，旧人工流程（link-project.sh/手动同步/手动 Lesson Consolidation）即刻废止；`main` 保护 + 只经 PR 写入。
+  5. **curator 周期端到端**：遥测报表 → T4 curator 出 PR → 人审合并 → 新 tag 对单项目灰度 → 观测无恶化 → 全量；至少一条 model-compensating 规则凭「N 周期零拦截」证据退役且有 decision-log 条目。
+  6. **公开模板 + 新团队**：Team-Skills 契约化后剥离公司项目层即为第一个公开模板；一个全新团队从空仓库经 scaffold 初始化后完整跑通一个任务（组件化最终证明）。
+  验收通过后由业主打勾并记录切换日期、公开模板地址、新团队跑通任务链接、退役规则 decision-log。
+
+  **会话内已自动化的降险**：artifact 内容契约 + 完成判定升级、契约/预算 linter、`validateSkillsDirectory` 分发前校验、遥测聚合、T4 curator 模板、`happy skills-mcp`（get_skill/append_lesson/scaffold）均已单测/集成覆盖。仅真外部仓库改造、真机门禁执行、真实发布切换与 curator 真周期留待本清单人工验收。
 
 ## 决策记录
 

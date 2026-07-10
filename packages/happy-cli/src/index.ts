@@ -469,6 +469,11 @@ Conversation history is preserved on the server, but in-flight tool calls are in
     const { runTaskMcp } = await import('@/team/tasks/taskMcp')
     await runTaskMcp()
     return;
+  } else if (subcommand === 'skills-mcp') {
+    // Skills write-back MCP server (stdio): get_skill / append_lesson.
+    const { runSkillsMcp } = await import('@/team/tasks/skillsMcp')
+    await runSkillsMcp()
+    return;
   } else if (subcommand === 'notify') {
     // Handle notification command
     try {
