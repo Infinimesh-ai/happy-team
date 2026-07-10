@@ -60,10 +60,15 @@
 
 ## C2 闭环 + autonomous
 
-- [ ] C2.0 细化本里程碑条目
-- [ ] C2.x T3 模板 + 验收阶段（物化证据注入）+ findings.md 返工回路 + round/maxRounds
-- [ ] C2.x request_transition 裁决 + autonomous 模式 + Transition 黑匣子查询页
-- [ ] C2.x ⏸ C2 端到端人工验收（含构造必失败任务验证 3 轮 ESCALATED）
+- [x] C2.0 细化本里程碑条目（对照计划 §6 §7 §10，粒度对齐 C0/C1）
+- [x] C2.1 T3 模板 `plan-execute-verify`（verify 阶段 + 条件边 verify_passed/verify_failed_within_budget）
+- [x] C2.2 状态机 verdict 分支：verify 通过→交付；不通过 && round+1<maxRounds→回执行（round++、注入 findings.md）；否则→ESCALATED
+- [x] C2.3 验收阶段证据注入（verify prompt 注入 plan.md/findings.md 路径 + 指示跑门禁看 diff、逐条定位；daemon 执行门禁并注入真实输出属 C4）
+- [ ] C2.4 `request_transition` 意图 + server 对照模板裁决（auto_approved/rejected 落写黑匣子）
+- [x] C2.5 autonomous 模式核对（全边自动放行，T3 自主闭环 pass/rework/ESCALATED 均已测）
+- [ ] C2.6 Transition 黑匣子查询页（前端任务详情/审计渲染 transition 全序列）
+- [ ] C2.7 服务端测试补齐（返工回路、3 轮 ESCALATED、request_transition 裁决）
+- [ ] C2.8 ⏸ C2 端到端人工验收（含构造必失败任务验证 3 轮 ESCALATED）
 
 ## C3 Skills 下发 + 双平台收尾
 

@@ -251,7 +251,7 @@ export function createTaskStateMachine(deps: TaskStateMachineDeps): TaskStateMac
      * specific stage run — a complete_stage intent and the later session-exit
      * cannot double-advance, because the stage run is claimed atomically.
      */
-    async function completeStage(task: TeamTask, stageRun: TeamTaskStageRun, summary?: string): Promise<void> {
+    async function completeStage(task: TeamTask, stageRun: TeamTaskStageRun, summary?: string, verdict?: "passed" | "failed"): Promise<void> {
         if (task.status !== TaskStatus.RUNNING || task.currentStage !== stageRun.stage
             || stageRun.status !== StageRunStatus.RUNNING || !task.worktreePath) {
             return;
@@ -272,7 +272,27 @@ export function createTaskStateMachine(deps: TaskStateMachineDeps): TaskStateMac
         });
         if (claimed.count === 0) return;
 
-        const edge = template.transitions.find((transition) => transition.from === stageRun.stage);
+        const edges = template.transitions.filter((transition) => transition.from === stageRun.stage);
+        const conditional = edges.some((edge) => edge.condition);
+
+        let reworkRound: number | undefined;
+        let edge = edges[0];
+        if (conditional) {
+            // Verify stage: branch on the verdict (a missing verdict is treated as
+            // a failure so a forgotten complete_stage never passes on a hunch).
+            if (verdict === "passed") {
+                edge = edges.find((e) => e.condition === "verify_passed") ?? edges[0];
+            } else if (task.round + 1 < task.maxRounds) {
+                // Still within budget: rework (increment the round, re-enter execute).
+                edge = edges.find((e) => e.condition === "verify_failed_within_budget") ?? edges[0];
+                reworkRound = task.round + 1;
+            } else {
+                await recordTransition(task.id, stageRun.stage, "ESCALATED", "escalated", "system", `verification failed after ${task.maxRounds} rounds`);
+                await escalateTask(task, `verification failed after ${task.maxRounds} rounds`);
+                return;
+            }
+        }
+
         if (!edge) {
             await succeedTask(task, task.prUrl);
             return;
@@ -283,7 +303,12 @@ export function createTaskStateMachine(deps: TaskStateMachineDeps): TaskStateMac
             await notifier.notify({ type: "approval_needed", taskId: task.id, stage: stageRun.stage });
             return;
         }
-        await proceedToStage(task, stageRun.stage, edge.to, "auto_approved", "system");
+        let advancingTask = task;
+        if (reworkRound !== undefined) {
+            await db.teamTask.update({ where: { id: task.id }, data: { round: reworkRound } });
+            advancingTask = { ...task, round: reworkRound };
+        }
+        await proceedToStage(advancingTask, stageRun.stage, edge.to, "auto_approved", "system");
     }
 
     async function proceedToStage(task: TeamTask, fromStage: string, toStage: string, decision: string, requestedBy: string): Promise<void> {
@@ -333,7 +358,7 @@ export function createTaskStateMachine(deps: TaskStateMachineDeps): TaskStateMac
             orderBy: { startedAt: "desc" },
         });
         if (stageRun) {
-            await completeStage(task, stageRun, intent.summary);
+            await completeStage(task, stageRun, intent.summary, intent.verdict);
         }
         return { ok: true };
     }

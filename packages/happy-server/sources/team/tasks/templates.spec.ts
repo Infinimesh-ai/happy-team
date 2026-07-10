@@ -52,6 +52,14 @@ describe("task templates", () => {
         expect(stage.expectedArtifacts).toEqual([TASK_ARTIFACTS.pr]);
     });
 
+    it("exposes T3 plan-execute-verify with conditional verify edges", () => {
+        const template = getTaskTemplate("plan-execute-verify")!;
+        expect(Object.keys(template.stages)).toEqual(["plan", "execute", "verify"]);
+        const verifyEdges = template.transitions.filter((t) => t.from === "verify");
+        expect(verifyEdges.find((e) => e.condition === "verify_passed")?.to).toBe("deliver");
+        expect(verifyEdges.find((e) => e.condition === "verify_failed_within_budget")?.to).toBe("execute");
+    });
+
     it("substitutes goalPrompt and artifact-path placeholders", () => {
         const template = getTaskTemplate("execute-only")!;
         const prompt = renderStagePrompt(template, "execute", { goalPrompt: "Add a health check endpoint" });

@@ -316,6 +316,62 @@ describe("task state machine", () => {
         ]);
     });
 
+    it("T3 autonomous: plan → execute → verify(passed) → deliver", async () => {
+        const sm = createTaskStateMachine({ daemon: makeDaemon() });
+        const taskId = await createTask({ templateId: "plan-execute-verify", mode: "AUTONOMOUS" });
+        await sm.startTask(taskId);                                        // plan
+        await sm.handleStageExit({ taskId });                             // plan → execute (auto)
+        expect((await db.teamTask.findUniqueOrThrow({ where: { id: taskId } })).currentStage).toBe("execute");
+        await sm.handleStageExit({ taskId });                             // execute → verify
+        expect((await db.teamTask.findUniqueOrThrow({ where: { id: taskId } })).currentStage).toBe("verify");
+        await sm.handleIntent({ taskId, stage: "verify", round: 0 }, { kind: "complete_stage", verdict: "passed" });
+        const task = await db.teamTask.findUniqueOrThrow({ where: { id: taskId } });
+        expect(task.status).toBe("SUCCEEDED");
+        expect(task.prUrl).toBe("https://example.test/pr/1");
+    });
+
+    it("T3: a failed verdict reworks (round++) and can then pass", async () => {
+        const sm = createTaskStateMachine({ daemon: makeDaemon() });
+        const taskId = await createTask({ templateId: "plan-execute-verify", mode: "AUTONOMOUS" });
+        await sm.startTask(taskId);
+        await sm.handleStageExit({ taskId }); // → execute
+        await sm.handleStageExit({ taskId }); // → verify (round 0)
+        await sm.handleIntent({ taskId, stage: "verify", round: 0 }, { kind: "complete_stage", verdict: "failed" });
+        let task = await db.teamTask.findUniqueOrThrow({ where: { id: taskId } });
+        expect(task.currentStage).toBe("execute");
+        expect(task.round).toBe(1);
+
+        await sm.handleStageExit({ taskId }); // → verify (round 1)
+        await sm.handleIntent({ taskId, stage: "verify", round: 1 }, { kind: "complete_stage", verdict: "passed" });
+        task = await db.teamTask.findUniqueOrThrow({ where: { id: taskId } });
+        expect(task.status).toBe("SUCCEEDED");
+    });
+
+    it("T3: a task that always fails verification ESCALATES after maxRounds", async () => {
+        let deliveries = 0;
+        const sm = createTaskStateMachine({
+            daemon: makeDaemon({ deliver: async () => { deliveries += 1; return { prUrl: "x", platform: "github" }; } }),
+        });
+        const taskId = await createTask({ templateId: "plan-execute-verify", mode: "AUTONOMOUS" }); // maxRounds default 3
+        await sm.startTask(taskId);
+        await sm.handleStageExit({ taskId }); // execute
+        // Fail verification every round until the budget is exhausted.
+        for (let round = 0; round < 5; round += 1) {
+            const task = await db.teamTask.findUniqueOrThrow({ where: { id: taskId } });
+            if (task.status !== "RUNNING") break;
+            if (task.currentStage === "execute") {
+                await sm.handleStageExit({ taskId }); // execute → verify
+            }
+            const current = await db.teamTask.findUniqueOrThrow({ where: { id: taskId } });
+            await sm.handleIntent({ taskId, stage: "verify", round: current.round }, { kind: "complete_stage", verdict: "failed" });
+        }
+        const task = await db.teamTask.findUniqueOrThrow({ where: { id: taskId } });
+        expect(task.status).toBe("ESCALATED");
+        expect(deliveries).toBe(0);
+        const escalation = await db.teamTaskTransition.findFirst({ where: { taskId, decision: "escalated" } });
+        expect(escalation?.reason).toContain("verification failed");
+    });
+
     it("times out a stalled stage via the timeout sweep", async () => {
         const sm = createTaskStateMachine({ daemon: makeDaemon() });
         const taskId = await createTask();

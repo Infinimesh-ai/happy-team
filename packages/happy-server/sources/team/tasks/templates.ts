@@ -156,10 +156,69 @@ const T2_PLAN_EXECUTE: TaskTemplate = {
     ],
 };
 
+const T3_PLAN_EXECUTE_VERIFY: TaskTemplate = {
+    id: "plan-execute-verify",
+    stages: {
+        plan: {
+            agent: "claude",
+            promptTemplate: T2_PLAN_EXECUTE.stages.plan.promptTemplate,
+            expectedArtifacts: [TASK_ARTIFACTS.plan],
+            permissionMode: "plan",
+        },
+        execute: {
+            agent: "codex",
+            promptTemplate: [
+                "You are executing an approved plan on an isolated git worktree.",
+                "",
+                "Task goal:",
+                "{{goalPrompt}}",
+                "",
+                "Follow the approved plan at {{planPath}} exactly.",
+                "If a review findings file exists at {{findingsPath}}, this is a rework",
+                "round: address every finding it lists first.",
+                "- Implement each item and commit with conventional commit messages.",
+                "- When finished, write the pull-request title and body to {{prPath}}.",
+                "Do not push or open the pull request yourself — delivery is automatic.",
+            ].join("\n"),
+            expectedArtifacts: [TASK_ARTIFACTS.pr],
+            permissionMode: "auto",
+        },
+        verify: {
+            agent: "claude",
+            promptTemplate: [
+                "You are reviewing an implementation against its plan on a git worktree.",
+                "",
+                "Task goal:",
+                "{{goalPrompt}}",
+                "",
+                "Evidence to check:",
+                "- the plan and its checklist at {{planPath}}",
+                "- the working-tree diff for this branch",
+                "- run the project's validation/test commands and read the real output",
+                "",
+                "If everything passes, call complete_stage with verdict \"passed\".",
+                "If not, write precise, located findings to {{findingsPath}} (one entry per",
+                "problem with file/line and what is wrong) and call complete_stage with",
+                "verdict \"failed\". Do not pass on a hunch — cite the evidence.",
+            ].join("\n"),
+            expectedArtifacts: [],
+            permissionMode: "auto",
+        },
+    },
+    transitions: [
+        { from: null, to: "plan" },
+        { from: "plan", to: "execute", requiresApproval: true },
+        { from: "execute", to: "verify" },
+        { from: "verify", to: DELIVER_STAGE, condition: "verify_passed" },
+        { from: "verify", to: "execute", condition: "verify_failed_within_budget" },
+    ],
+};
+
 /** All built-in templates, keyed by id. */
 export const TASK_TEMPLATES: Record<string, TaskTemplate> = {
     [T1_EXECUTE_ONLY.id]: T1_EXECUTE_ONLY,
     [T2_PLAN_EXECUTE.id]: T2_PLAN_EXECUTE,
+    [T3_PLAN_EXECUTE_VERIFY.id]: T3_PLAN_EXECUTE_VERIFY,
 };
 
 /** Look up a template by id, or undefined when unknown. */
