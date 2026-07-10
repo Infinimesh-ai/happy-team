@@ -11,7 +11,7 @@
 - [x] C0.2 模板定义结构 `TaskTemplate` + T1 `execute-only`（`sources/team/tasks/templates.ts`，计划 §6）
 - [x] C0.3 daemon RPC `task-prepare-worktree`：fetch → worktree add -b `happy/<user>/<slug>` → `.happy-task/` 创建（计划 §8；Skills 注入留到 C3，本项只留挂载点）
 - [x] C0.4 daemon RPC `task-deliver`（分支前缀校验、push、remote 探测、`gh pr create` / `glab mr create`、pr.md 兜底）与 `task-cleanup`（默认保留 worktree）
-- [ ] C0.5 server 状态机最小实现（PENDING→PREPARING→RUNNING→SUCCEEDED/FAILED/CANCELLED）+ 完成判定（会话退出 + 产物存在）+ 阶段超时
+- [x] C0.5 server 状态机最小实现（PENDING→PREPARING→RUNNING→SUCCEEDED/FAILED/CANCELLED）+ 完成判定（会话退出 + 产物存在）+ 阶段超时
 - [ ] C0.6 任务 API：POST/GET `/v1/team/tasks`、`/:id`、`/:id/cancel`、GET `/templates`（计划 §10.1；鉴权/审计沿用 Team 版模式）
 - [ ] C0.7 阶段 spawn 接线：状态机经既有 `spawn-happy-session` 在 worktree 内起会话（directory/agent/env 注入 `HAPPY_TASK_ID`）
 - [ ] C0.8 推送通知：阶段推进 / 失败 / 交付完成（复用现有通知通道）
@@ -58,3 +58,5 @@
 | 2026-07-09 | C0.2 | 模板用 `interface` + 字符串字面量联合（非 enum），`deliver` 只作为转移目标不入 `stages`；额外加入 `renderStagePrompt`（`{{token}}` 占位替换，未知 token→空串）与注册表 helper。 | 遵循包 CLAUDE.md「interfaces over types / avoid enums」；`deliver` 是 daemon 机械步骤（计划 §8）非 agent 会话；占位渲染是模板结构的直接配套且可单测，避免后续 spawn 接线时散落。默认 execute agent=claude、model 留空用会话默认，发起时可 stageOverrides 覆盖。 |
 | 2026-07-09 | C0.3 | CLI 任务 RPC 走新模块树 `src/team/tasks/`，经 `registerTaskHandlers(rpcHandlerManager)` 在 apiMachine 单点注册（毗邻 `team-apply-agent-env`）；git 用 `execFile`（无 shell）；worktree 根 `<happyHomeDir>/worktrees/<taskId>`；prepare 幂等（已注册 worktree 直接复用）；Skills 注入 = `injectTeamSkills` 空实现挂载点（C3 落地）。 | §1.3「CLI 新代码独立模块 + 入口单点注册」；execFile 避免 shell 注入；happyHomeDir 兼顾 dev/prod 变体；幂等符合重试安全；C0.3 明确「本项只留挂载点」。机器本地配置重建（link-project.sh 吸收）随 Skills 一并留到 C3。 |
 | 2026-07-09 | C0.4 | `deliverTask` 内 git 机械步骤（分支前缀校验/push/remote 探测/pr.md·plan.md 解析）为真实代码并对本地裸仓库测；外部 `gh`/`glab` PR 创建走可注入 seam（`createPullRequest`，默认真实 CLI），单测注入桩离线验证编排。remote 探测按 host 子串（github/gitlab），自建域名可用 `platform` 参数覆盖。cleanup 默认保留 worktree、删除时不动分支、幂等。 | 计划 §8 交付为 daemon 确定性步骤；push 对裸仓库离线可真跑，唯 hosted-platform CLI 属真外部依赖，注入 seam 非「mock 冒充集成」——确定性机制全真，真实 `gh`/`glab` 实现随包发布留 C0.11/C3 人工验收。自建 GitLab host 无 `gitlab` 字样的完整探测属 C3。 |
+| 2026-07-09 | C0.5 | 状态机所有机器侧副作用经注入 `TaskDaemonGateway`（prepare/spawn/checkArtifacts/deliver），真实 daemon 实现（加密机器 RPC）留 C0.7；工厂函数 `createTaskStateMachine`（闭包非 class）；超时→`FAILED`（非 ESCALATED，后者 C1+，C0.5 状态集不含）；转移全量落写 `TeamTaskTransition`（decision=auto_approved）。 | §6「状态机脊柱」；包 CLAUDE.md「avoid classes」；C0.5 状态集显式仅 PENDING/PREPARING/RUNNING/SUCCEEDED/FAILED/CANCELLED；对内存 PGlite + 假 daemon 桩测（§11）。`checkArtifacts` 对应的 daemon 代查 RPC 与真实 gateway 一并留 C0.7。 |
+| 2026-07-09 | C0.5 | `stageOverrides`（逐阶段 model 覆盖，§10.1 API）暂不持久化，阶段用模板默认 agent/model。 | 计划 §5 的 `TeamTask` schema 无 override 字段，T1 单执行阶段无覆盖必要；多阶段覆盖首次真正需要在 C1（T2），届时决定存储形态（新增字段或编码），本里程碑不臆造 schema。 |
