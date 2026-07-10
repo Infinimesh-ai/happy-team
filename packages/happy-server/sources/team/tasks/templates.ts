@@ -1,0 +1,161 @@
+/**
+ * Cloud-agent task templates (plan §6).
+ *
+ * A template is a static description of how a task is orchestrated: which agent
+ * runs each stage, the prompt it receives, which artifacts prove the stage is
+ * done, and the allowed transitions between stages. Templates are server-side
+ * TypeScript constants for the first version — the structure is already "data"
+ * so a later move to the database is a small step.
+ *
+ * Only stages that are real agent sessions live in `stages`. The `deliver`
+ * pseudo-stage is a deterministic daemon step (git push + gh/glab, plan §8), so
+ * it appears only as a transition target, never as a `stages` entry.
+ */
+
+/** Agents an orchestration stage can run on (matches spawn-happy-session). */
+export type TaskAgent = "claude" | "codex";
+
+/** Permission mode a stage session runs under (plan §6). */
+export type StagePermissionMode = "plan" | "auto";
+
+/**
+ * Guard on a transition edge. `verify_passed` / `verify_failed_within_budget`
+ * are evaluated by the state machine against the verify verdict and round
+ * budget (used from T3 onward); undefined means an unconditional edge.
+ */
+export type TransitionCondition = "verify_passed" | "verify_failed_within_budget";
+
+export interface TaskStageDefinition {
+    agent: TaskAgent;
+    /** Optional default model; overridable per-task at launch (stageOverrides). */
+    model?: string;
+    /**
+     * Prompt handed to the stage session. Supports `{{token}}` placeholders
+     * substituted by {@link renderStagePrompt} (goalPrompt / artifact paths).
+     */
+    promptTemplate: string;
+    /**
+     * Artifact paths (relative to the worktree) whose existence is the fallback
+     * completion signal for this stage (plan §6, three-signal combination).
+     */
+    expectedArtifacts: string[];
+    permissionMode: StagePermissionMode;
+}
+
+export interface TaskTransition {
+    /** Source stage; `null` marks the entry edge (task start → first stage). */
+    from: string | null;
+    to: string;
+    /** supervised mode pauses on this edge for human approval (plan §6). */
+    requiresApproval?: boolean;
+    condition?: TransitionCondition;
+}
+
+export interface TaskTemplate {
+    id: string;
+    stages: Record<string, TaskStageDefinition>;
+    transitions: TaskTransition[];
+}
+
+/** Worktree-relative directory holding the file hand-off medium (plan §4). */
+export const TASK_ARTIFACT_DIR = ".happy-task";
+
+/** Conventional artifact paths inside {@link TASK_ARTIFACT_DIR}. */
+export const TASK_ARTIFACTS = {
+    plan: `${TASK_ARTIFACT_DIR}/plan.md`,
+    findings: `${TASK_ARTIFACT_DIR}/findings.md`,
+    pr: `${TASK_ARTIFACT_DIR}/pr.md`,
+} as const;
+
+/** Terminal daemon-executed delivery step (not an agent session). */
+export const DELIVER_STAGE = "deliver";
+
+/**
+ * Placeholder tokens accepted by {@link renderStagePrompt}. Kept explicit so a
+ * template author references exactly these and a typo surfaces as a leftover
+ * `{{...}}` rather than a silent empty string.
+ */
+export interface StagePromptVariables {
+    goalPrompt: string;
+    planPath?: string;
+    findingsPath?: string;
+    prPath?: string;
+}
+
+const T1_EXECUTE_ONLY: TaskTemplate = {
+    id: "execute-only",
+    stages: {
+        execute: {
+            agent: "claude",
+            promptTemplate: [
+                "You are executing a coding task on an isolated git worktree.",
+                "",
+                "Task goal:",
+                "{{goalPrompt}}",
+                "",
+                "Instructions:",
+                "- Implement the change directly in this worktree.",
+                "- Commit your work with conventional commit messages.",
+                "- When finished, write the pull-request title and body to {{prPath}}",
+                "  (first line = title, blank line, then the body).",
+                "Do not push or open the pull request yourself — delivery is handled",
+                "automatically once this session exits and {{prPath}} exists.",
+            ].join("\n"),
+            expectedArtifacts: [TASK_ARTIFACTS.pr],
+            permissionMode: "auto",
+        },
+    },
+    transitions: [
+        { from: null, to: "execute" },
+        { from: "execute", to: DELIVER_STAGE },
+    ],
+};
+
+/** All built-in templates, keyed by id. */
+export const TASK_TEMPLATES: Record<string, TaskTemplate> = {
+    [T1_EXECUTE_ONLY.id]: T1_EXECUTE_ONLY,
+};
+
+/** Look up a template by id, or undefined when unknown. */
+export function getTaskTemplate(id: string): TaskTemplate | undefined {
+    return TASK_TEMPLATES[id];
+}
+
+/** All built-in templates as a stable, id-sorted list (for GET /templates). */
+export function listTaskTemplates(): TaskTemplate[] {
+    return Object.values(TASK_TEMPLATES).sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** Look up a single stage definition within a template. */
+export function getTaskStage(template: TaskTemplate, stage: string): TaskStageDefinition | undefined {
+    return template.stages[stage];
+}
+
+/**
+ * Resolve the first stage a task enters — the target of the `from: null` edge.
+ * Returns undefined for a malformed template with no entry edge.
+ */
+export function getEntryStage(template: TaskTemplate): string | undefined {
+    return template.transitions.find((transition) => transition.from === null)?.to;
+}
+
+const PLACEHOLDER_PATTERN = /\{\{\s*(\w+)\s*\}\}/g;
+
+/**
+ * Substitute `{{token}}` placeholders in a stage's promptTemplate. Unknown or
+ * missing tokens are replaced with an empty string so a stale placeholder never
+ * leaks literal `{{...}}` text into an agent prompt.
+ */
+export function renderStagePrompt(template: TaskTemplate, stage: string, variables: StagePromptVariables): string {
+    const definition = getTaskStage(template, stage);
+    if (!definition) {
+        throw new Error(`Unknown stage "${stage}" for template "${template.id}"`);
+    }
+    const values: Record<string, string | undefined> = {
+        goalPrompt: variables.goalPrompt,
+        planPath: variables.planPath ?? TASK_ARTIFACTS.plan,
+        findingsPath: variables.findingsPath ?? TASK_ARTIFACTS.findings,
+        prPath: variables.prPath ?? TASK_ARTIFACTS.pr,
+    };
+    return definition.promptTemplate.replace(PLACEHOLDER_PATTERN, (_match, token: string) => values[token] ?? "");
+}
