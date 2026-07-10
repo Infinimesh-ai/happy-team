@@ -63,5 +63,13 @@ export function createMachineTaskDaemon(call: MachineRpcCall): TaskDaemonGateway
             }
             return { prUrl: result.prUrl, platform: typeof result.platform === "string" ? result.platform : "unknown" };
         },
+
+        async writeArtifact(input) {
+            await call("task-write-artifact", {
+                worktreePath: input.worktreePath,
+                artifact: input.artifact,
+                content: input.content,
+            });
+        },
     };
 }

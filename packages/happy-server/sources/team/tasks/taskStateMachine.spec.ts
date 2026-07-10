@@ -17,6 +17,7 @@ function makeDaemon(overrides: Partial<TaskDaemonGateway> = {}): TaskDaemonGatew
         spawnStage: async () => ({ sessionId: `sess-${Math.random().toString(36).slice(2)}` }),
         checkArtifacts: async () => ({ missing: [] }),
         deliver: async () => ({ prUrl: "https://example.test/pr/1", platform: "github" }),
+        writeArtifact: async () => {},
         ...overrides,
     };
 }
@@ -170,6 +171,64 @@ describe("task state machine", () => {
         await sm.handleStageExit({ taskId });
         const after = await db.teamTask.findUniqueOrThrow({ where: { id: taskId } });
         expect(after.status).toBe("CANCELLED");
+    });
+
+    it("get_task_context returns the current task context", async () => {
+        const sm = createTaskStateMachine({ daemon: makeDaemon() });
+        const taskId = await createTask();
+        await sm.startTask(taskId);
+        const result = await sm.handleIntent({ taskId, stage: "execute", round: 0 }, { kind: "get_task_context" });
+        expect(result.ok).toBe(true);
+        expect(result.context).toMatchObject({ taskId, stage: "execute", round: 0, goalPrompt: "Do the thing" });
+    });
+
+    it("complete_stage drives completion (advances to deliver → SUCCEEDED)", async () => {
+        let deliveries = 0;
+        const sm = createTaskStateMachine({
+            daemon: makeDaemon({ deliver: async () => { deliveries += 1; return { prUrl: "https://pr/cs", platform: "github" }; } }),
+        });
+        const taskId = await createTask();
+        await sm.startTask(taskId);
+        const result = await sm.handleIntent({ taskId, stage: "execute", round: 0 }, { kind: "complete_stage", summary: "done it" });
+        expect(result.ok).toBe(true);
+
+        const task = await db.teamTask.findUniqueOrThrow({ where: { id: taskId } });
+        expect(task.status).toBe("SUCCEEDED");
+        expect(task.prUrl).toBe("https://pr/cs");
+        const stageRun = await db.teamTaskStageRun.findFirstOrThrow({ where: { taskId } });
+        expect(stageRun.summary).toBe("done it");
+
+        // A later session-exit must not deliver again (idempotent three-signal).
+        await sm.handleStageExit({ taskId });
+        expect(deliveries).toBe(1);
+        // The agent's complete_stage intent is in the transition black box.
+        const agentIntents = await db.teamTaskTransition.count({ where: { taskId, requestedBy: "agent" } });
+        expect(agentIntents).toBeGreaterThanOrEqual(1);
+    });
+
+    it("report_blocker escalates the task", async () => {
+        const sm = createTaskStateMachine({ daemon: makeDaemon() });
+        const taskId = await createTask();
+        await sm.startTask(taskId);
+        const result = await sm.handleIntent({ taskId, stage: "execute", round: 0 }, { kind: "report_blocker", reason: "cannot reach the API" });
+        expect(result.ok).toBe(true);
+        const task = await db.teamTask.findUniqueOrThrow({ where: { id: taskId } });
+        expect(task.status).toBe("ESCALATED");
+        const escalation = await db.teamTaskTransition.findFirst({ where: { taskId, decision: "escalated" } });
+        expect(escalation?.reason).toBe("cannot reach the API");
+    });
+
+    it("rejects a stale token (wrong round) and records it", async () => {
+        const sm = createTaskStateMachine({ daemon: makeDaemon() });
+        const taskId = await createTask();
+        await sm.startTask(taskId);
+        const result = await sm.handleIntent({ taskId, stage: "execute", round: 9 }, { kind: "complete_stage" });
+        expect(result.ok).toBe(false);
+        const rejected = await db.teamTaskTransition.findFirst({ where: { taskId, decision: "rejected" } });
+        expect(rejected).not.toBeNull();
+        // Task remains running (not advanced by a stale token).
+        const task = await db.teamTask.findUniqueOrThrow({ where: { id: taskId } });
+        expect(task.status).toBe("RUNNING");
     });
 
     it("times out a stalled stage via the timeout sweep", async () => {

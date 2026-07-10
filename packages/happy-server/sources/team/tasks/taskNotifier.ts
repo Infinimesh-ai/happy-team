@@ -26,6 +26,10 @@ export function renderTaskNotification(event: TaskNotification): RenderedNotific
     switch (event.type) {
         case "stage_started":
             return { title: "Task in progress", body: `Stage “${event.stage}” started` };
+        case "approval_needed":
+            return { title: "Approval needed", body: `Review the plan to continue past “${event.stage}”` };
+        case "task_escalated":
+            return { title: "Task needs you", body: event.reason };
         case "task_delivered":
             return { title: "Task delivered", body: `Pull request ready: ${event.prUrl}` };
         case "task_failed":

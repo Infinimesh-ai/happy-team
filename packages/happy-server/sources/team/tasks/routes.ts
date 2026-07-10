@@ -16,7 +16,9 @@ import {
     listTemplateDtos,
     TaskRequestError,
 } from "./taskService";
-import { startTeamTask, stopActiveTaskSessions } from "./taskRuntime";
+import { applyTaskIntent, approveTeamTask, rejectTeamTask, startTeamTask, stopActiveTaskSessions } from "./taskRuntime";
+import { verifyTaskToken } from "./taskToken";
+import type { TaskIntent } from "./taskStateMachine";
 
 const createTaskBodySchema = z.object({
     machineId: z.string().min(1),
@@ -30,6 +32,23 @@ const createTaskBodySchema = z.object({
 });
 
 const taskIdParamsSchema = z.object({ id: z.string().min(1) });
+
+const intentBodySchema = z.object({
+    token: z.string().min(1),
+    kind: z.enum(["get_task_context", "complete_stage", "report_blocker"]),
+    summary: z.string().optional(),
+    verdict: z.enum(["passed", "failed"]).optional(),
+    reason: z.string().optional(),
+});
+
+const approveBodySchema = z.object({ plan: z.string().optional() }).optional();
+
+function toIntent(body: z.infer<typeof intentBodySchema>): TaskIntent | null {
+    if (body.kind === "get_task_context") return { kind: "get_task_context" };
+    if (body.kind === "complete_stage") return { kind: "complete_stage", summary: body.summary, verdict: body.verdict };
+    if (!body.reason) return null;
+    return { kind: "report_blocker", reason: body.reason };
+}
 
 export function teamTaskRoutes(app: Fastify) {
     app.get("/v1/team/tasks/templates", {
@@ -90,6 +109,48 @@ export function teamTaskRoutes(app: Fastify) {
         } catch (error) {
             return sendTaskError(reply, error);
         }
+    });
+
+    // Internal: daemon-forwarded MCP intent, authenticated by the task token
+    // (not the account). complete_stage / report_blocker / get_task_context.
+    app.post("/v1/team/tasks/:id/intent", {
+        schema: { params: taskIdParamsSchema, body: intentBodySchema },
+    }, async (request, reply) => {
+        const claims = verifyTaskToken(request.body.token);
+        if (!claims || claims.taskId !== request.params.id) {
+            return reply.code(401).send({ error: "invalid task token" });
+        }
+        const intent = toIntent(request.body);
+        if (!intent) return reply.code(400).send({ error: "report_blocker requires a reason" });
+        const result = await applyTaskIntent(claims, intent);
+        if (!result.ok) return reply.code(409).send({ error: result.error });
+        return reply.send(result);
+    });
+
+    app.post("/v1/team/tasks/:id/approve", {
+        preHandler: app.authenticate,
+        schema: { params: taskIdParamsSchema, body: approveBodySchema },
+    }, async (request, reply) => {
+        const teamUser = await getActiveTeamUser(request.userId);
+        if (!teamUser) return reply.code(403).send({ error: "Team user required" });
+        const detail = await getTeamTaskDetail(teamUser, request.params.id);
+        if (!detail) return reply.code(404).send({ error: "Task not found" });
+        if (detail.status !== "WAITING_APPROVAL") return reply.code(409).send({ error: "Task is not awaiting approval" });
+        await approveTeamTask(request.params.id, { editedPlan: request.body?.plan, actorId: teamUser.id });
+        return reply.send({ task: await getTeamTaskDetail(teamUser, request.params.id) });
+    });
+
+    app.post("/v1/team/tasks/:id/reject", {
+        preHandler: app.authenticate,
+        schema: { params: taskIdParamsSchema },
+    }, async (request, reply) => {
+        const teamUser = await getActiveTeamUser(request.userId);
+        if (!teamUser) return reply.code(403).send({ error: "Team user required" });
+        const detail = await getTeamTaskDetail(teamUser, request.params.id);
+        if (!detail) return reply.code(404).send({ error: "Task not found" });
+        if (detail.status !== "WAITING_APPROVAL") return reply.code(409).send({ error: "Task is not awaiting approval" });
+        await rejectTeamTask(request.params.id, teamUser.id);
+        return reply.send({ task: await getTeamTaskDetail(teamUser, request.params.id) });
     });
 }
 

@@ -140,6 +140,43 @@ describe("team task routes", () => {
         expect(res.statusCode).toBe(404);
     });
 
+    it("rejects an intent with an invalid task token (401)", async () => {
+        const created = await inject("POST", "/v1/team/tasks", validBody());
+        const id = created.json<{ task: { id: string } }>().task.id;
+        const res = await app.inject({
+            method: "POST",
+            url: `/v1/team/tasks/${id}/intent`,
+            headers: { "content-type": "application/json" },
+            payload: JSON.stringify({ token: "bogus.token", kind: "get_task_context" }),
+        });
+        expect(res.statusCode).toBe(401);
+    });
+
+    it("serves get_task_context for a valid task token", async () => {
+        const created = await inject("POST", "/v1/team/tasks", validBody());
+        const id = created.json<{ task: { id: string } }>().task.id;
+        // Simulate the task having entered its execute stage.
+        await db.teamTask.update({ where: { id }, data: { status: "RUNNING", currentStage: "execute", round: 0 } });
+        const { issueTaskToken } = await import("./taskToken");
+        const token = issueTaskToken({ taskId: id, stage: "execute", round: 0 });
+
+        const res = await app.inject({
+            method: "POST",
+            url: `/v1/team/tasks/${id}/intent`,
+            headers: { "content-type": "application/json" },
+            payload: JSON.stringify({ token, kind: "get_task_context" }),
+        });
+        expect(res.statusCode).toBe(200);
+        expect(res.json<{ context: { stage: string } }>().context.stage).toBe("execute");
+    });
+
+    it("rejects approve/reject on a task that is not awaiting approval (409)", async () => {
+        const created = await inject("POST", "/v1/team/tasks", validBody());
+        const id = created.json<{ task: { id: string } }>().task.id;
+        expect((await inject("POST", `/v1/team/tasks/${id}/approve`, {})).statusCode).toBe(409);
+        expect((await inject("POST", `/v1/team/tasks/${id}/reject`)).statusCode).toBe(409);
+    });
+
     it("cancels a task and rejects a second cancel with 409", async () => {
         const created = await inject("POST", "/v1/team/tasks", validBody());
         const id = created.json<{ task: { id: string } }>().task.id;

@@ -18,7 +18,8 @@ import { log } from "@/utils/log";
 import { callMachineRpc } from "@/team/machineRpc";
 import { createMachineTaskDaemon, type MachineRpcCall } from "./machineTaskDaemon";
 import { createTaskNotifier } from "./taskNotifier";
-import { createTaskStateMachine, type TaskStateMachine } from "./taskStateMachine";
+import { createTaskStateMachine, readTaskContext, type IntentResult, type TaskIntent, type TaskStateMachine } from "./taskStateMachine";
+import type { TaskTokenClaims } from "./taskToken";
 
 async function buildStateMachine(taskId: string): Promise<TaskStateMachine | null> {
     const task = await db.teamTask.findUnique({ where: { id: taskId } });
@@ -63,10 +64,40 @@ export async function handleTaskSessionEnd(sessionId: string): Promise<void> {
         if (!stageRun) return;
         const sm = await buildStateMachine(stageRun.taskId);
         if (!sm) return;
-        await sm.handleStageExit({ taskId: stageRun.taskId });
+        await sm.handleStageExit({ taskId: stageRun.taskId, sessionId });
     } catch (error) {
         log({ module: "team-tasks", level: "error" }, `handleTaskSessionEnd(${sessionId}) failed: ${error}`);
     }
+}
+
+/**
+ * Apply an agent MCP intent (daemon-forwarded, task-token authenticated). The
+ * read-only get_task_context does not need the daemon; state-changing intents
+ * require a connected socket server and return an error otherwise.
+ */
+export async function applyTaskIntent(claims: TaskTokenClaims, intent: TaskIntent): Promise<IntentResult> {
+    if (intent.kind === "get_task_context") {
+        const context = await readTaskContext(claims.taskId);
+        if (!context) return { ok: false, error: "task has no active stage" };
+        return { ok: true, context };
+    }
+    const sm = await buildStateMachine(claims.taskId);
+    if (!sm) return { ok: false, error: "task runtime unavailable" };
+    return sm.handleIntent(claims, intent);
+}
+
+/** Approve a supervised plan gate (optionally with an edited plan.md). */
+export async function approveTeamTask(taskId: string, options?: { editedPlan?: string; actorId?: string }): Promise<void> {
+    const sm = await buildStateMachine(taskId);
+    if (!sm) return;
+    await sm.approveTask(taskId, options);
+}
+
+/** Reject a supervised plan gate (task terminates as FAILED). */
+export async function rejectTeamTask(taskId: string, actorId?: string): Promise<void> {
+    const sm = await buildStateMachine(taskId);
+    if (!sm) return;
+    await sm.rejectTask(taskId, actorId);
 }
 
 /** Best-effort teardown of a cancelled task's most recent stage session. */

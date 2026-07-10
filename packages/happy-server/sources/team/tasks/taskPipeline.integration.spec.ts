@@ -91,6 +91,9 @@ function realGitGateway(
             onDeliver(branch);
             return { prUrl, platform: "github" };
         },
+        async writeArtifact(input) {
+            await writeFile(path.resolve(input.worktreePath, input.artifact), input.content);
+        },
     };
 }
 

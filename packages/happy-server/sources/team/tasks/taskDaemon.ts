@@ -37,12 +37,21 @@ export interface DeliverEffect {
     baseBranch: string;
 }
 
+export interface WriteArtifactEffect {
+    worktreePath: string;
+    /** Path relative to the worktree, e.g. ".happy-task/plan.md". */
+    artifact: string;
+    content: string;
+}
+
 export interface TaskDaemonGateway {
     prepareWorktree(input: PrepareWorktreeEffect): Promise<{ worktreePath: string; skillsCommit: string | null }>;
     spawnStage(input: SpawnStageEffect): Promise<{ sessionId: string }>;
     /** Existence check for a stage's expected artifacts; returns the missing ones. */
     checkArtifacts(input: CheckArtifactsEffect): Promise<{ missing: string[] }>;
     deliver(input: DeliverEffect): Promise<{ prUrl: string; platform: string }>;
+    /** Write an artifact back into the worktree (e.g. an edited plan.md on approval). */
+    writeArtifact(input: WriteArtifactEffect): Promise<void>;
 }
 
 /**
@@ -51,6 +60,8 @@ export interface TaskDaemonGateway {
  */
 export type TaskNotification =
     | { type: "stage_started"; taskId: string; stage: string }
+    | { type: "approval_needed"; taskId: string; stage: string }
+    | { type: "task_escalated"; taskId: string; reason: string }
     | { type: "task_delivered"; taskId: string; prUrl: string }
     | { type: "task_failed"; taskId: string; error: string }
     | { type: "task_cancelled"; taskId: string };
