@@ -405,3 +405,22 @@ export function cancelTeamTask(credentials: AuthCredentials, id: string): Promis
 export function listTeamTaskTemplates(credentials: AuthCredentials): Promise<{ templates: TeamTaskTemplate[] }> {
     return teamRequest<{ templates: TeamTaskTemplate[] }>('/v1/team/tasks/templates', { credentials });
 }
+
+export function getTeamTaskPlan(credentials: AuthCredentials, id: string): Promise<{ plan: string | null }> {
+    return teamRequest<{ plan: string | null }>(`/v1/team/tasks/${encodeURIComponent(id)}/plan`, { credentials });
+}
+
+export function approveTeamTask(credentials: AuthCredentials, id: string, plan?: string): Promise<{ task: TeamTaskDetail }> {
+    return teamRequest<{ task: TeamTaskDetail }>(`/v1/team/tasks/${encodeURIComponent(id)}/approve`, {
+        method: 'POST',
+        credentials,
+        body: plan === undefined ? {} : { plan },
+    });
+}
+
+export function rejectTeamTask(credentials: AuthCredentials, id: string): Promise<{ task: TeamTaskDetail }> {
+    return teamRequest<{ task: TeamTaskDetail }>(`/v1/team/tasks/${encodeURIComponent(id)}/reject`, {
+        method: 'POST',
+        credentials,
+    });
+}

@@ -21,7 +21,8 @@ import { createTaskNotifier } from "./taskNotifier";
 import { createTaskStateMachine, readTaskContext, type IntentResult, type TaskIntent, type TaskStateMachine } from "./taskStateMachine";
 import type { TaskTokenClaims } from "./taskToken";
 
-async function buildStateMachine(taskId: string): Promise<TaskStateMachine | null> {
+/** Resolve the encrypted machine-RPC transport for a task, or null when offline. */
+async function resolveMachineCall(taskId: string): Promise<{ call: MachineRpcCall; accountId: string; worktreePath: string | null } | null> {
     const task = await db.teamTask.findUnique({ where: { id: taskId } });
     if (!task) return null;
     const io = getSocketServer();
@@ -37,9 +38,15 @@ async function buildStateMachine(taskId: string): Promise<TaskStateMachine | nul
         if (!rpc.ok) throw new Error(rpc.error);
         return rpc.result;
     };
+    return { call, accountId: teamUser.accountId, worktreePath: task.worktreePath };
+}
+
+async function buildStateMachine(taskId: string): Promise<TaskStateMachine | null> {
+    const resolved = await resolveMachineCall(taskId);
+    if (!resolved) return null;
     return createTaskStateMachine({
-        daemon: createMachineTaskDaemon(call),
-        notifier: createTaskNotifier(teamUser.accountId),
+        daemon: createMachineTaskDaemon(resolved.call),
+        notifier: createTaskNotifier(resolved.accountId),
     });
 }
 
@@ -98,6 +105,20 @@ export async function rejectTeamTask(taskId: string, actorId?: string): Promise<
     const sm = await buildStateMachine(taskId);
     if (!sm) return;
     await sm.rejectTask(taskId, actorId);
+}
+
+/** Read the current plan.md from the task worktree (for the approval card). */
+export async function getTaskPlan(taskId: string): Promise<string | null> {
+    try {
+        const resolved = await resolveMachineCall(taskId);
+        if (!resolved || !resolved.worktreePath) return null;
+        const daemon = createMachineTaskDaemon(resolved.call);
+        const { content } = await daemon.readArtifact({ worktreePath: resolved.worktreePath, artifact: ".happy-task/plan.md" });
+        return content;
+    } catch (error) {
+        log({ module: "team-tasks", level: "error" }, `getTaskPlan(${taskId}) failed: ${error}`);
+        return null;
+    }
 }
 
 /** Best-effort teardown of a cancelled task's most recent stage session. */

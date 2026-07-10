@@ -54,6 +54,8 @@ export interface TaskDaemonGateway {
     deliver(input: DeliverEffect): Promise<{ prUrl: string; platform: string }>;
     /** Write an artifact back into the worktree (e.g. an edited plan.md on approval). */
     writeArtifact(input: WriteArtifactEffect): Promise<void>;
+    /** Read an artifact from the worktree (e.g. plan.md for the approval card). */
+    readArtifact(input: { worktreePath: string; artifact: string }): Promise<{ content: string | null }>;
 }
 
 /**

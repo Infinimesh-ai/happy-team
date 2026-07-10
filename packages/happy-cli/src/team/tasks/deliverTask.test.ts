@@ -16,7 +16,9 @@ import {
     deliverTask,
     detectGitPlatform,
     extractRemoteHost,
+    readTaskArtifact,
     resolvePrContent,
+    writeTaskArtifact,
     type CreatePullRequestInput,
 } from './deliverTask';
 import { prepareTaskWorktree, TASK_ARTIFACT_DIR } from './prepareWorktree';
@@ -100,6 +102,21 @@ describe('checkTaskArtifacts', () => {
 
         const missing = await checkTaskArtifacts({ worktreePath: root, artifacts: ['.happy-task/pr.md', '.happy-task/plan.md'] });
         expect(missing.missing).toEqual(['.happy-task/plan.md']);
+    });
+});
+
+describe('writeTaskArtifact / readTaskArtifact', () => {
+    afterEach(async () => {
+        await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+        tempDirs.length = 0;
+    });
+
+    it('writes then reads an artifact, and reads null when absent', async () => {
+        const root = await mkdtemp(path.join(tmpdir(), 'happy-rw-'));
+        tempDirs.push(root);
+        await writeTaskArtifact({ worktreePath: root, artifact: '.happy-task/plan.md', content: '# plan\n' });
+        expect((await readTaskArtifact({ worktreePath: root, artifact: '.happy-task/plan.md' })).content).toBe('# plan\n');
+        expect((await readTaskArtifact({ worktreePath: root, artifact: '.happy-task/missing.md' })).content).toBeNull();
     });
 });
 

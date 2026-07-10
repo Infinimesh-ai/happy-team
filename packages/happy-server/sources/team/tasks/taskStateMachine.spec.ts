@@ -18,6 +18,7 @@ function makeDaemon(overrides: Partial<TaskDaemonGateway> = {}): TaskDaemonGatew
         checkArtifacts: async () => ({ missing: [] }),
         deliver: async () => ({ prUrl: "https://example.test/pr/1", platform: "github" }),
         writeArtifact: async () => {},
+        readArtifact: async () => ({ content: null }),
         ...overrides,
     };
 }

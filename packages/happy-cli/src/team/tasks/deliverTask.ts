@@ -9,7 +9,7 @@
  * offline while the real CLI call ships for end-to-end acceptance.
  */
 import { existsSync } from 'fs';
-import { readFile } from 'fs/promises';
+import { mkdir, readFile, writeFile } from 'fs/promises';
 import path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -162,6 +162,36 @@ export async function deliverTask(params: DeliverTaskParams, deps?: DeliverTaskD
 
     logger.debug(`[TASK DELIVER] Delivered ${branch} to ${platform}: ${url}`);
     return { prUrl: url, workBranch: branch, platform };
+}
+
+export interface WriteArtifactParams {
+    worktreePath: string;
+    artifact: string;
+    content: string;
+}
+
+/** Write an artifact into the worktree (e.g. an edited plan.md on approval). */
+export async function writeTaskArtifact(params: WriteArtifactParams): Promise<{ written: true }> {
+    const worktreePath = requireNonEmpty(params.worktreePath, 'worktreePath');
+    const artifact = requireNonEmpty(params.artifact, 'artifact');
+    const target = path.resolve(worktreePath, artifact);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, typeof params.content === 'string' ? params.content : '');
+    return { written: true };
+}
+
+export interface ReadArtifactParams {
+    worktreePath: string;
+    artifact: string;
+}
+
+/** Read an artifact from the worktree; content is null when it does not exist. */
+export async function readTaskArtifact(params: ReadArtifactParams): Promise<{ content: string | null }> {
+    const worktreePath = requireNonEmpty(params.worktreePath, 'worktreePath');
+    const artifact = requireNonEmpty(params.artifact, 'artifact');
+    const target = path.resolve(worktreePath, artifact);
+    if (!existsSync(target)) return { content: null };
+    return { content: await readFile(target, 'utf8') };
 }
 
 export interface CheckArtifactsParams {

@@ -16,7 +16,7 @@ import {
     listTemplateDtos,
     TaskRequestError,
 } from "./taskService";
-import { applyTaskIntent, approveTeamTask, rejectTeamTask, startTeamTask, stopActiveTaskSessions } from "./taskRuntime";
+import { applyTaskIntent, approveTeamTask, getTaskPlan, rejectTeamTask, startTeamTask, stopActiveTaskSessions } from "./taskRuntime";
 import { verifyTaskToken } from "./taskToken";
 import type { TaskIntent } from "./taskStateMachine";
 
@@ -125,6 +125,17 @@ export function teamTaskRoutes(app: Fastify) {
         const result = await applyTaskIntent(claims, intent);
         if (!result.ok) return reply.code(409).send({ error: result.error });
         return reply.send(result);
+    });
+
+    app.get("/v1/team/tasks/:id/plan", {
+        preHandler: app.authenticate,
+        schema: { params: taskIdParamsSchema },
+    }, async (request, reply) => {
+        const teamUser = await getActiveTeamUser(request.userId);
+        if (!teamUser) return reply.code(403).send({ error: "Team user required" });
+        const detail = await getTeamTaskDetail(teamUser, request.params.id);
+        if (!detail) return reply.code(404).send({ error: "Task not found" });
+        return reply.send({ plan: await getTaskPlan(request.params.id) });
     });
 
     app.post("/v1/team/tasks/:id/approve", {

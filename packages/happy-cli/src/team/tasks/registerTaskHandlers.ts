@@ -8,7 +8,7 @@
 import { logger } from '@/ui/logger';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { prepareTaskWorktree, type PrepareWorktreeParams } from './prepareWorktree';
-import { checkTaskArtifacts, cleanupTask, deliverTask, type CheckArtifactsParams, type CleanupTaskParams, type DeliverTaskParams } from './deliverTask';
+import { checkTaskArtifacts, cleanupTask, deliverTask, readTaskArtifact, writeTaskArtifact, type CheckArtifactsParams, type CleanupTaskParams, type DeliverTaskParams, type ReadArtifactParams, type WriteArtifactParams } from './deliverTask';
 
 export function registerTaskHandlers(rpcHandlerManager: RpcHandlerManager): void {
     rpcHandlerManager.registerHandler('task-prepare-worktree', async (params: PrepareWorktreeParams) => {
@@ -24,6 +24,16 @@ export function registerTaskHandlers(rpcHandlerManager: RpcHandlerManager): void
     rpcHandlerManager.registerHandler('task-check-artifacts', async (params: CheckArtifactsParams) => {
         logger.debug('[TASK RPC] task-check-artifacts', params);
         return checkTaskArtifacts(params || ({} as CheckArtifactsParams));
+    });
+
+    rpcHandlerManager.registerHandler('task-write-artifact', async (params: WriteArtifactParams) => {
+        logger.debug('[TASK RPC] task-write-artifact', params);
+        return writeTaskArtifact(params || ({} as WriteArtifactParams));
+    });
+
+    rpcHandlerManager.registerHandler('task-read-artifact', async (params: ReadArtifactParams) => {
+        logger.debug('[TASK RPC] task-read-artifact', params);
+        return readTaskArtifact(params || ({} as ReadArtifactParams));
     });
 
     rpcHandlerManager.registerHandler('task-cleanup', async (params: CleanupTaskParams) => {

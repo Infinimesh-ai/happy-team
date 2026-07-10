@@ -12,7 +12,7 @@
  */
 import { execFileSync } from "child_process";
 import { existsSync } from "fs";
-import { mkdtemp, rm, writeFile } from "fs/promises";
+import { mkdtemp, readFile as readFileFs, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -93,6 +93,10 @@ function realGitGateway(
         },
         async writeArtifact(input) {
             await writeFile(path.resolve(input.worktreePath, input.artifact), input.content);
+        },
+        async readArtifact(input) {
+            const target = path.resolve(input.worktreePath, input.artifact);
+            return { content: existsSync(target) ? await readFileFs(target, "utf8") : null };
         },
     };
 }
