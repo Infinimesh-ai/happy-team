@@ -21,6 +21,7 @@ import { writeTeamAudit } from "@/team/audit";
 import { DELIVER_STAGE, getEntryStage, getTaskTemplate, renderStagePrompt, TASK_ARTIFACTS, type TaskTemplate } from "./templates";
 import { noopTaskNotifier, type TaskDaemonGateway, type TaskNotifier } from "./taskDaemon";
 import { issueTaskToken, type TaskTokenClaims } from "./taskToken";
+import { validateArtifactByPath } from "./artifactSchema";
 
 /** An agent-declared intent arriving via the task-control MCP (plan §7). */
 export type TaskIntent =
@@ -265,6 +266,18 @@ export function createTaskStateMachine(deps: TaskStateMachineDeps): TaskStateMac
         if (missing.length > 0) {
             await failTask(task, `stage "${stageRun.stage}" ended without expected artifacts: ${missing.join(", ")}`);
             return;
+        }
+
+        // Content contract (plan §9.1): existence is not enough — a present but
+        // malformed artifact is a fake completion. Validate readable artifacts.
+        for (const artifact of definition.expectedArtifacts) {
+            const { content } = await daemon.readArtifact({ worktreePath: task.worktreePath, artifact });
+            if (content === null) continue;
+            const validation = validateArtifactByPath(artifact, content);
+            if (!validation.valid) {
+                await failTask(task, `stage "${stageRun.stage}" artifact ${artifact} is invalid: ${validation.errors.join("; ")}`);
+                return;
+            }
         }
 
         const claimed = await db.teamTaskStageRun.updateMany({

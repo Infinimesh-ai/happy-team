@@ -390,6 +390,19 @@ describe("task state machine", () => {
         expect((await db.teamTask.findUniqueOrThrow({ where: { id: taskId } })).currentStage).toBe("execute");
     });
 
+    it("fails completion when the produced artifact is malformed (content contract)", async () => {
+        // pr.md exists but has no title → invalid per the content contract.
+        const sm = createTaskStateMachine({
+            daemon: makeDaemon({ readArtifact: async () => ({ content: "---\ntitle: \n---\n" }) }),
+        });
+        const taskId = await createTask();
+        await sm.startTask(taskId);
+        await sm.handleStageExit({ taskId });
+        const task = await db.teamTask.findUniqueOrThrow({ where: { id: taskId } });
+        expect(task.status).toBe("FAILED");
+        expect(task.error).toContain("invalid");
+    });
+
     it("times out a stalled stage via the timeout sweep", async () => {
         const sm = createTaskStateMachine({ daemon: makeDaemon() });
         const taskId = await createTask();
