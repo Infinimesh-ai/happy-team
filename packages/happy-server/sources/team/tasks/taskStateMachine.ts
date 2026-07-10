@@ -167,7 +167,21 @@ export function createTaskStateMachine(deps: TaskStateMachineDeps): TaskStateMac
         });
         await db.teamTask.update({ where: { id: task.id }, data: { currentStage: stage, round, status: TaskStatus.RUNNING } });
 
-        const prompt = renderStagePrompt(template, stage, { goalPrompt: task.goalPrompt });
+        // Materialized evidence for verify stages: run the gate on the daemon and
+        // inject the real output into the prompt (plan §9.1).
+        let validationOutput: string | undefined;
+        if (definition.injectValidation) {
+            try {
+                const result = await daemon.runValidation({ worktreePath: task.worktreePath });
+                validationOutput = result.command
+                    ? `$ ${result.command}\n(exit ${result.exitCode ?? "unknown"})\n${result.output}`
+                    : result.output;
+            } catch (error) {
+                validationOutput = `validation gate could not be run: ${messageOf(error)}`;
+            }
+        }
+
+        const prompt = renderStagePrompt(template, stage, { goalPrompt: task.goalPrompt, validationOutput });
         const token = issueTaskToken({ taskId: task.id, stage, round });
         try {
             const { sessionId } = await daemon.spawnStage({

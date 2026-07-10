@@ -98,6 +98,9 @@ function realGitGateway(
             const target = path.resolve(input.worktreePath, input.artifact);
             return { content: existsSync(target) ? await readFileFs(target, "utf8") : null };
         },
+        async runValidation() {
+            return { command: null, exitCode: null, output: "" };
+        },
     };
 }
 

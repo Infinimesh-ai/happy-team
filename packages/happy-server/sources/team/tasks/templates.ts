@@ -40,6 +40,12 @@ export interface TaskStageDefinition {
      */
     expectedArtifacts: string[];
     permissionMode: StagePermissionMode;
+    /**
+     * When true the daemon runs the project's validation gate before the stage
+     * starts and its real output is injected as `{{validationOutput}}` (plan
+     * §9.1 verification materialization). Used by verify stages.
+     */
+    injectValidation?: boolean;
 }
 
 export interface TaskTransition {
@@ -80,6 +86,7 @@ export interface StagePromptVariables {
     planPath?: string;
     findingsPath?: string;
     prPath?: string;
+    validationOutput?: string;
 }
 
 const T1_EXECUTE_ONLY: TaskTemplate = {
@@ -196,7 +203,8 @@ const T3_PLAN_EXECUTE_VERIFY: TaskTemplate = {
                 "Evidence to check:",
                 "- the plan and its checklist at {{planPath}}",
                 "- the working-tree diff for this branch",
-                "- run the project's validation/test commands and read the real output",
+                "- the real output of the project's validation gate, already run for you:",
+                "{{validationOutput}}",
                 "",
                 "Apply the team's reviewer standard and anti-fake-completion checklist",
                 "mounted at .claude/skills/standards/ (Codex: .agents/skills/standards/).",
@@ -207,6 +215,7 @@ const T3_PLAN_EXECUTE_VERIFY: TaskTemplate = {
             ].join("\n"),
             expectedArtifacts: [],
             permissionMode: "auto",
+            injectValidation: true,
         },
     },
     transitions: [
@@ -310,6 +319,7 @@ export function renderStagePrompt(template: TaskTemplate, stage: string, variabl
         planPath: variables.planPath ?? TASK_ARTIFACTS.plan,
         findingsPath: variables.findingsPath ?? TASK_ARTIFACTS.findings,
         prPath: variables.prPath ?? TASK_ARTIFACTS.pr,
+        validationOutput: variables.validationOutput ?? "(no validation gate configured)",
     };
     return definition.promptTemplate.replace(PLACEHOLDER_PATTERN, (_match, token: string) => values[token] ?? "");
 }

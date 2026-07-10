@@ -80,5 +80,14 @@ export function createMachineTaskDaemon(call: MachineRpcCall): TaskDaemonGateway
             const result = await call("task-read-artifact", { worktreePath: input.worktreePath, artifact: input.artifact });
             return { content: typeof result.content === "string" ? result.content : null };
         },
+
+        async runValidation(input) {
+            const result = await call("task-run-validation", { worktreePath: input.worktreePath });
+            return {
+                command: typeof result.command === "string" ? result.command : null,
+                exitCode: typeof result.exitCode === "number" ? result.exitCode : null,
+                output: typeof result.output === "string" ? result.output : "",
+            };
+        },
     };
 }

@@ -19,6 +19,7 @@ function makeDaemon(overrides: Partial<TaskDaemonGateway> = {}): TaskDaemonGatew
         deliver: async () => ({ prUrl: "https://example.test/pr/1", platform: "github" }),
         writeArtifact: async () => {},
         readArtifact: async () => ({ content: null }),
+        runValidation: async () => ({ command: null, exitCode: null, output: "" }),
         ...overrides,
     };
 }
@@ -370,6 +371,26 @@ describe("task state machine", () => {
         expect(deliveries).toBe(0);
         const escalation = await db.teamTaskTransition.findFirst({ where: { taskId, decision: "escalated" } });
         expect(escalation?.reason).toContain("verification failed");
+    });
+
+    it("runs the daemon validation gate and injects its output when entering verify", async () => {
+        const spawnPrompts: string[] = [];
+        let validationCalls = 0;
+        const sm = createTaskStateMachine({
+            daemon: makeDaemon({
+                runValidation: async () => { validationCalls += 1; return { command: "make test", exitCode: 1, output: "FAIL: 2 tests failed" }; },
+                spawnStage: async (input) => { spawnPrompts.push(input.prompt); return { sessionId: `sess-${input.stage}` }; },
+            }),
+        });
+        const taskId = await createTask({ templateId: "plan-execute-verify", mode: "AUTONOMOUS" });
+        await sm.startTask(taskId);          // plan
+        await sm.handleStageExit({ taskId }); // → execute
+        await sm.handleStageExit({ taskId }); // → verify (runs the gate)
+
+        expect(validationCalls).toBe(1);
+        const verifyPrompt = spawnPrompts.find((p) => p.includes("reviewing an implementation"));
+        expect(verifyPrompt).toContain("make test");
+        expect(verifyPrompt).toContain("FAIL: 2 tests failed");
     });
 
     it("request_transition: honours a template-valid edge, rejects an invalid one", async () => {

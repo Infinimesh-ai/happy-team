@@ -101,7 +101,7 @@ async function mountSkill(worktreePath: string, name: string, source: string): P
 }
 
 /** Find a project skill whose SKILL.md `repo:` matches the task repo remote. */
-async function matchProjectSkill(skillsDir: string, repoRemoteUrl: string): Promise<{ name: string; source: string } | null> {
+export async function matchProjectSkill(skillsDir: string, repoRemoteUrl: string): Promise<{ name: string; source: string } | null> {
     const projectsDir = path.join(skillsDir, 'projects');
     if (!existsSync(projectsDir)) return null;
     const needle = normalizeRepo(repoRemoteUrl);

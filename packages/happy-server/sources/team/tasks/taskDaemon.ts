@@ -56,6 +56,8 @@ export interface TaskDaemonGateway {
     writeArtifact(input: WriteArtifactEffect): Promise<void>;
     /** Read an artifact from the worktree (e.g. plan.md for the approval card). */
     readArtifact(input: { worktreePath: string; artifact: string }): Promise<{ content: string | null }>;
+    /** Run the project's validation gate in the worktree (materialized evidence). */
+    runValidation(input: { worktreePath: string }): Promise<{ command: string | null; exitCode: number | null; output: string }>;
 }
 
 /**

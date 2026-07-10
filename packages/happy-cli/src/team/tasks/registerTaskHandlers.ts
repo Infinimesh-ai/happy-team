@@ -9,6 +9,7 @@ import { logger } from '@/ui/logger';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { prepareTaskWorktree, type PrepareWorktreeParams } from './prepareWorktree';
 import { checkTaskArtifacts, cleanupTask, deliverTask, readTaskArtifact, writeTaskArtifact, type CheckArtifactsParams, type CleanupTaskParams, type DeliverTaskParams, type ReadArtifactParams, type WriteArtifactParams } from './deliverTask';
+import { runTaskValidation, type RunValidationParams } from './taskValidation';
 
 export function registerTaskHandlers(rpcHandlerManager: RpcHandlerManager): void {
     rpcHandlerManager.registerHandler('task-prepare-worktree', async (params: PrepareWorktreeParams) => {
@@ -34,6 +35,11 @@ export function registerTaskHandlers(rpcHandlerManager: RpcHandlerManager): void
     rpcHandlerManager.registerHandler('task-read-artifact', async (params: ReadArtifactParams) => {
         logger.debug('[TASK RPC] task-read-artifact', params);
         return readTaskArtifact(params || ({} as ReadArtifactParams));
+    });
+
+    rpcHandlerManager.registerHandler('task-run-validation', async (params: RunValidationParams) => {
+        logger.debug('[TASK RPC] task-run-validation', params);
+        return runTaskValidation(params || ({} as RunValidationParams));
     });
 
     rpcHandlerManager.registerHandler('task-cleanup', async (params: CleanupTaskParams) => {

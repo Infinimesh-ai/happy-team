@@ -105,7 +105,7 @@
 - [x] C4.1 产物 schema（plan.md/findings.md/pr.md frontmatter）+ 解析校验器；完成判定升级为「可解析且字段完备」（读到内容即校验，读不到 null 回退存在性）
 - [x] C4.2 内容契约 linter：项目 skill `repo:`/`validation:` 字段校验 + SKILL.md 上下文预算（行数上限）linter
 - [x] C4.3 `skills.yaml`（contractVersion + 项目映射）解析 + `validateSkillsDirectory` 分发前契约校验（不合格 ref → errors 拒绝）；对接管理端通知/下发门为配置接线
-- [ ] C4.4 验收门禁 daemon 执行 + 真实输出注入 verify（daemon 跑 `validation:` 命令，输出进 verify 会话上下文）— 需真机跑门禁，留 C4.9 验收
+- [x] C4.4 验收门禁 daemon 执行 + 真实输出注入 verify：CLI `task-run-validation`（从匹配项目 skill 的 `validation:` 解析命令并在 worktree 内真实运行、截断输出）+ gateway `runValidation` + 状态机进入 verify 前跑门禁并把真实输出注入 `{{validationOutput}}`。（仅「真项目的真门禁命令在真机上跑」留 C4.9 验收）
 - [x] C4.5 遥测聚合报表（`computeTaskTelemetry`：per-template 结果、返工轮次分布、ESCALATED 案例、rejected 意图、escalationRate）
 - [x] C4.6 T4 `skills-curator` 模板（整编→验收→交付 PR；只出 PR、人审合并）+ 定期调度经既有 routines/cron（配置接线）
 - [x] C4.7 `happy skills-mcp`（get_skill/append_lesson，吸收现 mcp/server.py 到产品）+ 初始化 scaffold（契约合规骨架）；tag 化灰度 = `TEAM_SKILLS_REF` 指向 release tag（配置）
