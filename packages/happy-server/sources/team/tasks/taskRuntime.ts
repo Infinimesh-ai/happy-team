@@ -15,9 +15,13 @@ import { StageRunStatus } from "@prisma/client";
 import { getSocketServer } from "@/app/api/socket";
 import { db } from "@/storage/db";
 import { log } from "@/utils/log";
+import { delay } from "@/utils/delay";
+import { forever } from "@/utils/forever";
+import { shutdownSignal } from "@/utils/shutdown";
 import { callMachineRpc } from "@/team/machineRpc";
+import type { TaskDaemonGateway } from "./taskDaemon";
 import { createMachineTaskDaemon, type MachineRpcCall } from "./machineTaskDaemon";
-import { createTaskNotifier } from "./taskNotifier";
+import { createGlobalTaskNotifier, createTaskNotifier, type TaskNotifierDeps } from "./taskNotifier";
 import { createTaskStateMachine, readTaskContext, type IntentResult, type TaskIntent, type TaskStateMachine } from "./taskStateMachine";
 import type { TaskTokenClaims } from "./taskToken";
 
@@ -119,6 +123,50 @@ export async function getTaskPlan(taskId: string): Promise<string | null> {
         log({ module: "team-tasks", level: "error" }, `getTaskPlan(${taskId}) failed: ${error}`);
         return null;
     }
+}
+
+/**
+ * Stage-timeout sweep entry point. Failing a timed-out task is pure DB work
+ * (plus push), so this must not depend on a live daemon or socket — a stalled
+ * task usually means the machine went away. The daemon gateway is therefore a
+ * guard that throws if the sweep ever tries to reach a machine.
+ */
+export async function sweepTeamTaskTimeouts(notifierDeps?: TaskNotifierDeps): Promise<string[]> {
+    const sm = createTaskStateMachine({
+        daemon: unreachableDaemon("timeout sweep"),
+        notifier: createGlobalTaskNotifier(notifierDeps),
+    });
+    return sm.sweepStageTimeouts();
+}
+
+const TASK_TIMEOUT_SWEEP_INTERVAL_MS = 60 * 1000;
+
+/** Background loop failing tasks whose active stage exceeded its budget (plan §6). */
+export function startTaskTimeoutSweeper(): void {
+    forever("team-task-timeout", async () => {
+        while (true) {
+            const timedOut = await sweepTeamTaskTimeouts();
+            if (timedOut.length > 0) {
+                log({ module: "team-tasks" }, `timeout sweep failed ${timedOut.length} stalled task(s): ${timedOut.join(", ")}`);
+            }
+            await delay(TASK_TIMEOUT_SWEEP_INTERVAL_MS, shutdownSignal);
+        }
+    });
+}
+
+function unreachableDaemon(context: string): TaskDaemonGateway {
+    const reject = async (): Promise<never> => {
+        throw new Error(`daemon gateway is not available during ${context}`);
+    };
+    return {
+        prepareWorktree: reject,
+        spawnStage: reject,
+        checkArtifacts: reject,
+        deliver: reject,
+        writeArtifact: reject,
+        readArtifact: reject,
+        runValidation: reject,
+    };
 }
 
 /** Best-effort teardown of a cancelled task's most recent stage session. */

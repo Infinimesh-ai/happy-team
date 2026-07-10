@@ -68,3 +68,21 @@ async function latestSessionIdForTask(taskId: string): Promise<string | null> {
     });
     return stageRun?.sessionId ?? null;
 }
+
+/**
+ * Account-agnostic notifier for cross-task jobs (the timeout sweeper): resolves
+ * the owner's account from the event's task at notify time and delegates to
+ * {@link createTaskNotifier}. Unknown tasks/owners are silently skipped —
+ * notification is best-effort.
+ */
+export function createGlobalTaskNotifier(deps?: TaskNotifierDeps): TaskNotifier {
+    return {
+        async notify(event: TaskNotification) {
+            const task = await db.teamTask.findUnique({ where: { id: event.taskId } });
+            if (!task) return;
+            const owner = await db.teamUser.findUnique({ where: { id: task.ownerUserId } });
+            if (!owner) return;
+            await createTaskNotifier(owner.accountId, deps).notify(event);
+        },
+    };
+}

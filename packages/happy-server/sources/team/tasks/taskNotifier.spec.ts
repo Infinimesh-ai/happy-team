@@ -6,6 +6,7 @@ import type { TaskPushDispatch } from "./taskNotifier";
 
 let db: typeof import("@/storage/db").db;
 let createTaskNotifier: typeof import("./taskNotifier").createTaskNotifier;
+let createGlobalTaskNotifier: typeof import("./taskNotifier").createGlobalTaskNotifier;
 let renderTaskNotification: typeof import("./taskNotifier").renderTaskNotification;
 let pgliteDir: string;
 
@@ -18,7 +19,7 @@ describe("task notifier", () => {
         const { runMigrations } = await import("@/standalone");
         await runMigrations({ pgliteDir, migrationsDir: path.join(process.cwd(), "prisma", "migrations") });
         ({ db } = await import("@/storage/db"));
-        ({ createTaskNotifier, renderTaskNotification } = await import("./taskNotifier"));
+        ({ createTaskNotifier, createGlobalTaskNotifier, renderTaskNotification } = await import("./taskNotifier"));
         await db.$connect();
     });
 
@@ -82,5 +83,33 @@ describe("task notifier", () => {
         const notifier = createTaskNotifier("account-2", { dispatch: async (p) => { calls.push(p); } });
         await notifier.notify({ type: "task_failed", taskId: task.id, error: "nope" });
         expect(calls[0].sessionId).toBe(task.id);
+    });
+
+    it("global notifier resolves the owner account from the task at notify time", async () => {
+        const account = await db.account.create({ data: { publicKey: "notifier-global-pk" } });
+        const owner = await db.teamUser.create({
+            data: {
+                email: "notifier-global@example.test",
+                passwordHash: "x",
+                accountId: account.id,
+                encSecretKey: Buffer.from("k"),
+            },
+        });
+        const task = await db.teamTask.create({
+            data: {
+                ownerUserId: owner.id, machineId: "m", templateId: "execute-only", title: "T3",
+                goalPrompt: "g", repoPath: "/r", baseBranch: "main", workBranch: "happy/u/z",
+            },
+        });
+
+        const calls: Parameters<TaskPushDispatch>[0][] = [];
+        const notifier = createGlobalTaskNotifier({ dispatch: async (p) => { calls.push(p); } });
+        await notifier.notify({ type: "task_failed", taskId: task.id, error: "stage timed out" });
+        expect(calls).toHaveLength(1);
+        expect(calls[0].userId).toBe(account.id);
+
+        // Unknown tasks are skipped silently — the sweep must never throw here.
+        await notifier.notify({ type: "task_failed", taskId: "no-such-task", error: "x" });
+        expect(calls).toHaveLength(1);
     });
 });
