@@ -37,7 +37,7 @@
 ## C1 多阶段 + task-control MCP + supervised
 
 - [x] C1.0 细化本里程碑条目（对照计划 §6 §7 §10，粒度对齐 C0）
-- [ ] C1.1 任务 token 签发/校验（server 无状态签名：payload {taskId,stage,round}，短 exp；校验时比对任务当前 stage/round 实现「阶段结束作废」，不新增表）
+- [x] C1.1 任务 token 签发/校验（server 无状态签名：payload {taskId,stage,round}，短 exp；校验时比对任务当前 stage/round 实现「阶段结束作废」，不新增表）
 - [x] C1.2 内部意图端点 `POST /v1/team/tasks/:id/intent`（task-token 鉴权）→ 转交状态机；每个意图（含被拒）全量落写 `TeamTaskTransition`
 - [x] C1.3 状态机扩展：`complete_stage`（verify verdict 预留）/`report_blocker`→ESCALATED/`get_task_context`；`WAITING_APPROVAL` 态 + 审批边 + `approveTask`/`rejectTask`
 - [x] C1.4 `happy task-mcp` stdio 子命令（get_task_context/complete_stage/report_blocker）→ HTTP 转发 server intent 端点；spawn 注入 `HAPPY_TASK_ID`/`HAPPY_TASK_TOKEN`/`HAPPY_TASK_STAGE`；prepare 写机器本地 `.mcp.json`（git 本地排除）注册 Claude MCP（Codex 配置随 C3 统一 adapter）
