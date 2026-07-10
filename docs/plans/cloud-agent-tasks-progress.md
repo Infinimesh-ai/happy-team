@@ -2,7 +2,8 @@
 
 > **当前状态（2026-07-09）**：C0–C4 全部里程碑的**可自动化部分代码完成**并单测/集成通过；每个里程碑仅剩 `⏸ 待业主端到端人工验收`（真机 + 浏览器 + 真实 GitHub/GitLab + 真外部 Team-Skills 仓库），见各里程碑末尾清单：C0.11 / C1.9 / C2.8 / C3.6 / C4.9。
 > 未验收项按红线一律**未自行声明里程碑关闭**。
-> 全量测试：服务端 167（23 文件）+ CLI unit 723（81 文件）全绿；三包（server/cli/app）typecheck 通过。
+> **2026-07-10 复核修复**：会话内代码复核发现并修复 4 处集成断裂（阶段 prompt/权限模式未送达会话、task-mcp 缺 serverUrl 回退、prompt 与产物契约矛盾、超时清扫无调度），见决策记录 2026-07-10 各行。
+> 全量测试：服务端 181（25 文件）+ CLI unit 731（83 文件）全绿；三包（server/cli/app）typecheck 通过。
 >
 > 分支：`cloud-agent`（未合并回 main，合并由业主决定）。
 > 规则：严格按序取第一个未完成项；勾选与决策记录随实现同一变更提交；
@@ -127,6 +128,7 @@
 
 | 日期 | 项 | 决策 | 理由 |
 |---|---|---|---|
+| 2026-07-10 | C1.1 补记 | `taskToken` 实际实现直接以 `HANDY_MASTER_SECRET` 为 HMAC-SHA256 key，域分隔经消息前缀 `happy-task-token.v1`——非 C1.0 决策行所写「派生密钥」。 | 域分隔已由消息前缀提供，安全性等价；按「未记录的设计偏离视为缺陷」规则补记实际形态，不改代码。 |
 | 2026-07-10 | 复核修复 C0.5 | 超时清扫接入运行时：main.ts 启动 `startTaskTimeoutSweeper`（60s `forever` 循环，同 presence timeout 模式）；sweep 用不可达 daemon 桩（失败任务是纯 DB+推送操作，机器失联时必须照常工作）+ 新 `createGlobalTaskNotifier`（notify 时按 taskId 解析 owner accountId）。语义记录：按 stageRun.startedAt 计算，是「阶段最长时长 2h」而非计划字面的「无活动 2h」（无逐消息活动跟踪可依）；PREPARING/WAITING_APPROVAL 不清扫（前者是受控 RPC 等待、后者等人）。 | 复核发现 `sweepStageTimeouts` 只有定义与测试、无任何调度者——会话崩溃收不到 session-end 时任务永远卡 RUNNING。 |
 | 2026-07-10 | 复核修复 C4.1 | T2/T3 规划 prompt 与 verify prompt 显式给出产物 frontmatter 形状（plan.md `goal:` + `- [ ]` 清单；findings.md `verdict:`），templates.spec 增加「严格按 prompt 指令产出的示例产物必须通过 artifactSchema 校验器」round-trip 断言。同时记录：findings.md 校验器当前**未接入**完成判定（verify 阶段 `expectedArtifacts` 为空），是否强制留待 C2.8 真机观察后决定。 | C4.1 升级内容契约时未回改模板 prompt——校验器要求 frontmatter 而 prompt 从未提及，诚实 agent 的正常产出会被判 invalid、任务 FAILED；round-trip 测试使两者永不再漂移。 |
 | 2026-07-10 | 复核修复 C0.7/C1.4/C1.5 | 阶段 prompt/permissionMode/model 经 spawn env（`HAPPY_TASK_PROMPT`/`_PERMISSION_MODE`/`_MODEL`）送达；CLI 新模块 `taskSessionBootstrap` 统一读取——claude 入口注入消息队列并设初始权限模式，codex 入口经 `startSession(initialPrompt)`。auto 阶段沿用 CLI 无人值守默认（yolo），仅 plan 阶段覆盖为 `plan`。task-mcp 的 serverUrl 回退 `configuration.serverUrl`（`HAPPY_SERVER_URL` 仅为 dev 覆盖）。 | 复核发现 `spawn-happy-session` 无首消息参数，真实 gateway 将状态机渲染好的 prompt/permissionMode **静默丢弃**（假 gateway 测试收到完整 effect，掩盖了缝隙）——真机上阶段会话将空转、plan 阶段以可写权限运行、生产 daemon 不导出 `HAPPY_SERVER_URL` 时 task-mcp 直接退出。 |
