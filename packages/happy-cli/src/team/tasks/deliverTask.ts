@@ -164,6 +164,22 @@ export async function deliverTask(params: DeliverTaskParams, deps?: DeliverTaskD
     return { prUrl: url, workBranch: branch, platform };
 }
 
+export interface CheckArtifactsParams {
+    worktreePath: string;
+    artifacts: string[];
+}
+
+/**
+ * Existence check for a stage's expected artifacts (plan §6 completion signal).
+ * Paths are resolved relative to the worktree; returns the missing ones.
+ */
+export async function checkTaskArtifacts(params: CheckArtifactsParams): Promise<{ missing: string[] }> {
+    const worktreePath = requireNonEmpty(params.worktreePath, 'worktreePath');
+    const artifacts = Array.isArray(params.artifacts) ? params.artifacts : [];
+    const missing = artifacts.filter((artifact) => !existsSync(path.resolve(worktreePath, artifact)));
+    return { missing };
+}
+
 export interface CleanupTaskParams {
     worktreePath: string;
     /** Keep the worktree in place (default true) so the member can cd in. */

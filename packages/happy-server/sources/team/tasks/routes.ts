@@ -16,6 +16,7 @@ import {
     listTemplateDtos,
     TaskRequestError,
 } from "./taskService";
+import { startTeamTask, stopActiveTaskSessions } from "./taskRuntime";
 
 const createTaskBodySchema = z.object({
     machineId: z.string().min(1),
@@ -48,6 +49,8 @@ export function teamTaskRoutes(app: Fastify) {
         try {
             const task = await createTeamTask(teamUser, request.body);
             const detail = await getTeamTaskDetail(teamUser, task.id);
+            // Begin orchestration on the member's machine (best-effort, async).
+            void startTeamTask(task.id);
             return reply.code(201).send({ task: detail });
         } catch (error) {
             return sendTaskError(reply, error);
@@ -81,6 +84,8 @@ export function teamTaskRoutes(app: Fastify) {
         if (!teamUser) return reply.code(403).send({ error: "Team user required" });
         try {
             const task = await cancelTeamTask(teamUser, request.params.id);
+            // Terminate the active stage session (worktree retained, plan §8).
+            void stopActiveTaskSessions(request.params.id);
             return reply.send({ task });
         } catch (error) {
             return sendTaskError(reply, error);

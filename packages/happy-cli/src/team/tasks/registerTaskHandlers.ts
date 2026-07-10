@@ -8,7 +8,7 @@
 import { logger } from '@/ui/logger';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { prepareTaskWorktree, type PrepareWorktreeParams } from './prepareWorktree';
-import { cleanupTask, deliverTask, type CleanupTaskParams, type DeliverTaskParams } from './deliverTask';
+import { checkTaskArtifacts, cleanupTask, deliverTask, type CheckArtifactsParams, type CleanupTaskParams, type DeliverTaskParams } from './deliverTask';
 
 export function registerTaskHandlers(rpcHandlerManager: RpcHandlerManager): void {
     rpcHandlerManager.registerHandler('task-prepare-worktree', async (params: PrepareWorktreeParams) => {
@@ -19,6 +19,11 @@ export function registerTaskHandlers(rpcHandlerManager: RpcHandlerManager): void
     rpcHandlerManager.registerHandler('task-deliver', async (params: DeliverTaskParams) => {
         logger.debug('[TASK RPC] task-deliver', params);
         return deliverTask(params || ({} as DeliverTaskParams));
+    });
+
+    rpcHandlerManager.registerHandler('task-check-artifacts', async (params: CheckArtifactsParams) => {
+        logger.debug('[TASK RPC] task-check-artifacts', params);
+        return checkTaskArtifacts(params || ({} as CheckArtifactsParams));
     });
 
     rpcHandlerManager.registerHandler('task-cleanup', async (params: CleanupTaskParams) => {

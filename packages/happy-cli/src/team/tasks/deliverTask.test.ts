@@ -11,6 +11,7 @@ import { tmpdir } from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
+    checkTaskArtifacts,
     cleanupTask,
     deliverTask,
     detectGitPlatform,
@@ -79,6 +80,26 @@ describe('resolvePrContent', () => {
 
     it('falls back to the branch name when no artifacts exist', () => {
         expect(resolvePrContent({ branch: 'happy/a/b' })).toEqual({ title: 'happy/a/b', body: '' });
+    });
+});
+
+describe('checkTaskArtifacts', () => {
+    afterEach(async () => {
+        await Promise.all(tempDirs.map((dir) => rm(dir, { recursive: true, force: true })));
+        tempDirs.length = 0;
+    });
+
+    it('reports missing artifacts relative to the worktree', async () => {
+        const root = await mkdtemp(path.join(tmpdir(), 'happy-artifacts-'));
+        tempDirs.push(root);
+        await mkdir(path.join(root, '.happy-task'), { recursive: true });
+        await writeFile(path.join(root, '.happy-task', 'pr.md'), '# t\n');
+
+        const present = await checkTaskArtifacts({ worktreePath: root, artifacts: ['.happy-task/pr.md'] });
+        expect(present.missing).toEqual([]);
+
+        const missing = await checkTaskArtifacts({ worktreePath: root, artifacts: ['.happy-task/pr.md', '.happy-task/plan.md'] });
+        expect(missing.missing).toEqual(['.happy-task/plan.md']);
     });
 });
 

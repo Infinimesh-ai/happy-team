@@ -6,6 +6,7 @@ import { allocateSessionSeq, allocateUserSeq } from "@/storage/seq";
 import { AsyncLock } from "@/utils/lock";
 import { log } from "@/utils/log";
 import { randomKeyNaked } from "@/utils/randomKeyNaked";
+import { handleTaskSessionEnd } from "@/team/tasks/taskRuntime";
 import { Socket } from "socket.io";
 
 export function sessionUpdateHandler(userId: string, socket: Socket, connection: ClientConnection) {
@@ -283,6 +284,10 @@ export function sessionUpdateHandler(userId: string, socket: Socket, connection:
                 payload: sessionActivity,
                 recipientFilter: { type: 'user-scoped-only' }
             });
+
+            // Cloud-agent task hook: if this session is a task stage, run the
+            // completion determination. No-op for ordinary sessions.
+            void handleTaskSessionEnd(sid);
         } catch (error) {
             log({ module: 'websocket', level: 'error' }, `Error in session-end: ${error}`);
         }
