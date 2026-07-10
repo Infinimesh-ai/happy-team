@@ -17,6 +17,7 @@ import { db } from "@/storage/db";
 import { log } from "@/utils/log";
 import { callMachineRpc } from "@/team/machineRpc";
 import { createMachineTaskDaemon, type MachineRpcCall } from "./machineTaskDaemon";
+import { createTaskNotifier } from "./taskNotifier";
 import { createTaskStateMachine, type TaskStateMachine } from "./taskStateMachine";
 
 async function buildStateMachine(taskId: string): Promise<TaskStateMachine | null> {
@@ -35,7 +36,10 @@ async function buildStateMachine(taskId: string): Promise<TaskStateMachine | nul
         if (!rpc.ok) throw new Error(rpc.error);
         return rpc.result;
     };
-    return createTaskStateMachine({ daemon: createMachineTaskDaemon(call) });
+    return createTaskStateMachine({
+        daemon: createMachineTaskDaemon(call),
+        notifier: createTaskNotifier(teamUser.accountId),
+    });
 }
 
 /** Begin orchestrating a freshly-created task (PENDING → PREPARING → RUNNING). */
