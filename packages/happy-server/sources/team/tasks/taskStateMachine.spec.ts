@@ -288,6 +288,34 @@ describe("task state machine", () => {
         expect(task.currentStage).toBe("execute");
     });
 
+    it("three-signal fallback: advances on exit+artifacts even without complete_stage", async () => {
+        // No complete_stage intent is ever sent — the session-exit + artifact
+        // existence signals must still drive completion (plan §6 / C1 acceptance).
+        const sm = createTaskStateMachine({ daemon: makeDaemon() });
+        const taskId = await createTask();
+        await sm.startTask(taskId);
+        await sm.handleStageExit({ taskId });
+        const task = await db.teamTask.findUniqueOrThrow({ where: { id: taskId } });
+        expect(task.status).toBe("SUCCEEDED");
+    });
+
+    it("writes the full transition black box for a T2 supervised run", async () => {
+        const sm = createTaskStateMachine({ daemon: makeDaemon(), notifier: { notify: async () => {} } });
+        const taskId = await createTask({ templateId: "plan-execute" });
+        await sm.startTask(taskId);
+        await sm.handleStageExit({ taskId });            // plan done → awaiting approval
+        await sm.approveTask(taskId, { actorId: "user-1" }); // → execute
+        await sm.handleStageExit({ taskId });            // execute done → deliver
+
+        const rows = await db.teamTaskTransition.findMany({ where: { taskId }, orderBy: { createdAt: "asc" } });
+        expect(rows.map((r) => [r.fromStage, r.toStage, r.decision])).toEqual([
+            [null, "plan", "auto_approved"],
+            ["plan", "execute", "awaiting_approval"],
+            ["plan", "execute", "user_approved"],
+            ["execute", "deliver", "auto_approved"],
+        ]);
+    });
+
     it("times out a stalled stage via the timeout sweep", async () => {
         const sm = createTaskStateMachine({ daemon: makeDaemon() });
         const taskId = await createTask();

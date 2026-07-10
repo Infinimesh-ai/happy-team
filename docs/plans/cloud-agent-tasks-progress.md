@@ -43,9 +43,20 @@
 - [x] C1.4 `happy task-mcp` stdio 子命令（get_task_context/complete_stage/report_blocker）→ HTTP 转发 server intent 端点；spawn 注入 `HAPPY_TASK_ID`/`HAPPY_TASK_TOKEN`/`HAPPY_TASK_STAGE`；prepare 写机器本地 `.mcp.json`（git 本地排除）注册 Claude MCP（Codex 配置随 C3 统一 adapter）
 - [x] C1.5 T2 模板 `plan-execute` + plan 权限模式；状态机 plan→(审批)→execute；supervised 在 requiresApproval 边转 WAITING_APPROVAL 并推送（autonomous 自动放行）
 - [x] C1.6 审批 API（`POST /:id/approve` 可带改后 plan.md 经 daemon 写回、`POST /:id/reject`、`GET /:id/plan` 读 plan.md）+ CLI `task-write-artifact`/`task-read-artifact` RPC + 前端 plan 审批卡（渲染/编辑/批准/编辑后批准/打回）
-- [ ] C1.7 三信号完成兜底（intent + 退出 + 产物）+ `TeamTaskTransition` 全量落写核对
-- [ ] C1.8 服务端/CLI 测试补齐（token、intent、审批转移、T2 多阶段推进、三信号兜底）
-- [ ] C1.9 ⏸ C1 端到端人工验收（计划 §11 C1 清单）
+- [x] C1.7 三信号完成兜底（intent + 退出 + 产物）+ `TeamTaskTransition` 全量落写核对
+- [x] C1.8 服务端/CLI 测试补齐（token、intent、审批转移、T2 多阶段推进、三信号兜底）
+- [ ] C1.9 ⏸ C1 端到端人工验收（计划 §11 C1 清单）— 待业主执行，步骤见下
+
+  **前置**：同 C0.11，且成员机器 daemon 已升级到含 task 系列 RPC + `happy task-mcp` 的版本；Claude Code 可在 worktree 内加载 `.mcp.json`（首次可能需批准 project MCP server）。
+  1. **T2 规划阶段**：网页发起 `plan-execute` 任务（supervised），规划阶段（Claude, plan 模式）在 worktree 内只读分析并产出 `.happy-task/plan.md`；会话退出后任务转 `WAITING_APPROVAL`，手机/网页收到「Approval needed」推送。
+  2. **审批卡**：网页/手机任务详情出现审批卡，渲染 plan.md；可直接批准、或编辑后批准（编辑经 daemon `task-write-artifact` 写回 worktree）、或打回（任务 FAILED）。
+  3. **执行阶段**：批准后执行阶段（Codex）按 plan.md 实施、提交、写 pr.md，交付出 PR/MR。
+  4. **三信号兜底**：构造 agent 不调 `complete_stage` 的情形（或直接观察 T1），确认「会话退出 + 产物存在」仍推进交付。
+  5. **report_blocker**：在一个阶段内让 agent 调用 `report_blocker`（或手动 POST intent），确认任务转 `ESCALATED` 并推送、`TeamTaskTransition` 落有 `escalated` 行。
+  6. **黑匣子**：任务详情/审计可见完整 transition 序列（含 agent 意图与被拒）。
+  验收通过后由业主打勾并记录 PR/MR 链接与一次 ESCALATED 案例。
+
+  **会话内已自动化的降险**：状态机 T2 审批全流程、三信号幂等、report_blocker→ESCALATED、全量 transition 序列、token 签发/校验、intent 端点鉴权、task-mcp 意图转发、`.mcp.json` 注册与 git 排除、plan 读写回，均有单测/集成覆盖（server 143 + CLI 712 全绿）。仅「真 agent 在真会话内实际调用 MCP 工具 + Claude 对 project MCP 的审批 + Codex 执行」三处真外部行为留待本清单真机验收。
 
 ## C2 闭环 + autonomous
 
@@ -81,6 +92,7 @@
 | 2026-07-09 | C0.5 | 状态机所有机器侧副作用经注入 `TaskDaemonGateway`（prepare/spawn/checkArtifacts/deliver），真实 daemon 实现（加密机器 RPC）留 C0.7；工厂函数 `createTaskStateMachine`（闭包非 class）；超时→`FAILED`（非 ESCALATED，后者 C1+，C0.5 状态集不含）；转移全量落写 `TeamTaskTransition`（decision=auto_approved）。 | §6「状态机脊柱」；包 CLAUDE.md「avoid classes」；C0.5 状态集显式仅 PENDING/PREPARING/RUNNING/SUCCEEDED/FAILED/CANCELLED；对内存 PGlite + 假 daemon 桩测（§11）。`checkArtifacts` 对应的 daemon 代查 RPC 与真实 gateway 一并留 C0.7。 |
 | 2026-07-09 | C0.5 | `stageOverrides`（逐阶段 model 覆盖，§10.1 API）暂不持久化，阶段用模板默认 agent/model。 | 计划 §5 的 `TeamTask` schema 无 override 字段，T1 单执行阶段无覆盖必要；多阶段覆盖首次真正需要在 C1（T2），届时决定存储形态（新增字段或编码），本里程碑不臆造 schema。 |
 | 2026-07-09 | C0.6 | POST 只创建 PENDING 任务不自动 start；cancel 为 service 内自足 DB 转移（非经状态机）。API 路由经 api.ts 单行 `teamTaskRoutes(typed)` 注册（毗邻 `teamRoutes`）；`GET /v1/team/tasks/templates`（静态段，Fastify 优先于 `/:id`）；`stageOverrides` 接受并校验阶段名但暂不落库。 | 自动 start 与状态机统一 cancel（含停会话）依赖真实 daemon gateway，属下一项 C0.7，不跳项前移；PENDING 是真实合法态非占位。路由在 sources/team/tasks/ 内、单点注册，符合 §1.3 收敛。 |
+| 2026-07-09 | C1.7/1.8 | 三信号兜底与转移全量落写随 C1.3/C1.5 落地，C1.7 补「无 complete_stage 仅退出+产物仍推进」与 T2 全量 transition 黑匣子序列断言（`[null→plan auto]`/`[plan→execute awaiting]`/`[plan→execute user_approved]`/`[execute→deliver auto]`）。全量套件：server 143、CLI unit 712 全绿。 | 计划 §6 三信号、§7「所有意图落写黑匣子」；测试随项同步非集中补写。 |
 | 2026-07-09 | C1.6 | plan.md 内容经 `GET /:id/plan` 按需读（daemon `task-read-artifact`，io 门控），不塞进 detail DTO（避免每次 detail 都触发 daemon 读）。审批卡在 `[id].tsx` status=WAITING_APPROVAL 时渲染可编辑 plan.md + 批准/编辑后批准/打回。写回经 `task-write-artifact`。i18n 7 键加入全部 11 文件（anchor 用语言无关的 `repoPathPlaceholder`）。 | 计划 §10.2 第 3 项审批卡；按需读避免 detail 热路径打 daemon；approve/reject 端点 C1.2 已建。前端交互真机验收随 C1.9。 |
 | 2026-07-09 | C1.4 | task-mcp 意图**直接 HTTP** POST 到 server intent 端点（非再经 daemon socket），token 提供鉴权——§7「经 daemon 通道」取「daemon 负责 spawn 时注入 token/id + 写 MCP 配置」，转发本身走 HTTP（intent 端点即为此设计的 token-authed HTTP）。Claude 经 worktree 本地 `.mcp.json`（写入 `.git/info/exclude` 不入库）注册 `happy task-mcp`；per-session token/id 走 spawn env，故配置无秘密、跨阶段稳定。Codex 的 MCP 配置格式（config.toml）与 Claude 统一由 C3 注入 adapter 落地（§9.2「注入逻辑集中在 daemon 一处 adapter」）。task-mcp 客户端注入 fetch 单测；`.mcp.json` 写入 + git 排除对真实 worktree 测。live agent 实际调用 MCP + Claude 对 project MCP 的审批行为留 C1.9 真机验收。 | 计划 §7 工具面与 token；§9.2 adapter 归属。 |
 | 2026-07-09 | C1.2/1.3 | 完成判定重构为按 stageRun 原子 claim 的 `completeStage`，`complete_stage` 意图与 `session-end` 共用之→三信号幂等（先到者推进，后到者 no-op）。`get_task_context` 为纯 DB 读（`readTaskContext`，无需 daemon/io）故可离线单测；状态变更意图（complete/blocker）与 approve/reject 经 `buildStateMachine`（io 门控）。`report_blocker`→ESCALATED（非终止 finishedAt，待人工）。intent 端点用 task-token 鉴权（非账号），approve/reject 用账号+归属+状态 409 守卫。`get_task_context` 不写 transition（纯读，避免灌爆黑匣子），其余意图含被拒全量落写。 | 计划 §6 三信号兜底 + §7 工具面；幂等避免 intent/exit 竞态双交付；§7「所有调用无条件写 TeamTaskTransition」取「状态相关意图 + 被拒」读法，纯读 context 除外（记录理由）。plan 写回经 gateway `writeArtifact`（`task-write-artifact` RPC，CLI 侧 C1.6 落地）。 |
