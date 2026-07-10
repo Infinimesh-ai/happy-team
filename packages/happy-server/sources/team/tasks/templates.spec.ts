@@ -8,6 +8,7 @@ import {
     listTaskTemplates,
     renderStagePrompt,
 } from "@/team/tasks/templates";
+import { validateFindingsArtifact, validatePlanArtifact } from "@/team/tasks/artifactSchema";
 
 describe("task templates", () => {
     it("exposes the built-in T1 execute-only template", () => {
@@ -95,5 +96,36 @@ describe("task templates", () => {
     it("throws when rendering a stage that does not exist", () => {
         const template = getTaskTemplate("execute-only")!;
         expect(() => renderStagePrompt(template, "missing", { goalPrompt: "X" })).toThrow(/Unknown stage/);
+    });
+
+    // Prompt ↔ artifact-contract round trip: an agent that follows the stage
+    // prompt's format instructions to the letter must produce artifacts the
+    // content contract (artifactSchema) accepts — otherwise every honest run
+    // fails completion determination.
+    it("plan prompt instructions produce a plan.md the content contract accepts", () => {
+        const prompt = renderStagePrompt(getTaskTemplate("plan-execute")!, "plan", { goalPrompt: "X" });
+        expect(prompt).toContain("goal: <one-line summary of the goal>");
+        expect(prompt).toContain("- [ ]");
+        const exemplaryPlan = [
+            "---",
+            "goal: Add a health check endpoint",
+            "---",
+            "Red-lines: no schema changes.",
+            "- [ ] add GET /health route",
+            "- [ ] add a test",
+        ].join("\n");
+        expect(validatePlanArtifact(exemplaryPlan)).toEqual({ valid: true, errors: [] });
+    });
+
+    it("verify prompt instructions produce a findings.md the content contract accepts", () => {
+        const prompt = renderStagePrompt(getTaskTemplate("plan-execute-verify")!, "verify", { goalPrompt: "X" });
+        expect(prompt).toContain("verdict: failed");
+        const exemplaryFindings = [
+            "---",
+            "verdict: failed",
+            "---",
+            "- src/health.ts:12 — endpoint returns 200 even when the db is down",
+        ].join("\n");
+        expect(validateFindingsArtifact(exemplaryFindings)).toEqual({ valid: true, errors: [] });
     });
 });
