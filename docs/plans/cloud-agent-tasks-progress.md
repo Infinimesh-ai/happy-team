@@ -32,6 +32,8 @@
   6. **取消**：对一个 RUNNING 任务点 Cancel，确认状态转 CANCELLED、活动会话被停止、worktree 保留（可 `cd` 进去）。
   验收通过后由业主将本项打勾并记录机器/仓库/PR 链接。
 
+  **在会话内可自动化的前置降险（已完成）**：`taskPipeline.integration.spec.ts` 以真实 git 在进程内端到端跑通整条脊柱——真实 `git worktree add`（本地裸仓库 origin）→ 模拟 agent 写 `.happy-task/pr.md` 并 commit → 会话退出 → 真实产物存在性检查 → 真实 `git push` 落到 origin → 交付（PR URL 注入）→ SUCCEEDED；并验证缺 pr.md 时不 push、任务 FAILED。仅socket 加密传输、`gh`/`glab`、浏览器这三处真外部依赖留待 C0.11 真机验收。
+
 ## C1 多阶段 + task-control MCP + supervised
 
 - [ ] C1.0 细化本里程碑条目（对照计划 §6 §7 §10，粒度对齐 C0）
