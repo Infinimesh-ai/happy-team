@@ -27,6 +27,15 @@ describe("task templates", () => {
         expect(ids).toContain("execute-only");
     });
 
+    it("exposes T2 plan-execute with a plan-mode stage and an approval edge", () => {
+        const template = getTaskTemplate("plan-execute")!;
+        expect(Object.keys(template.stages)).toEqual(["plan", "execute"]);
+        expect(template.stages.plan.permissionMode).toBe("plan");
+        expect(template.stages.execute.agent).toBe("codex");
+        const approvalEdge = template.transitions.find((t) => t.from === "plan");
+        expect(approvalEdge).toMatchObject({ to: "execute", requiresApproval: true });
+    });
+
     it("wires the entry edge to the execute stage and terminates at deliver", () => {
         const template = getTaskTemplate("execute-only")!;
         expect(getEntryStage(template)).toBe("execute");

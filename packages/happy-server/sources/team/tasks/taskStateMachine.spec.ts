@@ -231,6 +231,62 @@ describe("task state machine", () => {
         expect(task.status).toBe("RUNNING");
     });
 
+    it("T2 supervised: plan → WAITING_APPROVAL → approve → execute → deliver", async () => {
+        const events: string[] = [];
+        const writes: unknown[] = [];
+        const sm = createTaskStateMachine({
+            daemon: makeDaemon({ writeArtifact: async (i) => { writes.push(i); } }),
+            notifier: { notify: async (e) => { events.push(e.type); } },
+        });
+        const taskId = await createTask({ templateId: "plan-execute" });
+
+        await sm.startTask(taskId);
+        expect((await db.teamTask.findUniqueOrThrow({ where: { id: taskId } })).currentStage).toBe("plan");
+
+        // Plan session exits → supervised approval gate.
+        await sm.handleStageExit({ taskId });
+        let task = await db.teamTask.findUniqueOrThrow({ where: { id: taskId } });
+        expect(task.status).toBe("WAITING_APPROVAL");
+        expect(events).toContain("approval_needed");
+
+        // Approve with an edited plan → written back, execute stage starts.
+        await sm.approveTask(taskId, { editedPlan: "# edited plan\n", actorId: "user-1" });
+        task = await db.teamTask.findUniqueOrThrow({ where: { id: taskId } });
+        expect(task.status).toBe("RUNNING");
+        expect(task.currentStage).toBe("execute");
+        expect(writes).toHaveLength(1);
+
+        // Execute session exits → deliver → SUCCEEDED.
+        await sm.handleStageExit({ taskId });
+        task = await db.teamTask.findUniqueOrThrow({ where: { id: taskId } });
+        expect(task.status).toBe("SUCCEEDED");
+        expect(task.prUrl).toBe("https://example.test/pr/1");
+
+        const transitions = await db.teamTaskTransition.findMany({ where: { taskId }, orderBy: { createdAt: "asc" } });
+        expect(transitions.map((t) => t.decision)).toContain("user_approved");
+    });
+
+    it("T2 supervised: rejecting the plan fails the task", async () => {
+        const sm = createTaskStateMachine({ daemon: makeDaemon() });
+        const taskId = await createTask({ templateId: "plan-execute" });
+        await sm.startTask(taskId);
+        await sm.handleStageExit({ taskId });
+        await sm.rejectTask(taskId, "user-1");
+        const task = await db.teamTask.findUniqueOrThrow({ where: { id: taskId } });
+        expect(task.status).toBe("FAILED");
+        expect(task.error).toContain("rejected");
+    });
+
+    it("T2 autonomous: plan auto-advances to execute without approval", async () => {
+        const sm = createTaskStateMachine({ daemon: makeDaemon() });
+        const taskId = await createTask({ templateId: "plan-execute", mode: "AUTONOMOUS" });
+        await sm.startTask(taskId);
+        await sm.handleStageExit({ taskId });
+        const task = await db.teamTask.findUniqueOrThrow({ where: { id: taskId } });
+        expect(task.status).toBe("RUNNING");
+        expect(task.currentStage).toBe("execute");
+    });
+
     it("times out a stalled stage via the timeout sweep", async () => {
         const sm = createTaskStateMachine({ daemon: makeDaemon() });
         const taskId = await createTask();

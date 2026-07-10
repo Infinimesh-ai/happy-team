@@ -41,7 +41,7 @@
 - [x] C1.2 内部意图端点 `POST /v1/team/tasks/:id/intent`（task-token 鉴权）→ 转交状态机；每个意图（含被拒）全量落写 `TeamTaskTransition`
 - [x] C1.3 状态机扩展：`complete_stage`（verify verdict 预留）/`report_blocker`→ESCALATED/`get_task_context`；`WAITING_APPROVAL` 态 + 审批边 + `approveTask`/`rejectTask`
 - [x] C1.4 `happy task-mcp` stdio 子命令（get_task_context/complete_stage/report_blocker）→ HTTP 转发 server intent 端点；spawn 注入 `HAPPY_TASK_ID`/`HAPPY_TASK_TOKEN`/`HAPPY_TASK_STAGE`；prepare 写机器本地 `.mcp.json`（git 本地排除）注册 Claude MCP（Codex 配置随 C3 统一 adapter）
-- [ ] C1.5 T2 模板 `plan-execute` + plan 权限模式；状态机 plan→(审批)→execute；supervised 在 requiresApproval 边转 WAITING_APPROVAL 并推送
+- [x] C1.5 T2 模板 `plan-execute` + plan 权限模式；状态机 plan→(审批)→execute；supervised 在 requiresApproval 边转 WAITING_APPROVAL 并推送（autonomous 自动放行）
 - [ ] C1.6 审批 API（`POST /:id/approve` 可带改后 plan.md 经 daemon 写回、`POST /:id/reject`）+ 前端 plan 审批卡（渲染/批准/编辑后批准/打回）
 - [ ] C1.7 三信号完成兜底（intent + 退出 + 产物）+ `TeamTaskTransition` 全量落写核对
 - [ ] C1.8 服务端/CLI 测试补齐（token、intent、审批转移、T2 多阶段推进、三信号兜底）

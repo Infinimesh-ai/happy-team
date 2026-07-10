@@ -111,9 +111,55 @@ const T1_EXECUTE_ONLY: TaskTemplate = {
     ],
 };
 
+const T2_PLAN_EXECUTE: TaskTemplate = {
+    id: "plan-execute",
+    stages: {
+        plan: {
+            agent: "claude",
+            promptTemplate: [
+                "You are planning a coding task on an isolated git worktree.",
+                "",
+                "Task goal:",
+                "{{goalPrompt}}",
+                "",
+                "Instructions:",
+                "- Do NOT modify code — you are in read-only planning mode.",
+                "- Investigate the repository and produce an ordered, checkable implementation",
+                "  plan and write it to {{planPath}} (goal, red-lines, ordered checklist).",
+                "The plan will be reviewed and approved before execution begins.",
+            ].join("\n"),
+            expectedArtifacts: [TASK_ARTIFACTS.plan],
+            permissionMode: "plan",
+        },
+        execute: {
+            agent: "codex",
+            promptTemplate: [
+                "You are executing an approved plan on an isolated git worktree.",
+                "",
+                "Task goal:",
+                "{{goalPrompt}}",
+                "",
+                "Follow the approved plan at {{planPath}} exactly:",
+                "- Implement each checklist item and commit with conventional commit messages.",
+                "- When finished, write the pull-request title and body to {{prPath}}",
+                "  (first line = title, blank line, then the body).",
+                "Do not push or open the pull request yourself — delivery is automatic.",
+            ].join("\n"),
+            expectedArtifacts: [TASK_ARTIFACTS.pr],
+            permissionMode: "auto",
+        },
+    },
+    transitions: [
+        { from: null, to: "plan" },
+        { from: "plan", to: "execute", requiresApproval: true },
+        { from: "execute", to: DELIVER_STAGE },
+    ],
+};
+
 /** All built-in templates, keyed by id. */
 export const TASK_TEMPLATES: Record<string, TaskTemplate> = {
     [T1_EXECUTE_ONLY.id]: T1_EXECUTE_ONLY,
+    [T2_PLAN_EXECUTE.id]: T2_PLAN_EXECUTE,
 };
 
 /** Look up a template by id, or undefined when unknown. */
