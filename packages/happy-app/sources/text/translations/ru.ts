@@ -817,6 +817,7 @@ export const ru: TranslationStructure = {
             titleLabel: 'Название',
             titlePlaceholder: 'Краткое описание',
             repoPathPlaceholder: '/home/you/project',
+            history: 'История',
             approvalTitle: 'Утверждение плана',
             approvalHint: 'Просмотрите план ниже. При необходимости отредактируйте, затем утвердите или отклоните.',
             loadingPlan: 'Загрузка плана…',

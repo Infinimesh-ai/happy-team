@@ -814,6 +814,7 @@ export const ja: TranslationStructure = {
             titleLabel: 'タイトル',
             titlePlaceholder: '短い概要',
             repoPathPlaceholder: '/home/you/project',
+            history: '履歴',
             approvalTitle: '計画の承認',
             approvalHint: '下の計画を確認してください。必要なら編集し、承認または却下します。',
             loadingPlan: '計画を読み込み中…',

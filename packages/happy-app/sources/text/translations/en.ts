@@ -827,6 +827,7 @@ export const en: TranslationStructure = {
             titleLabel: 'Title',
             titlePlaceholder: 'Short summary',
             repoPathPlaceholder: '/home/you/project',
+            history: 'History',
             approvalTitle: 'Plan approval',
             approvalHint: 'Review the plan below. Edit it if needed, then approve or reject.',
             loadingPlan: 'Loading plan…',

@@ -209,6 +209,20 @@ export default function TeamTaskDetailScreen() {
                     ))}
                 </ItemGroup>
 
+                {task.transitions.length > 0 && (
+                    <ItemGroup title={t('team.tasks.history')}>
+                        {task.transitions.map((tr) => (
+                            <Item
+                                key={tr.id}
+                                title={`${tr.fromStage ?? '·'} → ${tr.toStage}`}
+                                subtitle={`${tr.decision} · ${tr.requestedBy}${tr.reason ? ` · ${tr.reason}` : ''}`}
+                                subtitleLines={2}
+                                showChevron={false}
+                            />
+                        ))}
+                    </ItemGroup>
+                )}
+
                 <ItemGroup>
                     <View style={styles.block}>
                         <RoundButton title={t('common.retry')} size="normal" display="inverted" action={refresh} loading={loading} />

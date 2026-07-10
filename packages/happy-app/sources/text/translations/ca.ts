@@ -813,6 +813,7 @@ export const ca: TranslationStructure = {
             titleLabel: 'Títol',
             titlePlaceholder: 'Resum breu',
             repoPathPlaceholder: '/home/you/project',
+            history: 'Historial',
             approvalTitle: 'Aprovació del pla',
             approvalHint: 'Revisa el pla de sota. Edita\'l si cal i després aprova\'l o rebutja\'l.',
             loadingPlan: 'Carregant el pla…',

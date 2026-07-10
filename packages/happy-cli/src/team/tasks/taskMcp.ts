@@ -22,7 +22,8 @@ export interface TaskMcpConfig {
 export type TaskIntentBody =
     | { kind: 'get_task_context' }
     | { kind: 'complete_stage'; summary?: string; verdict?: 'passed' | 'failed' }
-    | { kind: 'report_blocker'; reason: string };
+    | { kind: 'report_blocker'; reason: string }
+    | { kind: 'request_transition'; toStage: string; reason?: string };
 
 export interface TaskIntentResponse {
     ok: boolean;
@@ -94,6 +95,15 @@ export function createTaskMcpServer(config: TaskMcpConfig): McpServer {
             reason: z.string().describe('Why the task is blocked'),
         },
     }, async (args) => toolResult(await postTaskIntent(config, { kind: 'report_blocker', reason: args.reason }), 'Blocker reported'));
+
+    mcp.registerTool('request_transition', {
+        description: 'Request a non-default transition to another stage (e.g. skipping ahead). The server adjudicates it against the template.',
+        title: 'Request Transition',
+        inputSchema: {
+            toStage: z.string().describe('The stage to transition to'),
+            reason: z.string().optional().describe('Why this transition is warranted'),
+        },
+    }, async (args) => toolResult(await postTaskIntent(config, { kind: 'request_transition', toStage: args.toStage, reason: args.reason }), 'Transition requested'));
 
     return mcp;
 }

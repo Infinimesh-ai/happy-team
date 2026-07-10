@@ -812,6 +812,7 @@ export const pt: TranslationStructure = {
             titleLabel: 'Título',
             titlePlaceholder: 'Resumo breve',
             repoPathPlaceholder: '/home/you/project',
+            history: 'Histórico',
             approvalTitle: 'Aprovação do plano',
             approvalHint: 'Revise o plano abaixo. Edite se necessário e depois aprove ou rejeite.',
             loadingPlan: 'Carregando plano…',

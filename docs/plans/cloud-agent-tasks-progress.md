@@ -64,11 +64,20 @@
 - [x] C2.1 T3 模板 `plan-execute-verify`（verify 阶段 + 条件边 verify_passed/verify_failed_within_budget）
 - [x] C2.2 状态机 verdict 分支：verify 通过→交付；不通过 && round+1<maxRounds→回执行（round++、注入 findings.md）；否则→ESCALATED
 - [x] C2.3 验收阶段证据注入（verify prompt 注入 plan.md/findings.md 路径 + 指示跑门禁看 diff、逐条定位；daemon 执行门禁并注入真实输出属 C4）
-- [ ] C2.4 `request_transition` 意图 + server 对照模板裁决（auto_approved/rejected 落写黑匣子）
+- [x] C2.4 `request_transition` 意图 + server 对照模板裁决（模板有该边→auto_approved 推进；无→rejected；均落写黑匣子）+ task-mcp 工具
 - [x] C2.5 autonomous 模式核对（全边自动放行，T3 自主闭环 pass/rework/ESCALATED 均已测）
-- [ ] C2.6 Transition 黑匣子查询页（前端任务详情/审计渲染 transition 全序列）
-- [ ] C2.7 服务端测试补齐（返工回路、3 轮 ESCALATED、request_transition 裁决）
-- [ ] C2.8 ⏸ C2 端到端人工验收（含构造必失败任务验证 3 轮 ESCALATED）
+- [x] C2.6 Transition 黑匣子查询页（前端任务详情渲染 transition 全序列：from→to · decision · requestedBy · reason）
+- [x] C2.7 服务端测试补齐（返工回路、3 轮 ESCALATED、request_transition 裁决；server tasks 56 全绿）
+- [ ] C2.8 ⏸ C2 端到端人工验收（含构造必失败任务验证 3 轮 ESCALATED）— 待业主执行，步骤见下
+
+  **前置**：同 C1.9。
+  1. **autonomous 闭环**：autonomous 模式发起一个中等 `plan-execute-verify` 任务，全程零人工走完 规划→执行→验收→（至少一轮 findings.md 返工）→交付；看板/详情可见 round≥1 与最终 PR。
+  2. **必失败 3 轮 ESCALATED**：构造一个验收必然失败的任务（如要求实现一个自相矛盾的目标），确认执行↔验收循环在 3 轮后转 ESCALATED 并推送，附最后一份 findings.md。
+  3. **request_transition**：让 agent（或手动 POST intent）请求一个模板允许的非默认转移与一个不允许的，确认前者放行、后者被拒，两者都在 transition 黑匣子留痕。
+  4. **黑匣子回放**：任务详情 History 区可回放全部 agent 意图（含被拒），与实际阶段推进一致。
+  验收通过后由业主打勾并记录 autonomous 交付 PR 与 ESCALATED 案例链接。
+
+  **会话内已自动化的降险**：T3 autonomous pass/rework/3 轮 ESCALATED、request_transition 放行/拒绝、verdict 分支、黑匣子全序列均有单测（server tasks 56 全绿）。仅真 agent 在真会话内实际产出 findings.md 并调 complete_stage(verdict) 的真实行为留待真机验收。
 
 ## C3 Skills 下发 + 双平台收尾
 

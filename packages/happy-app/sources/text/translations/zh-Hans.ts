@@ -814,6 +814,7 @@ export const zhHans: TranslationStructure = {
             titleLabel: '标题',
             titlePlaceholder: '简短摘要',
             repoPathPlaceholder: '/home/you/project',
+            history: '历史',
             approvalTitle: '计划审批',
             approvalHint: '查看下面的计划。如有需要可编辑，然后批准或打回。',
             loadingPlan: '正在加载计划……',

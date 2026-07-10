@@ -35,10 +35,11 @@ const taskIdParamsSchema = z.object({ id: z.string().min(1) });
 
 const intentBodySchema = z.object({
     token: z.string().min(1),
-    kind: z.enum(["get_task_context", "complete_stage", "report_blocker"]),
+    kind: z.enum(["get_task_context", "complete_stage", "report_blocker", "request_transition"]),
     summary: z.string().optional(),
     verdict: z.enum(["passed", "failed"]).optional(),
     reason: z.string().optional(),
+    toStage: z.string().optional(),
 });
 
 const approveBodySchema = z.object({ plan: z.string().optional() }).optional();
@@ -46,6 +47,10 @@ const approveBodySchema = z.object({ plan: z.string().optional() }).optional();
 function toIntent(body: z.infer<typeof intentBodySchema>): TaskIntent | null {
     if (body.kind === "get_task_context") return { kind: "get_task_context" };
     if (body.kind === "complete_stage") return { kind: "complete_stage", summary: body.summary, verdict: body.verdict };
+    if (body.kind === "request_transition") {
+        if (!body.toStage) return null;
+        return { kind: "request_transition", toStage: body.toStage, reason: body.reason };
+    }
     if (!body.reason) return null;
     return { kind: "report_blocker", reason: body.reason };
 }
@@ -121,7 +126,7 @@ export function teamTaskRoutes(app: Fastify) {
             return reply.code(401).send({ error: "invalid task token" });
         }
         const intent = toIntent(request.body);
-        if (!intent) return reply.code(400).send({ error: "report_blocker requires a reason" });
+        if (!intent) return reply.code(400).send({ error: "invalid intent: missing reason or toStage" });
         const result = await applyTaskIntent(claims, intent);
         if (!result.ok) return reply.code(409).send({ error: result.error });
         return reply.send(result);

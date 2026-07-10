@@ -372,6 +372,24 @@ describe("task state machine", () => {
         expect(escalation?.reason).toContain("verification failed");
     });
 
+    it("request_transition: honours a template-valid edge, rejects an invalid one", async () => {
+        const sm = createTaskStateMachine({ daemon: makeDaemon() });
+        const taskId = await createTask({ templateId: "plan-execute-verify", mode: "AUTONOMOUS" });
+        await sm.startTask(taskId); // plan
+
+        // Invalid: plan → deliver is not a template edge → rejected + logged.
+        const bad = await sm.handleIntent({ taskId, stage: "plan", round: 0 }, { kind: "request_transition", toStage: "deliver", reason: "skip everything" });
+        expect(bad.ok).toBe(false);
+        const rejected = await db.teamTaskTransition.findFirst({ where: { taskId, toStage: "deliver", decision: "rejected" } });
+        expect(rejected?.reason).toBe("skip everything");
+        expect((await db.teamTask.findUniqueOrThrow({ where: { id: taskId } })).currentStage).toBe("plan");
+
+        // Valid: plan → execute is a template edge → honoured.
+        const good = await sm.handleIntent({ taskId, stage: "plan", round: 0 }, { kind: "request_transition", toStage: "execute", reason: "plan is trivial" });
+        expect(good.ok).toBe(true);
+        expect((await db.teamTask.findUniqueOrThrow({ where: { id: taskId } })).currentStage).toBe("execute");
+    });
+
     it("times out a stalled stage via the timeout sweep", async () => {
         const sm = createTaskStateMachine({ daemon: makeDaemon() });
         const taskId = await createTask();

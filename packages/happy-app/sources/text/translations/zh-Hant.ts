@@ -813,6 +813,7 @@ export const zhHant: TranslationStructure = {
             titleLabel: '標題',
             titlePlaceholder: '簡短摘要',
             repoPathPlaceholder: '/home/you/project',
+            history: '歷史',
             approvalTitle: '計畫審批',
             approvalHint: '查看下方的計畫。如有需要可編輯，然後核准或退回。',
             loadingPlan: '正在載入計畫……',

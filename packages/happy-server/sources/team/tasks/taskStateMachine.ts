@@ -26,7 +26,8 @@ import { issueTaskToken, type TaskTokenClaims } from "./taskToken";
 export type TaskIntent =
     | { kind: "get_task_context" }
     | { kind: "complete_stage"; summary?: string; verdict?: "passed" | "failed" }
-    | { kind: "report_blocker"; reason: string };
+    | { kind: "report_blocker"; reason: string }
+    | { kind: "request_transition"; toStage: string; reason?: string };
 
 export interface TaskContext {
     taskId: string;
@@ -348,6 +349,28 @@ export function createTaskStateMachine(deps: TaskStateMachineDeps): TaskStateMac
         if (intent.kind === "report_blocker") {
             await recordTransition(task.id, claims.stage, "ESCALATED", "escalated", "agent", intent.reason);
             await escalateTask(task, intent.reason);
+            return { ok: true };
+        }
+
+        if (intent.kind === "request_transition") {
+            // Adjudicate against the template: only a transition the template
+            // actually defines from this stage is honoured (plan §7). Anything
+            // else is rejected and logged to the black box.
+            const template = requireTemplate(task);
+            const edge = template.transitions.find((e) => e.from === claims.stage && e.to === intent.toStage);
+            if (!edge) {
+                await recordTransition(task.id, claims.stage, intent.toStage, "rejected", "agent", intent.reason);
+                return { ok: false, error: `transition ${claims.stage} → ${intent.toStage} is not allowed by the template` };
+            }
+            await recordTransition(task.id, claims.stage, intent.toStage, "auto_approved", "agent", intent.reason);
+            const stageRun = await db.teamTaskStageRun.findFirst({
+                where: { taskId: task.id, stage: claims.stage, status: StageRunStatus.RUNNING },
+                orderBy: { startedAt: "desc" },
+            });
+            if (stageRun) {
+                await db.teamTaskStageRun.updateMany({ where: { id: stageRun.id, status: StageRunStatus.RUNNING }, data: { status: StageRunStatus.SUCCEEDED, endedAt: now() } });
+            }
+            await proceedToStage(task, claims.stage, intent.toStage, "auto_approved", "system");
             return { ok: true };
         }
 
