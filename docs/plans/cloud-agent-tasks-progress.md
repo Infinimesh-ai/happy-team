@@ -84,10 +84,20 @@
 - [x] C3.0 细化本里程碑条目（对照计划 §9.2 §8 §12）
 - [x] C3.1 daemon 机器统一 clone 同步（`~/.happy/team-skills/`，env `HAPPY_SKILLS_DIR`/`TEAM_SKILLS_REF`）+ 记录 HEAD（无 clone 则 skillsCommit=null no-op）
 - [x] C3.2 worktree 注入 adapter（吸收 link-project.sh）：`.claude/skills/` + `.agents/skills/` 符号链接、AGENTS.md 块、按 `repo:` 匹配项目 skill、无匹配挂 standards；全部 git 本地排除；`injectTeamSkills` 落地并回填 `skillsCommit`
-- [ ] C3.3 provisioning 扩展检测（gh/glab 已认证、skills clone 存在）→ preflight/warning
-- [ ] C3.4 模板阶段 prompt 改为引用下发 skills（规划/执行/验收标准）
-- [ ] C3.5 服务端/CLI 测试补齐（注入 adapter 对本地假 skills clone + 真 worktree 测）
-- [ ] C3.6 ⏸ C3 端到端人工验收（GitHub 与 GitLab 各交付一次；append_lesson 写回；skillsCommit 可见）
+- [x] C3.3 provisioning 扩展检测（`detectTaskPrerequisites`：gh/glab 可用+已认证、skills clone 存在）→ warnings，probe 可注入单测
+- [x] C3.4 模板阶段 prompt 改为引用下发 skills（T2/T3 规划/验收标准指向 `.claude/skills/standards`；执行遵 SOP）
+- [x] C3.5 服务端/CLI 测试补齐（注入 adapter 对本地假 skills clone + 真 worktree 测；preflight 注入 probe 测）
+- [ ] C3.6 ⏸ C3 端到端人工验收（GitHub 与 GitLab 各交付一次；append_lesson 写回；skillsCommit 可见）— 待业主执行，步骤见下
+
+  **前置**：机器上预置 Team-Skills clone（`~/.happy/team-skills/` 或 `HAPPY_SKILLS_DIR`）；`gh`、`glab` 均已认证；分别有一个 GitHub 项目与一个自建 GitLab 项目可 push。
+  1. **干净机器可跑**：新 provision 的机器（含 skills clone、gh/glab 认证）直接发起任务并交付，不再手工挂载。
+  2. **双平台各一次**：同一类任务在 GitHub 项目与 GitLab 项目各完整交付一次（`task-deliver` 分别走 `gh pr create` / `glab mr create`）。
+  3. **skillsCommit 可见**：任务详情显示当次注入的 `skillsCommit`；worktree 内 `.claude/skills/`、`.agents/skills/` 有 standards（+ 匹配项目 skill）符号链接且不入 PR。
+  4. **SOP 生效 + 版本可区分**：改 skills 仓库一条 SOP 后新任务立即生效；两次任务的 `skillsCommit` 不同可区分。
+  5. **append_lesson 写回**：任务会话内经 skills MCP 记一条 lesson，确认 append-only 写回成功（写回 MCP 完整形态属 C4 `happy skills-mcp`，本项验证现有 Team-Skills MCP 路径）。
+  验收通过后由业主打勾并记录两个平台的 PR/MR 链接与 skillsCommit。
+
+  **会话内已自动化的降险**：注入 adapter（standards + repo 匹配项目 skill 挂载、git 排除、AGENTS.md 块、HEAD 记录）对真实本地 skills clone + worktree 全测；gh/glab/skills 前置检测注入 probe 测；`task-deliver` 双平台探测 C0.4 已测。仅真 GitHub/GitLab 网络交付、真 agent 读 skills、append_lesson 真写回留待真机验收。
 
 ## C4 策略层组件化与自迭代
 
