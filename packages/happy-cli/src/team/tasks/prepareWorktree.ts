@@ -18,6 +18,7 @@ import path from 'path';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { currentBranch, isGitRepo, listWorktreePaths, runGit } from './taskGit';
+import { injectSkills } from './skillsInjection';
 
 /** Enforced prefix for task work branches (plan §1.3 branch convention). */
 export const TASK_BRANCH_PREFIX = 'happy/';
@@ -60,12 +61,20 @@ function requireNonEmpty(value: unknown, name: string): string {
 }
 
 /**
- * Team-Skills injection mount point (plan §9). No-op until C3, which will sync
- * the machine-local skills clone into the worktree and record its HEAD. Kept as
- * a named seam so the prepare flow already threads a skillsCommit through.
+ * Team-Skills injection (plan §9.2). Mounts the standards layer and any matched
+ * project skill into the worktree and records the skills HEAD for audit. No-op
+ * (skillsCommit: null) when the machine has no skills clone configured.
  */
-export async function injectTeamSkills(_worktreePath: string): Promise<{ skillsCommit: string | null }> {
-    return { skillsCommit: null };
+export async function injectTeamSkills(worktreePath: string): Promise<{ skillsCommit: string | null }> {
+    let repoRemoteUrl: string | undefined;
+    try {
+        repoRemoteUrl = (await runGit(worktreePath, ['remote', 'get-url', 'origin'])).stdout.trim() || undefined;
+    } catch {
+        repoRemoteUrl = undefined;
+    }
+    const syncRef = process.env.TEAM_SKILLS_REF || undefined;
+    const { skillsCommit } = await injectSkills(worktreePath, { repoRemoteUrl, syncRef });
+    return { skillsCommit };
 }
 
 /**

@@ -81,10 +81,13 @@
 
 ## C3 Skills 下发 + 双平台收尾
 
-- [ ] C3.0 细化本里程碑条目
-- [ ] C3.x daemon 统一 clone + worktree 注入 adapter（Claude/Codex 双形态）+ skillsCommit 记录
-- [ ] C3.x provisioning 扩展（gh/glab/skills clone 检测）+ 模板 prompt 改引用 skills
-- [ ] C3.x ⏸ C3 端到端人工验收（GitHub 与 GitLab 各交付一次；append_lesson 写回）
+- [x] C3.0 细化本里程碑条目（对照计划 §9.2 §8 §12）
+- [x] C3.1 daemon 机器统一 clone 同步（`~/.happy/team-skills/`，env `HAPPY_SKILLS_DIR`/`TEAM_SKILLS_REF`）+ 记录 HEAD（无 clone 则 skillsCommit=null no-op）
+- [x] C3.2 worktree 注入 adapter（吸收 link-project.sh）：`.claude/skills/` + `.agents/skills/` 符号链接、AGENTS.md 块、按 `repo:` 匹配项目 skill、无匹配挂 standards；全部 git 本地排除；`injectTeamSkills` 落地并回填 `skillsCommit`
+- [ ] C3.3 provisioning 扩展检测（gh/glab 已认证、skills clone 存在）→ preflight/warning
+- [ ] C3.4 模板阶段 prompt 改为引用下发 skills（规划/执行/验收标准）
+- [ ] C3.5 服务端/CLI 测试补齐（注入 adapter 对本地假 skills clone + 真 worktree 测）
+- [ ] C3.6 ⏸ C3 端到端人工验收（GitHub 与 GitLab 各交付一次；append_lesson 写回；skillsCommit 可见）
 
 ## C4 策略层组件化与自迭代
 
