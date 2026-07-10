@@ -218,11 +218,56 @@ const T3_PLAN_EXECUTE_VERIFY: TaskTemplate = {
     ],
 };
 
+const T4_SKILLS_CURATOR: TaskTemplate = {
+    id: "skills-curator",
+    stages: {
+        consolidate: {
+            agent: "claude",
+            promptTemplate: [
+                "You are the skills curator running on the team's skills repository.",
+                "",
+                "Inputs (in this repo):",
+                "- pending lessons in the lessons inbox",
+                "- the telemetry report for the recent period",
+                "",
+                "Produce a single revision:",
+                "- merge duplicate lessons; promote cross-project rules per the promotion",
+                "  standard; propose retiring model-compensating rules that telemetry shows",
+                "  have not fired in N periods.",
+                "- every change MUST have a decision-log entry (durable vs model-compensating).",
+                "Write the PR title and body to {{prPath}}. You only propose — a human merges.",
+            ].join("\n"),
+            expectedArtifacts: [TASK_ARTIFACTS.pr],
+            permissionMode: "auto",
+        },
+        verify: {
+            agent: "claude",
+            promptTemplate: [
+                "Review the curator's revision on this skills repository.",
+                "Check the decision-log discipline: every content change has a matching",
+                "decision-log entry with the correct durable/model-compensating classification,",
+                "and retirements cite telemetry evidence.",
+                "If the discipline holds, call complete_stage with verdict \"passed\"; otherwise",
+                "write located findings to {{findingsPath}} and complete_stage verdict \"failed\".",
+            ].join("\n"),
+            expectedArtifacts: [],
+            permissionMode: "auto",
+        },
+    },
+    transitions: [
+        { from: null, to: "consolidate" },
+        { from: "consolidate", to: "verify" },
+        { from: "verify", to: DELIVER_STAGE, condition: "verify_passed" },
+        { from: "verify", to: "consolidate", condition: "verify_failed_within_budget" },
+    ],
+};
+
 /** All built-in templates, keyed by id. */
 export const TASK_TEMPLATES: Record<string, TaskTemplate> = {
     [T1_EXECUTE_ONLY.id]: T1_EXECUTE_ONLY,
     [T2_PLAN_EXECUTE.id]: T2_PLAN_EXECUTE,
     [T3_PLAN_EXECUTE_VERIFY.id]: T3_PLAN_EXECUTE_VERIFY,
+    [T4_SKILLS_CURATOR.id]: T4_SKILLS_CURATOR,
 };
 
 /** Look up a template by id, or undefined when unknown. */

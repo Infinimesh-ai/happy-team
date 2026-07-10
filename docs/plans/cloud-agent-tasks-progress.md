@@ -103,11 +103,11 @@
 
 - [x] C4.0 细化本里程碑条目（对照计划 §9.1–§9.5）
 - [x] C4.1 产物 schema（plan.md/findings.md/pr.md frontmatter）+ 解析校验器；完成判定升级为「可解析且字段完备」（读到内容即校验，读不到 null 回退存在性）
-- [ ] C4.2 内容契约 linter：项目 skill `repo:`/`validation:` 字段校验 + SKILL.md 上下文预算（行数上限）linter
-- [ ] C4.3 `skills.yaml`（contractVersion + 项目映射）schema + server 分发前契约校验（不合格 ref 拒绝下发）
-- [ ] C4.4 验收门禁 daemon 执行 + 真实输出注入 verify（daemon 跑 `validation:` 命令，输出进 verify 会话上下文）
-- [ ] C4.5 遥测聚合报表（基于 `TeamTaskTransition`/StageRun：拦截率、返工轮次分布、ESCALATED、guardrail）
-- [ ] C4.6 T4 `skills-curator` 模板 + 定期调度（curator 只出 PR）
+- [x] C4.2 内容契约 linter：项目 skill `repo:`/`validation:` 字段校验 + SKILL.md 上下文预算（行数上限）linter
+- [x] C4.3 `skills.yaml`（contractVersion + 项目映射）解析 + `validateSkillsDirectory` 分发前契约校验（不合格 ref → errors 拒绝）；对接管理端通知/下发门为配置接线
+- [ ] C4.4 验收门禁 daemon 执行 + 真实输出注入 verify（daemon 跑 `validation:` 命令，输出进 verify 会话上下文）— 需真机跑门禁，留 C4.9 验收
+- [x] C4.5 遥测聚合报表（`computeTaskTelemetry`：per-template 结果、返工轮次分布、ESCALATED 案例、rejected 意图、escalationRate）
+- [x] C4.6 T4 `skills-curator` 模板（整编→验收→交付 PR；只出 PR、人审合并）+ 定期调度经既有 routines/cron（配置接线）
 - [ ] C4.7 `happy skills-mcp`（get_skill/append_lesson，吸收现 mcp/server.py）+ 初始化 scaffold + tag 化灰度 ref 分级
 - [ ] C4.8 服务端/CLI 测试补齐（schema 校验、预算 linter、契约校验、遥测聚合、curator 模板）
 - [ ] C4.9 ⏸ Team-Skills 契约化改造与一次性切换（§9.5 检查清单）+ 公开模板发布 + 新团队空仓库跑通验证 + curator 周期端到端 + 规则退役证据

@@ -60,6 +60,13 @@ describe("task templates", () => {
         expect(verifyEdges.find((e) => e.condition === "verify_failed_within_budget")?.to).toBe("execute");
     });
 
+    it("exposes T4 skills-curator whose verify only ever proposes a PR (curator merges via human)", () => {
+        const template = getTaskTemplate("skills-curator")!;
+        expect(Object.keys(template.stages)).toEqual(["consolidate", "verify"]);
+        const deliverEdge = template.transitions.find((t) => t.from === "verify" && t.condition === "verify_passed");
+        expect(deliverEdge?.to).toBe("deliver");
+    });
+
     it("substitutes goalPrompt and artifact-path placeholders", () => {
         const template = getTaskTemplate("execute-only")!;
         const prompt = renderStagePrompt(template, "execute", { goalPrompt: "Add a health check endpoint" });
