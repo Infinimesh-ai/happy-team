@@ -1,0 +1,141 @@
+{
+  "device_a": {
+    "identity": {
+      "created_at": "2026-01-02T03:04:05Z",
+      "device_id": "device-alpha",
+      "domain_id": "local",
+      "public_key": {
+        "kid": "zYr9XyGtilDvOeYsLOmOFVmBZ_9zQjh3HFd-rOEbEBE",
+        "kty": "Ed25519",
+        "public": "AZX9GaXivqi2j4sycDRln3m2ivXoyZ9U9qkO44sbxyE",
+        "use": "identity-signature"
+      },
+      "type": "iscp.device.identity.v2"
+    },
+    "seed_hex": "23cf26b5c6a60e44cf34c4e5fd3259f295b998a2180a4b78b26c481b17a56cc3"
+  },
+  "device_b": {
+    "identity": {
+      "created_at": "2026-01-02T03:04:05Z",
+      "device_id": "device-beta",
+      "domain_id": "local",
+      "public_key": {
+        "kid": "wNot1cza5MdmOuk5-XFaiH_hC3xvBRWUXAaBTxy2k1w",
+        "kty": "Ed25519",
+        "public": "_rqu8Z8gJkf3BSNvtDpBJgsGsvNU94pUveqxztHEXXU",
+        "use": "identity-signature"
+      },
+      "type": "iscp.device.identity.v2"
+    },
+    "seed_hex": "d54adb7aad3267c1dc7717c2ec2807ce12184101f3925381602c8f491f8c8f08"
+  },
+  "envelope_a_to_b": {
+    "object": {
+      "ciphertext": "DU99NucR__ja8PASWQJBxfJ9wjq8AgTcA3T8MjoRMoKMnGfh78_ch7f2Wg",
+      "domain_id": "local",
+      "message_id": "msg-vector-1",
+      "nonce": "AAAAAAAAAAAAAAAA",
+      "payload_type": "text",
+      "recipient_device_id": "device-beta",
+      "route": {
+        "priority": 5,
+        "relay_id": "relay-local",
+        "ttl_seconds": 60
+      },
+      "sender_device_id": "device-alpha",
+      "sequence": 0,
+      "session_id": "sess-vector-1",
+      "type": "iscp.secure_envelope.v2"
+    },
+    "plaintext_hex": "7b2274657874223a2268656c6c6f2066726f6d20616c706861227d"
+  },
+  "envelope_b_to_a": {
+    "object": {
+      "ciphertext": "lHIdMUHSu4lM4brznzaukYAhh33mkLXsSDg0l4C4lJLYr-Yt8VbmTClhJUneI-Q",
+      "domain_id": "local",
+      "message_id": "msg-vector-2",
+      "nonce": "AAAAAAAAAAAAAAAA",
+      "payload_type": "text",
+      "recipient_device_id": "device-alpha",
+      "route": {
+        "priority": 5,
+        "relay_id": "relay-local",
+        "ttl_seconds": 60
+      },
+      "sender_device_id": "device-beta",
+      "sequence": 0,
+      "session_id": "sess-vector-1",
+      "type": "iscp.secure_envelope.v2"
+    },
+    "plaintext_hex": "7b2274657874223a2268656c6c6f2066726f6d206265746120f09f8e89227d"
+  },
+  "ephemeral_a_hex": "5a06d4137983b08c39ccb00604bf8489c14361cc2a88f0e6ee5b5ac4f0ffe952",
+  "ephemeral_b_hex": "26c5eeaa87f04e706ed5c1d20b01dc46172d22c428549f64e664db47df6039e6",
+  "hello_a": {
+    "ciphersuite": "ISCP_V2_X25519_HKDF_SHA256_CHACHA20POLY1305",
+    "device_id": "device-alpha",
+    "domain_id": "local",
+    "ephemeral_public_key": "Zztj325SKEnStqnn8-pPlMVmvB7zZEx4qSk5JtXt7gc",
+    "grant_id": "grant-vector-1",
+    "issued_at": "2026-01-02T03:04:05Z",
+    "peer_device_id": "device-beta",
+    "session_id": "sess-vector-1",
+    "signature": {
+      "alg": "Ed25519",
+      "kid": "zYr9XyGtilDvOeYsLOmOFVmBZ_9zQjh3HFd-rOEbEBE",
+      "value": "u_a6CQxo3YZPleFZKteBzCmf1ekvI7-XaErHb8vldVKhDvAnAIW9tuLsO3z4WUyIYMi5G5JzEqDINVKOfsSbCw"
+    },
+    "type": "iscp.session.hello.v2"
+  },
+  "hello_b": {
+    "ciphersuite": "ISCP_V2_X25519_HKDF_SHA256_CHACHA20POLY1305",
+    "device_id": "device-beta",
+    "domain_id": "local",
+    "ephemeral_public_key": "fhVtJ7u_FpEhFtff_Y7TdlujqlULBDsITigv3-vl3XY",
+    "grant_id": "grant-vector-1",
+    "issued_at": "2026-01-02T03:04:05Z",
+    "peer_device_id": "device-alpha",
+    "session_id": "sess-vector-1",
+    "signature": {
+      "alg": "Ed25519",
+      "kid": "wNot1cza5MdmOuk5-XFaiH_hC3xvBRWUXAaBTxy2k1w",
+      "value": "oh3xGchExqUzybG14zWMFIez4fPOIhFbU5hsVNJk1yXrUzxF44QnkDwHPaajlRtx5vCPbPvsUoDyzgfy_ssWBA"
+    },
+    "type": "iscp.session.hello.v2"
+  },
+  "keys_a": {
+    "ready_hex": "ab822216dccd784851a3c469e90633eef9647f4807d6aa834030b5e59b2943e5",
+    "receive_hex": "1515c08945382d04425fd4f1af906328869d59119258fc97f658058b8a8e9d34",
+    "send_hex": "6c1c91bd699d3709fbd1494d07880b32421bb003402047c048dd57932f2ae7fe"
+  },
+  "meta": {
+    "generator": "packages/iscp/conformance-gen",
+    "note": "deterministic fixtures; private keys here are shared test material, not credentials",
+    "pin": "413d767bd8b47a8c6b7430115bf60dc283aebbc0"
+  },
+  "ready_a": {
+    "device_id": "device-alpha",
+    "ready_mac": "KjJU8hDyHhGs1egLewj7MUdb26chJiymdiHIyLnxksM",
+    "session_id": "sess-vector-1",
+    "signature": {
+      "alg": "Ed25519",
+      "kid": "zYr9XyGtilDvOeYsLOmOFVmBZ_9zQjh3HFd-rOEbEBE",
+      "value": "T7_ebukLXLR2mrDAoxn8xsd3z4nLLob6XfptPGmVe5gRRZXBpKv7_V6prgojYnFZr8s5fapMrEMJoX7d0ei-BA"
+    },
+    "transcript_hash": "raw3tvjlbP3vHLCIrS7vVE77X0Z9gT2OOO1VxP2xUqw",
+    "type": "iscp.session.ready.v2"
+  },
+  "ready_b": {
+    "device_id": "device-beta",
+    "ready_mac": "g1Fdi9QB4VqlQRRH0qdC0ico-GB4un6NfHtKiSOkAJM",
+    "session_id": "sess-vector-1",
+    "signature": {
+      "alg": "Ed25519",
+      "kid": "wNot1cza5MdmOuk5-XFaiH_hC3xvBRWUXAaBTxy2k1w",
+      "value": "31mkAc8qJ54O_OAPsIEe3HdDkljZT8TBiubUF1PMffGPvnFvF19hz_ub7yMpMGZKKSWttasgm9pOImZgIYfxDA"
+    },
+    "transcript_hash": "raw3tvjlbP3vHLCIrS7vVE77X0Z9gT2OOO1VxP2xUqw",
+    "type": "iscp.session.ready.v2"
+  },
+  "transcript_hash_b64": "raw3tvjlbP3vHLCIrS7vVE77X0Z9gT2OOO1VxP2xUqw"
+}

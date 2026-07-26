@@ -1,11 +1,15 @@
 import Constants from 'expo-constants';
-import { apiSocket, getCurrentAppState, getHappyClientId } from '@/sync/apiSocket';
+import { getCurrentAppState, getHappyClientId } from '@/sync/apiSocket';
+import { getTransport, initializeLegacyTransport, legacyRequest, legacySendAppState } from '@/sync/transport/transport';
 import { notifyUnreadMessage } from '@/sync/webTabTitle';
 import { AuthCredentials } from '@/auth/tokenStorage';
 import { Encryption } from '@/sync/encryption/encryption';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import { storage } from './storage';
-import { getImageAttachmentSendPlan } from './attachmentSupport';
+// Circular at module level (ops.ts imports sync) but safe: both sides only
+// touch each other's exports at runtime, never during module initialization.
+import { sessionSetAgentModes } from './ops';
+import { getImageAttachmentSendPlan, isAttachmentAllowedByPolicy } from './attachmentSupport';
 import {
     errorMessageFromUnknown,
     formatAttachmentDiagnosticForLog,
@@ -55,6 +59,7 @@ import { getFriendsList, getUserProfile } from './apiFriends';
 import { fetchFeed } from './apiFeed';
 import { FeedItem } from './feedTypes';
 import { UserProfile } from './friendTypes';
+import { resolveControlHandoffDirection } from './controlHandoff';
 import { resolveMessageModeMeta } from './messageMeta';
 import type { AttachmentPreview, UploadedAttachment } from './attachmentTypes';
 import { requestAttachmentUpload, uploadEncryptedBlob } from './apiAttachments';
@@ -62,6 +67,7 @@ import { encryptBlob } from '@/encryption/blob';
 import { readFileBytes } from '@/utils/readFileBytes';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { isRigMetadataV1, rigCanUseAttachments, usesControlledSessionUi } from './rig';
 
 type V3GetSessionMessagesResponse = {
     messages: ApiMessage[];
@@ -170,7 +176,7 @@ class Sync {
             // Web/desktop: visibilitychange/focus listeners below drive this same path
             // by updating this.appState too — re-derive via getCurrentAppState() so
             // the wire value matches what the server uses for suppression.
-            apiSocket.sendAppState(getCurrentAppState());
+            legacySendAppState(getCurrentAppState());
 
             if (nextAppState === 'active') {
                 const shouldFailAfterResume = this.backgroundSendStartedAt !== null
@@ -206,7 +212,7 @@ class Sync {
         // the user is actually looking at this client.
         if (Platform.OS === 'web' && typeof document !== 'undefined') {
             const broadcast = () => {
-                apiSocket.sendAppState(getCurrentAppState());
+                legacySendAppState(getCurrentAppState());
             };
             document.addEventListener('visibilitychange', broadcast);
             window.addEventListener('focus', broadcast);
@@ -594,20 +600,32 @@ class Sync {
         const { displayText, source = 'chat', attachments } = options ?? {};
 
         const flavor = session.metadata?.flavor;
+        const rigAttachmentPolicy = isRigMetadataV1(session.metadata)
+            ? session.metadata?.capabilities?.attachments
+            : null;
         const attachmentPlan = getImageAttachmentSendPlan({
             flavor,
             text,
             attachmentCount: attachments?.length ?? 0,
+            supportsAttachments: isRigMetadataV1(session.metadata)
+                ? rigCanUseAttachments(session.metadata)
+                : undefined,
         });
-        const effectiveAttachments = attachmentPlan.shouldUseAttachments ? attachments : undefined;
+        const effectiveAttachments = attachmentPlan.shouldUseAttachments
+            ? (rigAttachmentPolicy
+                ? attachments?.filter((attachment) => isAttachmentAllowedByPolicy(attachment, rigAttachmentPolicy))
+                : attachments)
+            : undefined;
+        const rejectedByRigPolicy = isRigMetadataV1(session.metadata)
+            && (attachments?.length ?? 0) > (effectiveAttachments?.length ?? 0);
 
-        if (attachmentPlan.shouldShowUnsupportedAlert) {
+        if (attachmentPlan.shouldShowUnsupportedAlert || rejectedByRigPolicy) {
             Modal.alert(
                 t('imageUpload.notSupportedTitle'),
                 t('imageUpload.notSupportedMessage'),
                 [{ text: t('common.ok'), style: 'cancel' }],
             );
-            if (!attachmentPlan.shouldSendText) {
+            if (!attachmentPlan.shouldSendText || (!text.trim() && (effectiveAttachments?.length ?? 0) === 0)) {
                 return;
             }
         }
@@ -707,6 +725,7 @@ class Sync {
                 appendSystemPrompt: systemPrompt,
                 ...(modeMeta.permissionMode !== undefined ? { permissionMode: modeMeta.permissionMode } : {}),
                 ...(modeMeta.model !== undefined ? { model: modeMeta.model } : {}),
+                ...(modeMeta.modelProviderId !== undefined ? { modelProviderId: modeMeta.modelProviderId } : {}),
                 ...(modeMeta.effort !== undefined ? { effort: modeMeta.effort } : {}),
                 ...(displayText && { displayText }) // Add displayText if provided
             }
@@ -730,6 +749,10 @@ class Sync {
             content: encryptedRawRecord
         });
         trackMessageSent(source, session.metadata);
+
+        // Stamp local activity time so the (opt-in) activity sort bubbles this session
+        // up on user action only — not on background agent output.
+        storage.getState().markSessionMessageSent(sessionId);
 
         this.getSendSync(sessionId).invalidate();
         this.maybeStartBackgroundSendWatchdog();
@@ -1811,7 +1834,7 @@ class Sync {
         const controller = new AbortController();
         this.sendAbortControllers.set(sessionId, controller);
         try {
-            const response = await apiSocket.request(`/v3/sessions/${sessionId}/messages`, {
+            const response = await legacyRequest(`/v3/sessions/${sessionId}/messages`, {
                 method: 'POST',
                 body: JSON.stringify({
                     messages: batch.map((message) => ({
@@ -1944,7 +1967,7 @@ class Sync {
         sessionId: string,
         encryption: ReturnType<Encryption['getSessionEncryption']> & {}
     ) => {
-        const response = await apiSocket.request(
+        const response = await legacyRequest(
             `/v3/sessions/${sessionId}/messages?before_seq=${SEQ_BACKWARD_INITIAL_SENTINEL}&limit=100`
         );
         if (!response.ok) {
@@ -1979,7 +2002,7 @@ class Sync {
     ) => {
         let afterSeq = fromSeq;
         while (true) {
-            const response = await apiSocket.request(`/v3/sessions/${sessionId}/messages?after_seq=${afterSeq}&limit=100`);
+            const response = await legacyRequest(`/v3/sessions/${sessionId}/messages?after_seq=${afterSeq}&limit=100`);
             if (!response.ok) {
                 throw new Error(`Failed to forward-sync ${sessionId}: ${response.status}`);
             }
@@ -2056,7 +2079,7 @@ class Sync {
                 if (beforeSeq === undefined || beforeSeq <= 1) {
                     return;
                 }
-                const response = await apiSocket.request(
+                const response = await legacyRequest(
                     `/v3/sessions/${sessionId}/messages?before_seq=${beforeSeq}&limit=100`
                 );
                 if (!response.ok) {
@@ -2101,18 +2124,38 @@ class Sync {
     }
 
     private subscribeToUpdates = () => {
-        // Subscribe to message updates
-        apiSocket.onMessage('update', this.handleUpdate.bind(this));
-        apiSocket.onMessage('ephemeral', this.handleEphemeralUpdate.bind(this));
+        const transport = getTransport();
+
+        // Consume the transport event stream. The legacy transport passes the
+        // socket 'update'/'ephemeral' payloads through in strict arrival order;
+        // handlers are fired without awaiting, matching the old direct socket
+        // callback dispatch exactly.
+        void (async () => {
+            for await (const event of transport.events()) {
+                if (event.type === 'legacy-update') {
+                    void this.handleUpdate(event.body);
+                } else if (event.type === 'legacy-ephemeral') {
+                    void this.handleEphemeralUpdate(event.body);
+                } else if (event.type === 'session-event') {
+                    // ISCP normalizer (the one sanctioned mode conditional):
+                    // bodies arrive plaintext (iscp_session_v1 already
+                    // protected the relay leg), ordered and gap-free per
+                    // session courtesy of ISCPHappyTransport.
+                    this.handleWireSessionEvent(event);
+                } else if (event.type === 'ephemeral') {
+                    void this.handleEphemeralUpdate(event.body);
+                }
+            }
+        })();
 
         // Subscribe to connection state changes
-        apiSocket.onReconnected(() => {
+        transport.legacy?.onReconnected(() => {
             log.log('🔌 Socket reconnected');
 
             // Send current focus state on reconnect so the server's
             // suppression rules pick up where we left off (handshake.auth.appState
             // covers the very first connect; this covers reconnects).
-            apiSocket.sendAppState(getCurrentAppState());
+            legacySendAppState(getCurrentAppState());
 
             this.sessionsSync.invalidate();
             this.machinesSync.invalidate();
@@ -2129,6 +2172,29 @@ class Sync {
             }
         });
     }
+
+    /**
+     * ISCP-mode session event → the same NormalizedMessage application path
+     * legacy uses after decryption. The event body is exactly what the CLI
+     * session wrote to the daemon event log (the pre-encryption message
+     * content), so it parses as a RawRecord directly; `localId` carries the
+     * idempotency key for optimistic-send reconciliation. Sessions themselves
+     * still materialize via the legacy sessions sync in this phase.
+     */
+    private handleWireSessionEvent = (event: { sessionId: string; seq: number; localId?: string; body: unknown }) => {
+        const normalized = normalizeRawMessage(
+            `iscp-${event.sessionId}-${event.seq}`,
+            event.localId ?? null,
+            Date.now(),
+            event.body as RawRecord
+        );
+        if (!normalized) {
+            console.log(`⚠️ Sync: dropping unparseable ISCP session event ${event.sessionId}#${event.seq}`);
+            return;
+        }
+        this.enqueueMessages(event.sessionId, [normalized]);
+        this.onSessionVisible(event.sessionId);
+    };
 
     private handleUpdate = async (update: unknown) => {
         const validatedUpdate = ApiUpdateContainerSchema.safeParse(update);
@@ -2311,12 +2377,16 @@ class Sync {
                         voiceHooks.onPermissionRequested(updateData.body.id, requestIds[0], toolName, firstRequest?.arguments);
                     }
 
-                    // Re-fetch messages when control returns to mobile (local -> remote mode switch)
-                    // This catches up on any messages that were exchanged while desktop had control
+                    // Re-fetch messages on control handoff so the newly active
+                    // side catches up on messages exchanged while it was passive.
                     const wasControlledByUser = session.agentState?.controlledByUser;
                     const isNowControlledByUser = agentState?.controlledByUser;
-                    if (!wasControlledByUser && isNowControlledByUser) {
-                        log.log(`🔄 Control returned to mobile for session ${updateData.body.id}, re-fetching messages`);
+                    const handoffDirection = usesControlledSessionUi(metadata)
+                        ? resolveControlHandoffDirection(wasControlledByUser, isNowControlledByUser)
+                        : null;
+                    if (handoffDirection) {
+                        const target = handoffDirection === 'desktop-to-mobile' ? 'mobile' : 'desktop';
+                        log.log(`🔄 Control returned to ${target} for session ${updateData.body.id}, re-fetching messages`);
                         this.onSessionVisible(updateData.body.id);
                     }
                 }
@@ -2737,6 +2807,12 @@ class Sync {
         if (result.hasReadyEvent) {
             voiceHooks.onReady(sessionId);
         }
+        if (result.enteredPlanMode) {
+            // The EnterPlanMode auto-switch only wrote the local mirror; push
+            // it into synced metadata so other devices see plan mode and the
+            // next inbound metadata update doesn't revert it (#1492)
+            sessionSetAgentModes(sessionId, { permissionMode: 'plan' });
+        }
     }
 
     private applySessions = (sessions: (Omit<Session, "presence"> & {
@@ -2803,12 +2879,12 @@ async function syncInit(credentials: AuthCredentials, restore: boolean) {
     // Initialize tracking
     initializeTracking(encryption.anonID);
 
-    // Initialize socket connection
+    // Initialize the network transport (legacy adapter over the socket)
     const API_ENDPOINT = getServerUrl();
-    apiSocket.initialize({ endpoint: API_ENDPOINT, token: credentials.token }, encryption);
+    const transport = initializeLegacyTransport({ endpoint: API_ENDPOINT, token: credentials.token }, encryption);
 
-    // Wire socket status to storage
-    apiSocket.onStatusChange((status) => {
+    // Wire connection status to storage
+    transport.onConnectionState((status) => {
         storage.getState().setSocketStatus(status);
     });
 

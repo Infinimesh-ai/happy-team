@@ -1,0 +1,41 @@
+{
+  "identity": {
+    "created_at": "2026-01-02T03:04:05Z",
+    "device_id": "device-vector-a",
+    "domain_id": "local",
+    "public_key": {
+      "kid": "ZXZqjindkWHS0JRRexyiW0DjxLsnDaK0sas49WVhNaI",
+      "kty": "Ed25519",
+      "public": "04eDihxodeiWmCXnMgb9Skh4pZ1rVWQkl8b1BkKQEkk",
+      "use": "identity-signature"
+    },
+    "type": "iscp.device.identity.v2"
+  },
+  "meta": {
+    "generator": "packages/iscp/conformance-gen",
+    "note": "deterministic fixtures; private keys here are shared test material, not credentials",
+    "pin": "413d767bd8b47a8c6b7430115bf60dc283aebbc0"
+  },
+  "proof": {
+    "audience": "relay-local",
+    "challenge": "challenge-vector-0001",
+    "issued_at": "2026-01-02T03:04:05Z",
+    "nonce": "nonce-vector-0001",
+    "object": {
+      "audience": "relay-local",
+      "challenge": "challenge-vector-0001",
+      "device_id": "device-vector-a",
+      "domain_id": "local",
+      "issued_at": "2026-01-02T03:04:05Z",
+      "nonce": "nonce-vector-0001",
+      "signature": {
+        "alg": "Ed25519",
+        "kid": "ZXZqjindkWHS0JRRexyiW0DjxLsnDaK0sas49WVhNaI",
+        "value": "RmFtcGV_9_0DbWhkOgaxSaZdb0ttZ8FTeGRph7QSLxL2VLDWmUoh5VoOu6fe2OcHvuUdEI7AZd3mB7ujsApkDA"
+      },
+      "type": "iscp.device.proof.v2"
+    }
+  },
+  "seed_hex": "6b82e6a314a8635818ad89af2e7f339f4016efb5f62a90990e5eb2c3fd2eb2dc",
+  "thumbprint": "ZXZqjindkWHS0JRRexyiW0DjxLsnDaK0sas49WVhNaI"
+}

@@ -1,0 +1,236 @@
+import { describe, expect, it } from 'vitest';
+
+import { createNobleProvider } from './crypto/noble';
+import { utf8Decode, utf8Encode } from './encoding';
+import { IscpError } from './errors';
+import { createDevice, identityThumbprint, type Device } from './identity';
+import { IscpPeer } from './peer';
+import { signObject } from './signing';
+import { TRUST_GRANT_TYPE, type DeviceIdentity, type RelayDescriptor, type TrustGrant } from './schemas';
+import { FakeRelay } from './testing/fakeRelay';
+
+const provider = createNobleProvider();
+
+function makeGrant(issuer: Device, subject: Device, relayId: string): TrustGrant {
+  const unsigned = {
+    type: TRUST_GRANT_TYPE,
+    grant_id: `grant-${subject.identity.device_id}`,
+    issuer: issuer.identity.device_id,
+    subject_device_id: subject.identity.device_id,
+    audience: 'happy-domain',
+    confirmation_thumbprint: identityThumbprint(provider, subject.identity),
+    permissions: ['text', 'agent.capability.v1', 'happy-wire.v1'],
+    relay_constraints: [relayId],
+    not_before: '2026-01-01T00:00:00Z',
+    expires_at: '2036-01-01T00:00:00Z',
+    revocation_epoch: 0,
+  };
+  return signObject(provider, TRUST_GRANT_TYPE, unsigned, issuer.privateKey, issuer.identity.public_key.kid) as TrustGrant;
+}
+
+function relayDescriptor(relay: FakeRelay): RelayDescriptor {
+  return {
+    type: 'iscp.relay.descriptor.v2',
+    relay_id: relay.relayId,
+    domain_id: relay.domainId,
+    base_url: 'http://fake-relay.local',
+    websocket_url: 'ws://fake-relay.local/v2/relay/connect',
+    signing_keys: [{ kty: 'Ed25519', use: 'descriptor-signature', kid: 'k', public: 'AA' }],
+    issued_at: '2026-01-01T00:00:00Z',
+    expires_at: '2036-01-01T00:00:00Z',
+  };
+}
+
+interface TestPeer {
+  device: Device;
+  peer: IscpPeer;
+  received: Array<{ from: string; payloadType: string; text: string }>;
+  errors: unknown[];
+  manifests: Array<{ from: string; manifest: unknown }>;
+}
+
+function createTestPeer(relay: FakeRelay, deviceId: string, identities: Map<string, DeviceIdentity>, issuer: Device): TestPeer {
+  const device = createDevice(provider, { domainId: relay.domainId, deviceId });
+  identities.set(deviceId, device.identity);
+  const credentials = relay.issueCredentials(deviceId);
+  const result: TestPeer = { device, peer: undefined as unknown as IscpPeer, received: [], errors: [], manifests: [] };
+  result.peer = new IscpPeer({
+    device,
+    grant: makeGrant(issuer, device, relay.relayId),
+    relayDescriptor: relayDescriptor(relay),
+    credentials,
+    resolvePeerIdentity: async (id) => {
+      const identity = identities.get(id);
+      if (!identity) throw new Error(`unknown device ${id}`);
+      return identity;
+    },
+    manifest: { product_kind: 'happy', device: deviceId, capabilities: ['agent.sessions'] },
+    provider,
+    wsFactory: relay.wsFactory,
+    fetchImpl: relay.fetchImpl,
+    onPayload: (from, payloadType, plaintext) => {
+      result.received.push({ from, payloadType, text: utf8Decode(plaintext) });
+    },
+    onPeerReady: (from, manifest) => {
+      result.manifests.push({ from, manifest });
+    },
+    onError: (error) => {
+      result.errors.push(error);
+    },
+  });
+  return result;
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 5000, what = 'condition'): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
+describe('IscpPeer over an in-memory relay', () => {
+  it('handshakes, exchanges manifests, and delivers payloads both ways', async () => {
+    const relay = new FakeRelay();
+    const identities = new Map<string, DeviceIdentity>();
+    const issuer = createDevice(provider, { domainId: relay.domainId, deviceId: 'trust-local-signer' });
+    const alpha = createTestPeer(relay, 'device-alpha', identities, issuer);
+    const beta = createTestPeer(relay, 'device-beta', identities, issuer);
+    alpha.peer.start();
+    beta.peer.start();
+    try {
+      await waitFor(() => alpha.peer.connectionState === 'READY' && beta.peer.connectionState === 'READY', 5000, 'both peers READY');
+
+      const betaManifest = await alpha.peer.openSession('device-beta', { timeoutMs: 5000 });
+      expect(betaManifest).toMatchObject({ device: 'device-beta' });
+      await waitFor(() => beta.manifests.length > 0, 5000, 'beta receives alpha manifest');
+      expect(beta.manifests[0].manifest).toMatchObject({ device: 'device-alpha' });
+
+      await alpha.peer.sendPayload('device-beta', 'text', utf8Encode('{"text":"hi beta"}'));
+      await waitFor(() => beta.received.length > 0, 5000, 'beta payload delivery');
+      expect(beta.received[0]).toMatchObject({ from: 'device-alpha', payloadType: 'text', text: '{"text":"hi beta"}' });
+
+      await beta.peer.sendPayload('device-alpha', 'text', utf8Encode('{"text":"hi alpha"}'));
+      await waitFor(() => alpha.received.length > 0, 5000, 'alpha payload delivery');
+      expect(alpha.received[0].text).toBe('{"text":"hi alpha"}');
+    } finally {
+      alpha.peer.stop();
+      beta.peer.stop();
+    }
+  });
+
+  it('refuses business payloads before session.ready and before manifest exchange', async () => {
+    const relay = new FakeRelay();
+    const identities = new Map<string, DeviceIdentity>();
+    const issuer = createDevice(provider, { domainId: relay.domainId, deviceId: 'trust-local-signer' });
+    const alpha = createTestPeer(relay, 'device-alpha', identities, issuer);
+    createTestPeer(relay, 'device-beta', identities, issuer); // identity registered, peer never started
+    alpha.peer.start();
+    try {
+      await expect(alpha.peer.sendPayload('device-beta', 'text', utf8Encode('x'))).rejects.toThrowError(/not ready/);
+    } finally {
+      alpha.peer.stop();
+    }
+  });
+
+  it('survives a killed WS: reconnects and drains envelopes queued while offline', async () => {
+    const relay = new FakeRelay();
+    const identities = new Map<string, DeviceIdentity>();
+    const issuer = createDevice(provider, { domainId: relay.domainId, deviceId: 'trust-local-signer' });
+    const alpha = createTestPeer(relay, 'device-alpha', identities, issuer);
+    const beta = createTestPeer(relay, 'device-beta', identities, issuer);
+    alpha.peer.start();
+    beta.peer.start();
+    try {
+      await alpha.peer.openSession('device-beta', { timeoutMs: 5000 });
+      await waitFor(() => beta.manifests.length > 0, 5000, 'manifest exchange');
+
+      // Kill every WS; envelopes submitted meanwhile land in the offline queue.
+      relay.killSockets();
+      await alpha.peer.sendPayload('device-beta', 'text', utf8Encode('{"text":"while offline"}'));
+      await waitFor(() => beta.received.some((m) => m.text.includes('while offline')), 5000, 'delivery after reconnect');
+    } finally {
+      alpha.peer.stop();
+      beta.peer.stop();
+    }
+  });
+
+  it('queues outbound envelopes while the relay is unreachable and flushes on recovery', async () => {
+    const relay = new FakeRelay();
+    const identities = new Map<string, DeviceIdentity>();
+    const issuer = createDevice(provider, { domainId: relay.domainId, deviceId: 'trust-local-signer' });
+    const alpha = createTestPeer(relay, 'device-alpha', identities, issuer);
+    const beta = createTestPeer(relay, 'device-beta', identities, issuer);
+    alpha.peer.start();
+    beta.peer.start();
+    try {
+      await alpha.peer.openSession('device-beta', { timeoutMs: 5000 });
+      relay.offline = true;
+      await alpha.peer.sendPayload('device-beta', 'text', utf8Encode('{"text":"queued"}'));
+      expect(alpha.peer.pendingOutbound).toBe(1);
+      relay.offline = false;
+      await alpha.peer.flushQueue();
+      expect(alpha.peer.pendingOutbound).toBe(0);
+      await waitFor(() => beta.received.some((m) => m.text.includes('queued')), 5000, 'queued delivery');
+    } finally {
+      alpha.peer.stop();
+      beta.peer.stop();
+    }
+  });
+
+  it('rejects replayed envelopes with ISCPENV002', async () => {
+    const relay = new FakeRelay();
+    const identities = new Map<string, DeviceIdentity>();
+    const issuer = createDevice(provider, { domainId: relay.domainId, deviceId: 'trust-local-signer' });
+    const alpha = createTestPeer(relay, 'device-alpha', identities, issuer);
+    const beta = createTestPeer(relay, 'device-beta', identities, issuer);
+    alpha.peer.start();
+    beta.peer.start();
+    try {
+      await alpha.peer.openSession('device-beta', { timeoutMs: 5000 });
+      await alpha.peer.sendPayload('device-beta', 'text', utf8Encode('{"text":"once"}'));
+      await waitFor(() => beta.received.length === 1, 5000, 'first delivery');
+      const delivered = relay.submitted.find((e) => e.payload_type === 'text');
+      expect(delivered).toBeDefined();
+      relay.redeliver(delivered!);
+      await waitFor(() => beta.errors.some((e) => e instanceof IscpError && e.code === 'ISCPENV002'), 5000, 'replay rejection');
+      expect(beta.received.length).toBe(1);
+    } finally {
+      alpha.peer.stop();
+      beta.peer.stop();
+    }
+  });
+
+  it('rotates credentials when the relay rejects the access token', async () => {
+    const relay = new FakeRelay();
+    const identities = new Map<string, DeviceIdentity>();
+    const issuer = createDevice(provider, { domainId: relay.domainId, deviceId: 'trust-local-signer' });
+    const alpha = createTestPeer(relay, 'device-alpha', identities, issuer);
+    const beta = createTestPeer(relay, 'device-beta', identities, issuer);
+    // Invalidate alpha's access token by issuing (and discarding) — instead,
+    // construct a peer with a bogus access token but valid refresh token.
+    const credentials = relay.issueCredentials('device-alpha');
+    const rotated: string[] = [];
+    const peer = new IscpPeer({
+      device: alpha.device,
+      grant: makeGrant(issuer, alpha.device, relay.relayId),
+      relayDescriptor: relayDescriptor(relay),
+      credentials: { accessToken: 'bogus-token', refreshToken: credentials.refreshToken },
+      resolvePeerIdentity: async (id) => identities.get(id)!,
+      manifest: { device: 'device-alpha' },
+      provider,
+      wsFactory: relay.wsFactory,
+      fetchImpl: relay.fetchImpl,
+      onCredentialsRotated: (c) => rotated.push(c.accessToken),
+    });
+    beta.peer.start();
+    peer.start();
+    try {
+      await peer.openSession('device-beta', { timeoutMs: 5000 });
+      expect(rotated.length).toBeGreaterThan(0);
+    } finally {
+      peer.stop();
+      beta.peer.stop();
+    }
+  });
+});

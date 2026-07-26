@@ -1,0 +1,138 @@
+{
+  "canonical": [
+    {
+      "name": "empty-object",
+      "input": "{}",
+      "canonical": "{}"
+    },
+    {
+      "name": "sorted-keys",
+      "input": "{\"b\":1,\"a\":2,\"c\":3}",
+      "canonical": "{\"a\":2,\"b\":1,\"c\":3}"
+    },
+    {
+      "name": "nested",
+      "input": "{\"z\":{\"y\":[1,2,{\"x\":null}],\"w\":true},\"a\":\"s\"}",
+      "canonical": "{\"a\":\"s\",\"z\":{\"w\":true,\"y\":[1,2,{\"x\":null}]}}"
+    },
+    {
+      "name": "html-escapes",
+      "input": "{\"s\":\"\u003cscript\u003ea\u0026b\u003c/script\u003e\"}",
+      "canonical": "{\"s\":\"\\u003cscript\\u003ea\\u0026b\\u003c/script\\u003e\"}"
+    },
+    {
+      "name": "unicode",
+      "input": "{\"s\":\"héllo wörld 汉字 🎉\"}",
+      "canonical": "{\"s\":\"héllo wörld 汉字 🎉\"}"
+    },
+    {
+      "name": "unicode-keys",
+      "input": "{\"é\":1,\"a\":2,\"z\":3,\"汉\":4}",
+      "canonical": "{\"a\":2,\"z\":3,\"é\":1,\"汉\":4}"
+    },
+    {
+      "name": "astral-key-order",
+      "input": "{\"🎉\":1,\"�\":2}",
+      "canonical": "{\"�\":2,\"🎉\":1}"
+    },
+    {
+      "name": "line-separators",
+      "input": "{\"s\":\"a\u2028b\u2029c\"}",
+      "canonical": "{\"s\":\"a\\u2028b\\u2029c\"}"
+    },
+    {
+      "name": "control-chars",
+      "input": "{\"s\":\"a\\u0001b\\nc\\td\\re\"}",
+      "canonical": "{\"s\":\"a\\u0001b\\nc\\td\\re\"}"
+    },
+    {
+      "name": "escaped-quotes",
+      "input": "{\"s\":\"say \\\"hi\\\" \\\\ done\"}",
+      "canonical": "{\"s\":\"say \\\"hi\\\" \\\\ done\"}"
+    },
+    {
+      "name": "int64-bounds",
+      "input": "{\"max\":9223372036854775807,\"min\":-9223372036854775808,\"zero\":0}",
+      "canonical": "{\"max\":9223372036854775807,\"min\":-9223372036854775808,\"zero\":0}"
+    },
+    {
+      "name": "negative",
+      "input": "{\"n\":-42}",
+      "canonical": "{\"n\":-42}"
+    },
+    {
+      "name": "array-of-scalars",
+      "input": "[null,true,false,\"x\",7]",
+      "canonical": "[null,true,false,\"x\",7]"
+    },
+    {
+      "name": "whitespace",
+      "input": "{\n  \"a\" : 1 ,\n  \"b\" : [ 1 , 2 ]\n}",
+      "canonical": "{\"a\":1,\"b\":[1,2]}"
+    },
+    {
+      "name": "empty-string-value",
+      "input": "{\"ciphertext\":\"\",\"a\":1}",
+      "canonical": "{\"a\":1,\"ciphertext\":\"\"}"
+    }
+  ],
+  "meta": {
+    "generator": "packages/iscp/conformance-gen",
+    "note": "deterministic fixtures; private keys here are shared test material, not credentials",
+    "pin": "413d767bd8b47a8c6b7430115bf60dc283aebbc0"
+  },
+  "rejected": [
+    {
+      "name": "duplicate-key",
+      "input": "{\"a\":1,\"a\":2}"
+    },
+    {
+      "name": "float",
+      "input": "{\"a\":1.5}"
+    },
+    {
+      "name": "exponent",
+      "input": "{\"a\":1e3}"
+    },
+    {
+      "name": "negative-zero",
+      "input": "{\"a\":-0}"
+    },
+    {
+      "name": "leading-zero",
+      "input": "{\"a\":01}"
+    },
+    {
+      "name": "int64-overflow",
+      "input": "{\"a\":9223372036854775808}"
+    },
+    {
+      "name": "trailing-data",
+      "input": "{\"a\":1} {\"b\":2}"
+    },
+    {
+      "name": "top-level-two-values",
+      "input": "1 2"
+    }
+  ],
+  "signature_inputs": [
+    {
+      "name": "strips-signature",
+      "object_type": "iscp.device.proof.v2",
+      "input": "{\"b\":2,\"signature\":{\"alg\":\"Ed25519\",\"kid\":\"k\",\"value\":\"v\"},\"a\":1}",
+      "signature_input_hex": "495343502d56322d5349474e415455524500697363702e6465766963652e70726f6f662e7632007b2261223a312c2262223a327d"
+    },
+    {
+      "name": "no-signature-field",
+      "object_type": "iscp.test.v2",
+      "input": "{\"a\":1}",
+      "signature_input_hex": "495343502d56322d5349474e415455524500697363702e746573742e7632007b2261223a317d"
+    },
+    {
+      "name": "nested-signature-kept",
+      "object_type": "iscp.test.v2",
+      "input": "{\"outer\":{\"signature\":\"inner kept\"},\"a\":1}",
+      "signature_input_hex": "495343502d56322d5349474e415455524500697363702e746573742e7632007b2261223a312c226f75746572223a7b227369676e6174757265223a22696e6e6572206b657074227d7d"
+    }
+  ]
+}

@@ -1,0 +1,170 @@
+/**
+ * Daemon-side ISCP peer runner: one IscpPeer per enrolled profile (the
+ * daemon is the machine's single ISCP device; session processes never touch
+ * ISCP keys). Bridges wire traffic to the WireResponder and pushes live
+ * wire events to subscribed app peers.
+ *
+ * Payload routing after capability exchange:
+ *   happy/wire-request.v1  → WireResponder.handle → happy/wire-response.v1
+ *   happy/wire-event.v1    ← live session events for events.subscribe'd peers
+ */
+
+import {
+  WIRE_EVENT_PAYLOAD_TYPE,
+  WIRE_REQUEST_PAYLOAD_TYPE,
+  WIRE_RESPONSE_PAYLOAD_TYPE,
+  HappyWireRequestSchema,
+  defaultAgentCapabilityManifest,
+  encodeWireCursor,
+  type SessionWireEvent,
+} from '@slopus/happy-wire'
+import {
+  IscpPeer,
+  RelayHttpClient,
+  TrustRootClient,
+  createNobleProvider,
+  verifyRelayDescriptor,
+  verifyTrustRootDescriptor,
+  utf8Decode,
+  utf8Encode,
+  type CryptoProvider,
+} from '@slopus/iscp'
+
+import { logger } from '@/ui/logger'
+import { listProfiles, readProfileBundle, readProfileDevice, updateProfileCredentials } from '@/iscp/enrollment'
+import type { DaemonIscpService, SessionEventNotification } from '@/iscp/daemonIscp'
+import { WireResponder, type WireResponderDeps } from '@/iscp/wireResponder'
+
+export interface DaemonIscpPeers {
+  /** Profiles that came online. */
+  profiles: string[]
+  /** Relay WS state per online peer (diagnostics). */
+  connectionStates: () => string[]
+  stop: () => void
+}
+
+/**
+ * Start peers for every enrolled profile. Profiles that fail to come online
+ * (relay unreachable, revoked credentials) are logged and skipped — the
+ * daemon must keep serving legacy traffic regardless.
+ */
+export async function startDaemonIscpPeers(
+  deps: Omit<WireResponderDeps, 'profileId'>,
+): Promise<DaemonIscpPeers> {
+  const provider = createNobleProvider()
+  const peers: IscpPeer[] = []
+  const profiles: string[] = []
+  for (const profileId of listProfiles()) {
+    try {
+      const peer = await startProfilePeer(provider, profileId, deps)
+      if (peer) {
+        peers.push(peer)
+        profiles.push(profileId)
+      }
+    } catch (error) {
+      logger.debug(`[ISCP PEER] profile ${profileId} failed to start`, { error })
+    }
+  }
+  return {
+    profiles,
+    connectionStates: () => peers.map((peer) => peer.connectionState),
+    stop: () => {
+      for (const peer of peers) peer.stop()
+    },
+  }
+}
+
+async function startProfilePeer(
+  provider: CryptoProvider,
+  profileId: string,
+  deps: Omit<WireResponderDeps, 'profileId'>,
+): Promise<IscpPeer | null> {
+  const bundle = readProfileBundle(profileId)
+  const device = readProfileDevice(provider, profileId)
+  if (!bundle || !device) {
+    logger.debug(`[ISCP PEER] profile ${profileId} has no usable bundle/key; skipping`)
+    return null
+  }
+
+  // Re-fetch a fresh signed relay descriptor: reference services mint a new
+  // signing key per boot, so the enrollment-time pin only warns.
+  const enrolledRelay = verifyRelayDescriptor(provider, bundle.relay_descriptor, { now: new Date(bundle.enrolled_at) })
+  const relayHttp = new RelayHttpClient({ baseUrl: enrolledRelay.base_url, relayId: bundle.relay_id, provider })
+  const { descriptor: freshSigned, pin } = await relayHttp.fetchSignedDescriptor()
+  const relayDescriptor = verifyRelayDescriptor(provider, freshSigned)
+  if (pin !== undefined && pin !== bundle.relay_pin) {
+    logger.debug(`[ISCP PEER] relay descriptor pin changed since enrollment for ${profileId} (reference services rotate keys per boot)`)
+  }
+
+  const enrolledTrust = verifyTrustRootDescriptor(provider, bundle.trust_root_descriptor, { now: new Date(bundle.enrolled_at) })
+  const trustRoot = new TrustRootClient({ baseUrl: enrolledTrust.base_url, trustRootId: bundle.trust_root_id, provider })
+
+  const responder = new WireResponder({ ...deps, profileId })
+  const subscribedPeers = new Set<string>()
+
+  const peer: IscpPeer = new IscpPeer({
+    device,
+    grant: bundle.trust_grant,
+    relayDescriptor,
+    credentials: {
+      accessToken: bundle.access_credential.token,
+      refreshToken: bundle.refresh_credential.token,
+    },
+    // The reference relay closes after every drain (sub-second cycles), so a
+    // silent socket is dead after seconds, not the generic 60s default —
+    // keep the daemon reachable across app reconnects.
+    wsBackoff: { idleTimeoutMs: 15_000 },
+    resolvePeerIdentity: async (deviceId) => (await trustRoot.deviceStatus(deviceId)).identity,
+    manifest: defaultAgentCapabilityManifest(),
+    provider,
+    onCredentialsRotated: (credentials) => updateProfileCredentials(profileId, credentials),
+    onPeerReady: (peerDeviceId) => {
+      logger.debug(`[ISCP PEER] app peer ready: ${peerDeviceId} (profile ${profileId})`)
+    },
+    onPayload: (peerDeviceId, payloadType, plaintext) => {
+      if (payloadType !== WIRE_REQUEST_PAYLOAD_TYPE) return
+      void (async () => {
+        const request = HappyWireRequestSchema.parse(JSON.parse(utf8Decode(plaintext)))
+        if (request.method === 'events.subscribe') {
+          subscribedPeers.add(peerDeviceId)
+        }
+        const response = await responder.handle(request)
+        await peer.sendPayload(peerDeviceId, WIRE_RESPONSE_PAYLOAD_TYPE, utf8Encode(JSON.stringify(response)))
+      })().catch((error) => {
+        logger.debug('[ISCP PEER] wire request handling failed', { peerDeviceId, error })
+      })
+    },
+    onConnectionState: (state) => {
+      // READY fires every drain cycle (reference relay closes after drain);
+      // only transitions around failures are interesting.
+      if (state === 'CLOSED') {
+        logger.debug(`[ISCP PEER] relay ws CLOSED (profile ${profileId}) — peer will no longer receive envelopes`)
+      }
+    },
+    onError: (error) => {
+      logger.debug(`[ISCP PEER] transport error (profile ${profileId})`, { error })
+    },
+  })
+
+  // Live push: fan session-event notifications out to subscribed peers.
+  deps.iscp.events.on('session-event', (notification: SessionEventNotification) => {
+    if (notification.profileId !== profileId || notification.deduped) return
+    const event: SessionWireEvent = {
+      type: 'session-event',
+      sessionId: notification.sessionId,
+      seq: notification.record.seq,
+      cursor: encodeWireCursor({ scope: notification.sessionId, seq: notification.record.seq, epoch: notification.epoch }),
+      ...(notification.record.localId !== undefined ? { localId: notification.record.localId } : {}),
+      body: notification.record.body,
+    }
+    for (const peerDeviceId of subscribedPeers) {
+      peer.sendPayload(peerDeviceId, WIRE_EVENT_PAYLOAD_TYPE, utf8Encode(JSON.stringify(event))).catch((error) => {
+        logger.debug('[ISCP PEER] event push failed', { peerDeviceId, error })
+      })
+    }
+  })
+
+  peer.start()
+  logger.debug(`[ISCP PEER] profile ${profileId} online as device ${device.identity.device_id}`)
+  return peer
+}

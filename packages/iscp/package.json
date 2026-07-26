@@ -1,0 +1,61 @@
+{
+  "name": "@slopus/iscp",
+  "version": "0.1.0",
+  "description": "TypeScript ISCP v2 client (Node + React Native) implemented from the pinned Infinimesh-ai/ISCP specification",
+  "author": "Kirill Dubovitskiy",
+  "license": "MIT",
+  "type": "module",
+  "homepage": "https://github.com/slopus/happy/tree/main/packages/iscp",
+  "bugs": "https://github.com/slopus/happy/issues",
+  "repository": "slopus/happy",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.cts",
+  "exports": {
+    ".": {
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      },
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "package.json",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "shx rm -rf dist && tsc --noEmit && pkgroll",
+    "test": "vitest run",
+    "test:integration": "ISCP_HARNESS=1 vitest run src/integration",
+    "bench": "vitest bench --run",
+    "sync-vectors": "tsx scripts/sync-iscp-vectors.ts",
+    "prepublishOnly": "$npm_execpath run build && $npm_execpath run test"
+  },
+  "dependencies": {
+    "@noble/ciphers": "^1.2.1",
+    "@noble/curves": "^1.8.1",
+    "@noble/hashes": "^1.7.1",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": ">=20",
+    "@types/ws": "^8.5.12",
+    "pkgroll": "^2.14.2",
+    "shx": "^0.3.3",
+    "tsx": "^4.19.2",
+    "typescript": "5.9.3",
+    "vitest": "^3.2.4",
+    "ws": "^8.18.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "packageManager": "pnpm@10.11.0"
+}

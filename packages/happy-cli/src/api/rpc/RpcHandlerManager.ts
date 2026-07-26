@@ -95,6 +95,20 @@ export class RpcHandlerManager {
         }
     }
 
+    /**
+     * Invoke a handler with plaintext params, bypassing the Happy encryption
+     * envelope. Used by the ISCP-mode localhost bridge (daemon → session):
+     * E2E protection there is iscp_session_v1 on the relay leg, and the
+     * localhost hop carries plaintext by design. Throws on unknown method.
+     */
+    async callHandler(method: string, params: unknown): Promise<unknown> {
+        const handler = this.handlers.get(this.getPrefixedMethod(method));
+        if (!handler) {
+            throw new Error(`Method not found: ${method}`);
+        }
+        return await handler(params);
+    }
+
     onSocketConnect(socket: Socket): void {
         this.socket = socket;
         for (const [prefixedMethod] of this.handlers) {
