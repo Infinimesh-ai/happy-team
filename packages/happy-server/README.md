@@ -2,6 +2,12 @@
 
 Minimal backend for open-source end-to-end encrypted Claude Code clients.
 
+> **Fork note — the zero-knowledge claims below do not hold for Team Edition.**
+>
+> This file is upstream's and describes base Happy, where the user holds their own key. This repository adds [Team Edition](../../docs/team-edition.md), in which the server **generates and escrows member private keys** so members can sign in with an email and a password. An operator with database access and `HANDY_MASTER_SECRET` can therefore decrypt member sessions.
+>
+> That trade is deliberate and is documented in [team-edition.md § Security model](../../docs/team-edition.md#security-model). It applies whenever `sources/team/` routes are in use — that is, any deployment with Team users. A server with no `TeamUser` rows behaves exactly as described below.
+
 ## What is Happy?
 
 Happy Server is the synchronization backbone for secure Claude Code clients. It enables multiple devices to share encrypted conversations while maintaining complete privacy - the server never sees your messages, only encrypted blobs it cannot read.

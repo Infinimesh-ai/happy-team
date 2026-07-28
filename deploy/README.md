@@ -183,6 +183,96 @@ pnpm --filter happy exec happy daemon start
 
 然后打开 `http://localhost:8080`，完成现有 Happy 登录流程，确认能看到该机器并发起一次 Claude Code 会话：发送一条消息、看到输出、完成一次权限审批。
 
-## 8. 备份要求
+## 8. 备份与恢复
 
-Postgres 和 MinIO 数据卷必须备份。进入 M1 之后，Postgres 会包含托管 NaCl 私钥密文和 SSH 凭据密文，因此备份必须加密，且备份密钥与 `HANDY_MASTER_SECRET` 分开管理。
+Postgres 和 MinIO 数据卷必须备份。Postgres 里包含托管 NaCl 私钥密文和 SSH 凭据密文，因此**备份必须加密，且备份密钥与 `HANDY_MASTER_SECRET` 分开管理**。两者存在一起，等于没加密。
+
+备份 Postgres：
+
+```bash
+docker compose exec -T postgres pg_dump -U "${POSTGRES_USER:-happy}" "${POSTGRES_DB:-happy}" | gzip > happy-team-$(date +%F).sql.gz
+```
+
+### 恢复
+
+关键点：**数据库密文和 `HANDY_MASTER_SECRET` 必须配套**。用另一个 master secret 恢复数据库，成员托管私钥和 SSH 凭据全部解不开——账号登录会失败，机器无法再被管理。所以恢复演练必须连 secret 一起演练，不能只演练 dump。
+
+```bash
+docker compose down
+docker volume rm happy-team_postgres-data
+docker compose up -d postgres
+gunzip -c happy-team-2026-07-27.sql.gz | docker compose exec -T postgres psql -U "${POSTGRES_USER:-happy}" -d "${POSTGRES_DB:-happy}"
+docker compose up -d
+```
+
+恢复后按顺序确认：管理员能登录（说明 master secret 与密文配套）→ 预检通过 → Machines 页面上的机器陆续回到在线。
+
+至少每季度做一次完整恢复演练，在独立环境上做，不要在生产上验证备份。
+
+## 9. 升级部署
+
+server 容器启动时会自动执行 `prisma migrate deploy`，所以常规升级就是重新构建再起：
+
+```bash
+git pull
+pnpm install --force
+docker compose build
+docker compose up -d
+```
+
+`pnpm install --force` 不能省。`pnpm-workspace.yaml` 用 `supportedArchitectures` 固定了跨平台 optional native binaries，跳过它构建出的 `happy-cli.tgz` 只覆盖构建机自己的平台，目标机会在成员发起会话时才暴露问题。
+
+注意事项：
+
+- **改了 `HAPPY_PUBLIC_SERVER_URL` 必须重新 build webapp**，它是构建期烧进去的，只重启无效。
+- **升级后跑一次预检**，重点看 CLI artifact 的 per-platform binary 覆盖是否还完整。typecheck 和单测都发现不了这个问题。
+- **已在线的成员机器不会自动升级 CLI。** 它们跑的是 provisioning 当时下发的 artifact。要更新某台机器，对它重新发起一次 provisioning。
+- 升级前建议先备份 Postgres——迁移是单向的，没有自动回滚。
+
+## 10. 轮换 HANDY_MASTER_SECRET 与公司 API key
+
+### 公司 API key
+
+直接换 `.env` 里的 `TEAM_ANTHROPIC_API_KEY` / `TEAM_OPENAI_API_KEY`，重启 server，然后让每台机器重新拿到新值。机器侧的 `agent.env` **不会**自动刷新——它是 provisioning 时写进去的。触发重写的方式是让成员的 agent auth 配置发生一次变更（在 Team Agent Access 或管理员页面切走再切回），server 会通过 Machine RPC 重写 `agent.env` 并重启 daemon。
+
+成员离职后如果旧 key 可能已落在对方手里，轮换是唯一可靠的止血手段——见 §11。
+
+### HANDY_MASTER_SECRET
+
+**这个值不能简单替换。** 它派生的密钥加密着成员托管私钥和 SSH 凭据；直接改掉，所有既有密文都会解不开。
+
+只有在泄漏时才需要轮换，且必须当作一次受控迁移来做：
+
+1. 停止写入（停 server，保留数据库）。
+2. 用**旧** secret 起一个实例，导出需要保留的明文（成员账号对应关系；SSH 凭据建议直接放弃后重录，不要导出明文）。
+3. 换新 secret，重建这些密文。
+4. 认为已泄漏的一切同时作废：公司 API key 轮换，所有 SSH 凭据删除后重录。
+
+仓库里没有现成的轮换脚本。如果你的部署已经到了必须轮换的地步，先在恢复演练环境上把整套流程走通再动生产。
+
+预防成本远低于轮换成本：从第一天起就把它放进密管，且不要和它保护的数据库备份存在同一个地方。
+
+## 11. 成员离职
+
+**禁用成员不等于完成离职。** 禁用切断的是账号——置 `DISABLED`、吊销 JWT、HTTP 和 WebSocket 双端拦截。但它不会碰成员机器上的任何文件，而且禁用之后 server 就再也够不着那台机器了（daemon 在握手阶段就被拒，agent-auth RPC 恰好走同一条连接）。
+
+禁用之后仍然留在对方机器上的东西：
+
+- `~/.happy-team/agent.env` 里的公司 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`，权限 0600 且属于该 OS 用户。可以直接 source 出来绕开 Happy 使用。
+- 已 enroll 的 Happy 凭据（此时已无效，daemon 会持续重连失败）。
+
+系统目前也没有删除成员或删除机器的接口，`DELETE` 只有 SSH 凭据一个。
+
+所以正确顺序是：
+
+1. **先**趁还有 SSH 权限，清掉机器上的 `~/.happy-team/` 并停掉 daemon（公司配发设备）。
+2. 再在管理后台禁用该成员。
+3. 如果第 1 步做不到（个人设备、已交还、已失联），就**按公司 API key 已泄漏处理**：轮换 `TEAM_ANTHROPIC_API_KEY` / `TEAM_OPENAI_API_KEY`，并让其余机器重新获取新 key（见 §10）。
+4. 删除该成员名下所有 `deleteAfterUse=false` 的 SSH 凭据。
+5. 在 Audit 页面确认 `disable_user` 已记录。
+
+顺序搞反——先禁用再想清机器——就没有补救办法了，只剩轮换一条路。
+
+## 12. 故障排查
+
+按症状分类的排查手册见 [troubleshooting.md](troubleshooting.md)，含每个 provisioning 步骤的真实报错字符串、制品 503 的三种成因、以及 daemon 静默降级（重启后不自愈）的两条 warning。
