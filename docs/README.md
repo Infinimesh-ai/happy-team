@@ -11,7 +11,9 @@ Start with the [root README](../README.md) for what this fork is.
 ## Team Edition
 
 - [team-edition.md](team-edition.md): Reference — identity, data model, HTTP API, provisioning state machine, artifact distribution, agent auth modes, env vars, security model.
-- [../deploy/README.md](../deploy/README.md): Deployment walkthrough — env setup, TLS, Node/CLI artifacts, provisioning, preflight, backups (zh).
+- [../deploy/README.md](../deploy/README.md): Deployment walkthrough — env setup, TLS, Node/CLI artifacts, provisioning, preflight, backup/restore, upgrades, secret rotation, offboarding (zh).
+- [../deploy/troubleshooting.md](../deploy/troubleshooting.md): Symptom-indexed troubleshooting — per-step provisioning failures with the real error strings, artifact 503 causes, silent daemon-persistence downgrades (zh).
+- [../.env.example](../.env.example): Annotated environment template; required vs optional, and why `HAPPY_PUBLIC_SERVER_URL` and `TEAM_PUBLIC_SERVER_URL` are separate (zh).
 - [plans/team-edition.md](plans/team-edition.md): The implementation plan, decisions that are settled and not up for re-litigation, and the full acceptance log per milestone (zh).
 - [upstream-sync.md](upstream-sync.md): Merging from the parent fork and upstream without breaking Team boundaries.
 - [plans/cloud-agent-tasks.md](plans/cloud-agent-tasks.md): Cloud agent task plan.

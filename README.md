@@ -62,7 +62,7 @@ Full walkthrough, env reference and backup requirements: [deploy/README.md](depl
 
 A `TeamUser` row sits alongside each existing Happy `Account`. Creating a member generates a NaCl keypair server-side and stores the secret key encrypted under a key derived from `HANDY_MASTER_SECRET`. Login verifies the argon2id password hash, decrypts the escrowed key, and returns `{ happyToken, secretKey, role, mustChangePassword }` — which the app feeds into its **existing** restore-from-key path. Nothing about the sync or encryption protocol changed.
 
-Disabling a member takes effect within minutes on both transports: the HTTP `authenticate` hook and the WebSocket handshake each re-check `TeamUser.status`. Plain (non-Team) Happy accounts are unaffected.
+Disabling a member takes effect within minutes on both transports: the HTTP `authenticate` hook and the WebSocket handshake each re-check `TeamUser.status`. Plain (non-Team) Happy accounts are unaffected. Note that this cuts off the *account*, not the machine — company API keys already written to a member's disk survive it, so read [offboarding](docs/team-edition.md#disabling-a-member) before treating disable as a departure process.
 
 This is deliberately **not** strict end-to-end encryption — the server escrows member private keys. That is the trade the design makes for zero-touch onboarding in a trusted corporate environment; see [team-edition.md § Security model](docs/team-edition.md#security-model).
 
@@ -95,7 +95,13 @@ Deployment Preflight (`GET /v1/team/admin/preflight`) answers "will provisioning
 
 ## Quick start
 
-Requires Docker with Compose v2. Create a `.env` in the repo root with at minimum `HANDY_MASTER_SECRET`, `POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `ADMIN_EMAIL`, `ADMIN_INITIAL_PASSWORD` and a company API key — [deploy/README.md § 1](deploy/README.md) has a copy-pasteable generator that fills in strong random values. Then:
+Requires Docker with Compose v2.
+
+```bash
+cp .env.example .env
+```
+
+Fill in at least `HANDY_MASTER_SECRET`, `POSTGRES_PASSWORD`, `MINIO_ROOT_PASSWORD`, `ADMIN_EMAIL`, `ADMIN_INITIAL_PASSWORD` and one company API key — [deploy/README.md § 1](deploy/README.md) has a copy-pasteable generator for the random values. `.env` is gitignored; never commit it. Compose refuses to start if a required value is missing, naming the one it wants. Then:
 
 ```bash
 docker compose build && docker compose up -d
@@ -191,8 +197,10 @@ Details: [docs/network-dual-stack/](docs/network-dual-stack/), and the parent fo
 
 | Doc | What's in it |
 | --- | --- |
-| [deploy/README.md](deploy/README.md) | Deployment walkthrough: env, TLS, artifacts, provisioning, preflight, backups (zh) |
+| [deploy/README.md](deploy/README.md) | Deployment walkthrough: env, TLS, artifacts, provisioning, preflight, backup/restore, upgrades, key rotation, offboarding (zh) |
+| [deploy/troubleshooting.md](deploy/troubleshooting.md) | Symptom-indexed troubleshooting, with the real error strings from each provisioning step (zh) |
 | [docs/team-edition.md](docs/team-edition.md) | Reference: data model, API surface, provisioning state machine, env vars, security model |
+| [.env.example](.env.example) | Annotated environment template — every variable, which are required, and why the two public URLs differ (zh) |
 | [docs/plans/team-edition.md](docs/plans/team-edition.md) | The implementation plan and full acceptance log, milestone by milestone (zh) |
 | [docs/upstream-sync.md](docs/upstream-sync.md) | Merging from the parent fork and upstream without breaking Team boundaries |
 | [docs/README.md](docs/README.md) | Index of everything else, fork-specific and inherited |

@@ -94,6 +94,18 @@ happy connect codex
 happy connect status
 ```
 
+### Team Edition enrollment
+
+This fork adds `happy enroll`, which authenticates a machine against a self-hosted [Team Edition](../../docs/team-edition.md) server using a one-time token instead of the QR-code flow:
+
+```bash
+happy enroll --server https://api.happy.yourco.com --token <one-time-token>
+```
+
+The token is minted by a Team admin, is valid for 15 minutes and can be used once. Enrollment fetches the member's managed key, writes credentials and marks onboarding complete — after which the machine behaves like any other Happy machine.
+
+Normally you never run this by hand: the admin console provisions machines over SSH and invokes it for you. Run it manually only when following a **Manual Command** for a host SSH cannot reach. Add `--force` to re-enroll a machine that already has credentials; it stops the daemon and clears the existing credentials and machine ID first.
+
 ## Commands
 
 | Command | Description |
@@ -107,6 +119,7 @@ happy connect status
 | `happy resume <id>` | Resume a previous session |
 | `happy notify` | Send push notification to your devices |
 | `happy doctor` | Diagnostics & troubleshooting |
+| `happy enroll` | Enroll this machine with a Team Edition server (fork-only) |
 
 ---
 

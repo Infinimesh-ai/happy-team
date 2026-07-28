@@ -64,6 +64,14 @@ The admin is seeded at startup: if no `ADMIN` exists, the server creates one fro
 
 Both are no-ops for plain Happy accounts with no `TeamUser` row, so a Team server still works for non-Team users.
 
+**Disabling is not full offboarding.** It cuts the account off from the server — but nothing reaches out to the member's machine, and by design it no longer can, since the daemon is refused at the handshake and the agent-auth RPC travels over that same connection. So after disabling:
+
+- `~/.happy-team/agent.env` still holds the company `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`, readable by that OS user. They can be used directly against Anthropic or OpenAI, entirely outside Happy.
+- The enrolled Happy credentials remain on disk; the daemon keeps retrying and failing.
+- There is no delete-member or delete-machine endpoint — `DELETE` exists only for SSH credentials.
+
+For a real departure, treat the company API key as compromised and rotate `TEAM_ANTHROPIC_API_KEY` / `TEAM_OPENAI_API_KEY` (which forces a re-push to every remaining machine), or wipe `~/.happy-team/` on the machine while you still have access. Disable the member **before** revoking your SSH access to their host, not after.
+
 ### Passwords
 
 argon2id via the pure-JS `@noble/hashes` (chosen over a native argon2 binding to avoid adding a postinstall build step to the server image), PHC-format hashes, minimum length 10. Login is rate limited over a 15-minute window on the hashed `ip:email` pair, in Redis with an in-memory fallback if Redis is unavailable; rejections are audited as `login_failed` with a `reason`. Admin password resets return a one-time temporary password and force a change at next login.
@@ -245,7 +253,13 @@ What Team Edition protects, and what it deliberately does not.
 
 Written to `TeamAuditLog`, filterable in the admin UI:
 
-`login` · `login_failed` · `change_password` · `change_password_failed` · `create_user` · `create_enroll_token` · `enroll` · `enroll_failed` · `create_ssh_credential` · `delete_ssh_credential` · `provision_created` · `provision_succeeded` · `provision_failed` · `provision_retry_created` · `self_update_agent_auth_mode`
+Authentication — `login` · `login_failed` · `change_password` · `change_password_failed`
+
+Member administration — `create_user` · `update_role` · `enable_user` · `disable_user` · `reset_password` · `update_agent_auth_mode` · `self_update_agent_auth_mode`
+
+Machines and provisioning — `create_enroll_token` · `enroll` · `enroll_failed` · `create_ssh_credential` · `delete_ssh_credential` · `provision_created` · `provision_succeeded` · `provision_failed` · `provision_retry_created`
+
+A single `PATCH /v1/team/admin/users/:id` can emit several of the administration actions at once — changing role and disabling in one request writes `update_role` and `disable_user` separately, so filtering by action never hides part of what happened.
 
 `login_failed` records a `reason` (`rate_limited`, `invalid_credentials`, `disabled`) and, since there may be no actor, the attempted email in `detail`.
 
