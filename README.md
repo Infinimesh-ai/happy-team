@@ -11,12 +11,12 @@
 </h1>
 
 <h4 align="center">
-Self-hosted Happy for a company · email + password accounts with managed keys · one-click SSH provisioning of member machines
+Self-hosted Happy for a company · email + password accounts with managed keys · one-click SSH provisioning of member machines · one-sentence agent tasks that end in a pull request
 </h4>
 
 <div align="center">
 
-[**Quick start**](#quick-start) • [**What Team Edition adds**](#what-team-edition-adds) • [**Deployment guide**](deploy/README.md) • [**Reference**](docs/team-edition.md)
+[**Quick start**](#quick-start) • [**What Team Edition adds**](#what-team-edition-adds) • [**Cloud Agent**](#cloud-agent) • [**Deployment guide**](deploy/README.md) • [**Reference**](docs/team-edition.md)
 
 </div>
 
@@ -25,6 +25,8 @@ Self-hosted Happy for a company · email + password accounts with managed keys �
 Happy is a mobile and web client for Claude Code, Codex and other coding agents — you run `happy claude` instead of `claude` on your machine and drive the session from a browser or your phone. For what Happy is and how the base product works, read [upstream's README](https://github.com/slopus/happy#readme) and [docs](https://happy.engineering/docs/).
 
 **Team Edition turns that into something a company can run for its employees.** One `docker compose up -d` on a company server; admins create members with an email and a password; admins point the console at a member's machine over SSH and it comes online a few minutes later with the agents already authenticated. No member ever handles a key, a token, or an install command.
+
+**Cloud Agent is what happens next.** With machines online, a member describes a job in one sentence from the web or their phone; a multi-stage agent pipeline runs it in an isolated git worktree on their own machine and delivers a pull request. It lives on the [`cloud-agent`](#cloud-agent) branch.
 
 This README documents this fork. Anything not described here behaves like [upstream `slopus/happy`](https://github.com/slopus/happy).
 
@@ -51,6 +53,7 @@ This repo is two forks deep. Knowing which layer a feature came from tells you w
 | Agent credentials | Each user logs into Claude/Codex themselves | Company API key injected by default; members can opt into personal OAuth per agent |
 | Administration | — | Members, machines, provisioning jobs, SSH credentials, audit log, deployment preflight |
 | Target machine requirements | Node, network access, manual setup | No root, no public internet — only inbound SSH from the server and outbound reach to the server |
+| Running work | You drive each session yourself | Also: describe a job in one sentence, get a pull request — [Cloud Agent](#cloud-agent), on a branch |
 
 ### 1. Self-hosted deployment
 
@@ -93,6 +96,34 @@ Under `/team/admin/`: **users** (create, disable, reset password, change agent a
 
 Deployment Preflight (`GET /v1/team/admin/preflight`) answers "will provisioning actually work from here?" before you touch a real machine — public URLs, CLI artifact, per-platform Node artifacts, and whether the bundled `happy-cli.tgz` really contains the Claude Agent SDK and Codex native binaries for each target platform. It returns statuses, paths and booleans only — never secret values.
 
+## Cloud Agent
+
+> On the **`cloud-agent`** branch, not merged into `main`. Code-complete with tests green; every milestone still carries an owner end-to-end acceptance step. See [status](#status-and-known-limits).
+
+Team Edition ends with a machine that is online and authenticated. Cloud Agent is what runs on it: a member writes one sentence in **Settings → Tasks**, picks a machine, a repository and a template, and a multi-stage agent pipeline executes it inside an isolated git worktree, ending in a pull request.
+
+```
+New Task
+   │   prepare worktree: happy/<user>/<slug>, team skills mounted, task MCP attached
+   ▼
+  plan ──[approve]──► execute ──► verify ──┬─ passed ──────► deliver: gh pr create / glab mr create
+ Claude   supervised    Codex     Claude   ├─ failed ──────► execute   (round++, up to maxRounds)
+read-only    only                + real    └─ budget out ──► escalate to a human
+                                gate output
+```
+
+Four templates ship: `execute-only` (one-shot), `plan-execute` (plan approved before code is written), `plan-execute-verify` (closed loop with bounded rework), and `skills-curator` (runs against the team's skills repo and proposes revisions). Tasks run **supervised** — parked for human approval on marked edges — or **autonomous**, where the same pipeline runs unattended.
+
+Five things make it more than a prompt in a loop:
+
+- **The server owns control flow.** Agents don't decide what happens next; they declare intent through MCP tools (`complete_stage`, `report_blocker`, `request_transition`) and the server adjudicates each one against the template. Every decision, *including rejections*, lands in a per-task black box you can replay.
+- **Stages hand off through files,** not conversation history — `.happy-task/plan.md`, `findings.md`, `pr.md`. That's what lets Claude plan, a human edit the plan mid-flight, and Codex execute it. Each artifact has a frontmatter contract, so "the file exists" can't pass as done.
+- **The reviewer is handed real evidence.** Before a verify stage starts, the daemon runs the project's own validation command in the worktree and injects the actual output into the prompt. A reviewer that's merely *asked* to run the tests is being trusted twice.
+- **Delivery is mechanical and fenced.** No agent pushes anything. The daemon does it, and refuses any branch not prefixed `happy/` — writing a file cannot get you a push to `main`.
+- **Policy is content, not code.** Prompts reference team skills mounted from a separate repository and pinned per task by commit, under a content contract (`repo:`, `validation:`, a per-skill line budget) the product knows how to check. Changing how the team works is a PR in that repo, not a release here.
+
+Reference — templates, state machine, MCP surface, artifact contract, API, security model and the honest gap list: [docs/cloud-agent.md](docs/cloud-agent.md).
+
 ## Quick start
 
 Requires Docker with Compose v2.
@@ -129,31 +160,41 @@ pnpm install --force
 pnpm --filter happy-server-self-host typecheck
 pnpm --filter happy typecheck
 pnpm --filter happy-app typecheck
-pnpm --filter happy-server-self-host test -- sources/team
 ```
+
+Fork tests, narrowed to the directories this fork owns:
+
+```bash
+pnpm --filter happy-server-self-host exec vitest run sources/team
+pnpm --filter happy exec vitest run --project unit src/team
+```
+
+Use `exec vitest run <path>`, not `test -- <path>` — the package `test` scripts don't forward a path filter, so the latter quietly runs the whole suite instead of the part you asked for.
 
 Note the server package is named `happy-server-self-host`, not `happy-server`. App and CLI development (Expo, native builds, local server) is covered in the [Contributing Guide](docs/CONTRIBUTING.md).
 
 ## Architecture
 
 ```
-┌────────────────────────── company server ───────────────────────────┐
-│                                                                     │
-│  webapp (browser)                 server (packages/happy-server)    │
-│  ├─ /team/login  ────────────────► sources/team/                    │
+┌─────────────────────────── company server ───────────────────────────┐
+│                                                                      │
+│  webapp (browser)                  server (packages/happy-server)    │
+│  ├─ /team/login  ────────────────► sources/team/                     │
 │  ├─ /team/admin/* (ADMIN only)     ├─ teamUsers, passwords, escrow   │
 │  ├─ /team/agent-auth               ├─ enrollTokens, agentAuth        │
-│  └─ session UI (unchanged)         ├─ provision/{runner,ssh}         │
-│                                    ├─ artifacts, preflight, audit    │
+│  ├─ /team/tasks/* (task board)     ├─ provision/{runner,ssh}         │
+│  └─ session UI (unchanged)         ├─ artifacts, preflight, audit    │
+│                                    ├─ tasks/ state machine + tokens  │
 │  Postgres   Redis   MinIO   Caddy  └─ existing sync/session/machine  │
-└─────────────────────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────────────────────┘
         │ SSH (one-time bootstrap)       ▲ WebSocket 443 (outbound)
-        ▼                                │
+        ▼                                │ machine RPC · task intents
    member machine ── happy daemon ── claude / codex
    ~/.happy-team/{bin,cli,agent.env}
+   ~/.happy/{worktrees/<taskId>, team-skills}
 ```
 
-The daemon dials out, so member machines never expose a port. SSH is used exactly once, for bootstrap.
+The daemon dials out, so member machines never expose a port. SSH is used exactly once, for bootstrap. Task stages are ordinary Happy sessions — spawned by the server into a worktree, with a task-scoped MCP server attached.
 
 ### Where the code lives
 
@@ -162,15 +203,19 @@ New code is deliberately confined to new directories with a single registration 
 | Path | Contents |
 | --- | --- |
 | [`packages/happy-server/sources/team/`](packages/happy-server/sources/team/) | All server-side Team code — auth, escrow, provisioning, artifacts, audit |
-| [`packages/happy-app/sources/app/(app)/team/`](packages/happy-app/sources/app/%28app%29/team/) | Login, change-password, agent-auth and the admin pages |
+| [`packages/happy-server/sources/team/tasks/`](packages/happy-server/sources/team/tasks/) | Cloud Agent — templates, state machine, task tokens, artifact and skills contracts |
+| [`packages/happy-app/sources/app/(app)/team/`](packages/happy-app/sources/app/%28app%29/team/) | Login, change-password, agent-auth, the admin pages and the task board |
 | [`packages/happy-app/sources/team/api.ts`](packages/happy-app/sources/team/api.ts) | Typed client for `/v1/team/*` |
 | [`packages/happy-cli/src/commands/enroll.ts`](packages/happy-cli/src/commands/enroll.ts) | `happy enroll` |
+| [`packages/happy-cli/src/team/tasks/`](packages/happy-cli/src/team/tasks/) | Cloud Agent daemon side — worktrees, skills injection, validation gate, delivery, MCP servers |
 | [`scripts/team-node-artifacts.cjs`](scripts/team-node-artifacts.cjs) | Downloads + SHA256-verifies Node artifacts for provisioning |
 | `docker-compose.yml`, `Dockerfile.server`, `deploy/` | Self-hosted deployment |
 
-Existing `Account` / `Machine` / `Session` tables are not modified — Team Edition only adds tables.
+Existing `Account` / `Machine` / `Session` tables are not modified — Team Edition and Cloud Agent only add tables.
 
 ## Status and known limits
+
+### Team Edition (`main`)
 
 Milestones M0–M3 are implemented and were accepted against a live compose stack, real browsers and real target machines. Honest gaps:
 
@@ -183,6 +228,18 @@ Milestones M0–M3 are implemented and were accepted against a live compose stac
 - **No SSO/LDAP/OAuth login** for Team accounts, and no native mobile work — Team pages target the web build.
 
 Full acceptance log and the reasoning behind each decision: [docs/plans/team-edition.md](docs/plans/team-edition.md).
+
+### Cloud Agent (`cloud-agent` branch)
+
+Milestones C0–C4 are code-complete with unit and integration tests green, and **none has been accepted end to end** — each carries an owner acceptance step needing a real machine, a real browser and real GitHub/GitLab. Don't run this in production yet.
+
+- **Proven without a real machine:** the whole spine against real git — worktree creation on a local bare origin, a simulated agent committing `pr.md`, session exit, artifact validation, a real push, delivery, `SUCCEEDED` — plus the negative case where a missing `pr.md` blocks the push. Untested is narrow: encrypted transport to a live daemon, real `gh`/`glab` calls, real agents calling the MCP tools, and the browser UI.
+- **Implemented but not wired to any caller:** pre-distribution skills validation (an unfit ref isn't refused automatically), task-prerequisite detection (a machine missing `gh` fails at delivery rather than warning at provisioning), telemetry aggregation (no route returns it), skills-repo scaffolding, and periodic curator scheduling (a curator run is created like any other task).
+- **`findings.md` is not enforced** as a completion gate; whether to require it on the failed path is left open until real-machine observation.
+- **No sandbox of its own** — a task can do whatever the member's daemon can do, with the agent credentials Team Edition provisioned.
+- **Not integrated with ISCP dual-stack,** and Windows machines can't run tasks (they can't be SSH-provisioned).
+
+Reference and the full gap list: [docs/cloud-agent.md](docs/cloud-agent.md). Acceptance steps, milestone by milestone: [docs/plans/cloud-agent-tasks-progress.md](docs/plans/cloud-agent-tasks-progress.md).
 
 ## Inherited from the parent fork
 
@@ -200,8 +257,10 @@ Details: [docs/network-dual-stack/](docs/network-dual-stack/), and the parent fo
 | [deploy/README.md](deploy/README.md) | Deployment walkthrough: env, TLS, artifacts, provisioning, preflight, backup/restore, upgrades, key rotation, offboarding (zh) |
 | [deploy/troubleshooting.md](deploy/troubleshooting.md) | Symptom-indexed troubleshooting, with the real error strings from each provisioning step (zh) |
 | [docs/team-edition.md](docs/team-edition.md) | Reference: data model, API surface, provisioning state machine, env vars, security model |
+| [docs/cloud-agent.md](docs/cloud-agent.md) | Reference: templates, task state machine, MCP tool surface, artifact and skills contracts, security model |
 | [.env.example](.env.example) | Annotated environment template — every variable, which are required, and why the two public URLs differ (zh) |
 | [docs/plans/team-edition.md](docs/plans/team-edition.md) | The implementation plan and full acceptance log, milestone by milestone (zh) |
+| [docs/plans/cloud-agent-tasks.md](docs/plans/cloud-agent-tasks.md) | Cloud Agent blueprint and acceptance criteria; [progress](docs/plans/cloud-agent-tasks-progress.md) is the single source of truth for state (zh) |
 | [docs/upstream-sync.md](docs/upstream-sync.md) | Merging from the parent fork and upstream without breaking Team boundaries |
 | [docs/README.md](docs/README.md) | Index of everything else, fork-specific and inherited |
 

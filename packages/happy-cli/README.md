@@ -106,6 +106,21 @@ The token is minted by a Team admin, is valid for 15 minutes and can be used onc
 
 Normally you never run this by hand: the admin console provisions machines over SSH and invokes it for you. Run it manually only when following a **Manual Command** for a host SSH cannot reach. Add `--force` to re-enroll a machine that already has credentials; it stops the daemon and clears the existing credentials and machine ID first.
 
+### Cloud Agent (`cloud-agent` branch)
+
+On the `cloud-agent` branch the daemon also executes [Cloud Agent](../../docs/cloud-agent.md) tasks: it prepares a per-task git worktree, mounts the team's skills, runs the project's validation gate, and pushes the finished branch as a pull request. That work arrives as machine RPCs (`task-prepare-worktree`, `task-check-artifacts`, `task-read-artifact` / `task-write-artifact`, `task-run-validation`, `task-deliver`, `task-cleanup`) — there are no user-facing commands for it.
+
+Two stdio MCP servers are exposed to the agent running inside a task, and neither is meant to be typed by a human:
+
+| Subcommand | Tools | Purpose |
+|---|---|---|
+| `happy task-mcp` | `get_task_context`, `complete_stage`, `report_blocker`, `request_transition` | The agent declares intent; the server adjudicates it against the task template |
+| `happy skills-mcp` | `get_skill`, `append_lesson` | Read team standards; append to the lessons inbox (append-only) |
+
+`task-mcp` is registered automatically through a `.mcp.json` written into the worktree at preparation time and git-excluded, so it never enters the delivered branch. It carries no secrets — per-session identity arrives as `HAPPY_TASK_ID` / `HAPPY_TASK_TOKEN` / `HAPPY_TASK_STAGE` in the stage session's environment, and the server URL is read from the CLI's own configuration.
+
+Delivery needs `gh` (GitHub) or `glab` (GitLab) installed and authenticated on the machine. A branch that is not prefixed `happy/` is refused, as is a work branch equal to the base branch.
+
 ## Commands
 
 | Command | Description |
@@ -120,6 +135,8 @@ Normally you never run this by hand: the admin console provisions machines over 
 | `happy notify` | Send push notification to your devices |
 | `happy doctor` | Diagnostics & troubleshooting |
 | `happy enroll` | Enroll this machine with a Team Edition server (fork-only) |
+| `happy task-mcp` | Task-control MCP server for a Cloud Agent stage (fork-only, spawned automatically) |
+| `happy skills-mcp` | Team-skills MCP server (fork-only, spawned automatically) |
 
 ---
 
@@ -134,6 +151,8 @@ Normally you never run this by hand: the admin console provisions machines over 
 | `HAPPY_HOME_DIR` | Custom home directory for Happy data (default: `~/.happy`) |
 | `HAPPY_DISABLE_CAFFEINATE` | Disable macOS sleep prevention |
 | `HAPPY_EXPERIMENTAL` | Enable experimental features |
+| `HAPPY_SKILLS_DIR` | Cloud Agent: team-skills clone to mount into task worktrees (default: `<HAPPY_HOME_DIR>/team-skills`) |
+| `TEAM_SKILLS_REF` | Cloud Agent: branch or tag to sync that clone to before mounting — the gradual-rollout switch |
 
 ### Sandbox (experimental)
 
