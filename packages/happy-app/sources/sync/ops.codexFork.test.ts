@@ -5,9 +5,7 @@ const { machineRPC, refreshSessions } = vi.hoisted(() => ({
     refreshSessions: vi.fn(),
 }));
 
-vi.mock('./apiSocket', () => ({
-    apiSocket: { machineRPC },
-}));
+vi.mock('./transport/transport', () => ({ machineRPC }));
 
 vi.mock('./sync', () => ({
     sync: { refreshSessions },

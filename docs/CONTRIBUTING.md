@@ -117,12 +117,15 @@ EXPO_PUBLIC_HAPPY_SERVER_URL=http://localhost:3005 pnpm --filter happy-app start
 
 ## Project Structure
 
-This is a monorepo with four packages:
+This is a monorepo. The packages you'll touch most:
 
 - **happy-app** — React Native + Expo mobile/web client
-- **happy-cli** — Node.js CLI that wraps Claude Code and Codex
+- **happy-cli** — Node.js CLI that wraps Claude Code, Codex, Gemini and ACP agents
 - **happy-agent** — Remote agent control
 - **happy-server** — Backend for encrypted sync
+- **happy-wire** — Shared session protocol schemas and types
+
+Also in the workspace: **iscp** (ISCP v2 client for dual-stack networking), **codium** (experimental Electron desktop client), and **happy-app-logs** (local log collector for app development).
 
 For architecture details, check the [docs/](.) folder or ask Happy itself — it knows how the project is set up.
 

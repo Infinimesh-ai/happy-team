@@ -80,6 +80,7 @@
     "@openai/codex": "0.130.0",
     "@paralleldrive/cuid2": "^2.2.2",
     "@slopus/happy-wire": "workspace:*",
+    "@slopus/iscp": "workspace:*",
     "@stablelib/base64": "^2.0.1",
     "@stablelib/hex": "^2.0.1",
     "@types/cross-spawn": "^6.0.6",

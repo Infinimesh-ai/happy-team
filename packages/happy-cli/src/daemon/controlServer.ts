@@ -11,19 +11,23 @@ import { Metadata } from '@/api/types';
 import { decodeBase64 } from '@/api/encryption';
 import { TrackedSession, SessionEncryptionData } from './types';
 import { SpawnSessionOptions, SpawnSessionResult } from '@/modules/common/registerCommonHandlers';
+import type { DaemonIscpService } from '@/iscp/daemonIscp';
 
 export function startDaemonControlServer({
   getChildren,
   stopSession,
   spawnSession,
   requestShutdown,
-  onHappySessionWebhook
+  onHappySessionWebhook,
+  iscp
 }: {
   getChildren: () => TrackedSession[];
   stopSession: (sessionId: string) => boolean;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   requestShutdown: () => void;
   onHappySessionWebhook: (sessionId: string, metadata: Metadata, encryption?: SessionEncryptionData) => void;
+  /** ISCP-mode ingestion (dual-stack). Absent when no ISCP profile is enrolled. */
+  iscp?: DaemonIscpService;
 }): Promise<{ port: number; stop: () => Promise<void> }> {
   return new Promise((resolve) => {
     const app = fastify({
@@ -191,6 +195,68 @@ export function startDaemonControlServer({
             error: result.errorMessage
           };
       }
+    });
+
+    // ISCP-mode session event ingestion (dual-stack): sessions spawned with
+    // HAPPY_NETWORK_PROFILE post their history events here; the daemon event
+    // log assigns monotonic seq and dedupes by localId.
+    typed.post('/iscp/session-event', {
+      schema: {
+        body: z.object({
+          profileId: z.string().min(1),
+          sessionId: z.string().min(1),
+          events: z.array(z.object({
+            localId: z.string().optional(),
+            body: z.unknown()
+          })).min(1).max(200)
+        }),
+        response: {
+          200: z.object({
+            results: z.array(z.object({
+              seq: z.number(),
+              epoch: z.string(),
+              deduped: z.boolean()
+            }))
+          }),
+          503: z.object({
+            error: z.string()
+          })
+        }
+      }
+    }, async (request, reply) => {
+      if (!iscp) {
+        reply.code(503);
+        return { error: 'ISCP is not enabled on this daemon' };
+      }
+      const { profileId, sessionId, events } = request.body;
+      const results = iscp.ingest(profileId, sessionId, events);
+      logger.debug(`[CONTROL SERVER] ISCP ingested ${events.length} event(s) for ${sessionId} (last seq ${results[results.length - 1]?.seq})`);
+      return { results };
+    });
+
+    // ISCP session RPC bridge registration: sessions report the localhost
+    // port where they accept plaintext RPC (user-message delivery, session.rpc).
+    typed.post('/iscp/session-rpc', {
+      schema: {
+        body: z.object({
+          profileId: z.string().min(1),
+          sessionId: z.string().min(1),
+          port: z.number().int().min(1).max(65535)
+        }),
+        response: {
+          200: z.object({ status: z.literal('ok') }),
+          503: z.object({ error: z.string() })
+        }
+      }
+    }, async (request, reply) => {
+      if (!iscp) {
+        reply.code(503);
+        return { error: 'ISCP is not enabled on this daemon' };
+      }
+      const { profileId, sessionId, port } = request.body;
+      iscp.registerSessionRpcPort(profileId, sessionId, port);
+      logger.debug(`[CONTROL SERVER] ISCP session RPC registered: ${sessionId} → 127.0.0.1:${port}`);
+      return { status: 'ok' as const };
     });
 
     // Stop daemon

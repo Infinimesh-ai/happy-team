@@ -32,6 +32,7 @@
             "packages/happy-cli",
             "packages/happy-server",
             "packages/happy-wire",
+            "packages/iscp",
             "packages/happy-app-logs",
             "packages/codium"
         ]

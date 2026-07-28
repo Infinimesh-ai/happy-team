@@ -20,6 +20,8 @@ import {
     type ClaudeSessionProtocolState,
 } from '@/claude/utils/sessionProtocolMapper';
 import { InvalidateSync } from '@/utils/sync';
+import { DaemonSessionEventTee, iscpNetworkProfile } from '@/iscp/daemonTee';
+import { startIscpSessionRpcServer } from '@/iscp/sessionRpcServer';
 import axios from 'axios';
 
 /**
@@ -228,11 +230,33 @@ export class ApiSessionClient extends EventEmitter {
     private pendingOutbox: Array<{ content: string; localId: string }> = [];
     private readonly sendSync: InvalidateSync;
     private readonly receiveSync: InvalidateSync;
+    /**
+     * ISCP dual-stack tee: present only when the daemon spawned this session
+     * with HAPPY_NETWORK_PROFILE. History events then go to the daemon event
+     * log (plaintext over localhost; E2E protection is iscp_session_v1 on the
+     * relay leg) instead of the happy-server outbox. Legacy mode: null,
+     * behavior byte-identical.
+     */
+    private readonly iscpTee: DaemonSessionEventTee | null;
 
     constructor(token: string, session: Session) {
         super()
         this.token = token;
         this.sessionId = session.id;
+        const iscpProfile = iscpNetworkProfile();
+        this.iscpTee = iscpProfile !== null ? new DaemonSessionEventTee(iscpProfile, session.id) : null;
+        if (iscpProfile !== null) {
+            // ISCP mode: expose the localhost RPC bridge so the daemon's wire
+            // responder can deliver user messages and session RPCs.
+            void startIscpSessionRpcServer({
+                profileId: iscpProfile,
+                sessionId: session.id,
+                onUserMessage: (body) => this.routeIncomingMessage(body),
+                callHandler: (method, params) => this.rpcHandlerManager.callHandler(method, params),
+            }).catch((error) => {
+                logger.debug('[API] Failed to start ISCP session RPC server', { error });
+            });
+        }
         this.metadata = session.metadata;
         this.metadataVersion = session.metadataVersion;
         this.agentState = session.agentState;
@@ -673,6 +697,11 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     private enqueueMessage(content: unknown, invalidate: boolean = true) {
+        if (this.iscpTee) {
+            // ISCP mode: the daemon event log is the only history sink.
+            this.iscpTee.enqueue(content);
+            return;
+        }
         const encrypted = encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, content));
         this.pendingOutbox.push({
             content: encrypted,

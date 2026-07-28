@@ -58,6 +58,23 @@ export default defineConfig({
             {
                 extends: true,
                 test: {
+                    name: 'integration-iscp',
+                    fileParallelism: false,
+                    hookTimeout: 120_000,
+                    maxWorkers: 1,
+                    minWorkers: 1,
+                    testTimeout: 180_000,
+                    include: [
+                        'src/iscp/harness.integration.test.ts',
+                    ],
+                    sequence: {
+                        groupOrder: 2,
+                    },
+                },
+            },
+            {
+                extends: true,
+                test: {
                     name: 'integration-authenticated',
                     fileParallelism: false,
                     hookTimeout: 120_000,

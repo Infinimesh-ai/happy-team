@@ -1,0 +1,86 @@
+{
+  "bundle": {
+    "access_credential": {
+      "type": "access"
+    },
+    "bundle_id": "bundle-vector-1",
+    "expires_at": "2026-01-02T04:04:05Z",
+    "issued_at": "2026-01-02T03:04:05Z",
+    "issued_to_device_id": "enrollee-watch",
+    "issued_to_public_key_thumbprint": "rKiK-_PqbpdCTELU-KzFyNXmkhaKd2eLlgl_9BDPa8Q",
+    "refresh_credential_wrapped": "d3JhcHBlZC1yZWZyZXNo",
+    "relay_descriptor": {
+      "type": "relay"
+    },
+    "signature": {
+      "alg": "Ed25519",
+      "kid": "X6lvphgbCzbyeV1eDvl4ZkE0hnEV4hkihpzu7AESXJs",
+      "value": "WKimBB5Ckywum_Deown_B4V4wvz5cScw1TXbPJ_qkCI0nTQOobgAZn0dFYfp2juS69NbQwbz--VnjvhRUqOfCw"
+    },
+    "trust_grant": {
+      "type": "grant"
+    },
+    "trust_root_descriptor": {
+      "type": "trust"
+    },
+    "type": "iscp.provisioning.bundle.v2"
+  },
+  "enrollee": {
+    "identity": {
+      "created_at": "2026-01-02T03:04:05Z",
+      "device_id": "enrollee-watch",
+      "domain_id": "local",
+      "public_key": {
+        "kid": "rKiK-_PqbpdCTELU-KzFyNXmkhaKd2eLlgl_9BDPa8Q",
+        "kty": "Ed25519",
+        "public": "msds7DUXs8_luYZFZ_hfgwvqlWhCfzjjZP_oG177tyM",
+        "use": "identity-signature"
+      },
+      "type": "iscp.device.identity.v2"
+    },
+    "seed_hex": "190717e1fe6d458fd0bf9309539bfa7ee486d587326bc8ba044066cdcd27b8cb"
+  },
+  "issuer": {
+    "identity": {
+      "created_at": "2026-01-02T03:04:05Z",
+      "device_id": "issuer-phone",
+      "domain_id": "local",
+      "public_key": {
+        "kid": "X6lvphgbCzbyeV1eDvl4ZkE0hnEV4hkihpzu7AESXJs",
+        "kty": "Ed25519",
+        "public": "tHWFjArio3mmu92Aax8uf_kJohZKIVVLJHdl_lBRzbE",
+        "use": "identity-signature"
+      },
+      "type": "iscp.device.identity.v2"
+    },
+    "seed_hex": "52c8ea707ce1c1f1245c9f1936cd98a04fe9a286f905496eac4047a72dec07c0"
+  },
+  "local_channel": {
+    "a_priv_hex": "c5b25357da3660a3230551852a5d7b96bc6c41226b60018344b1bb9cfdd9bd28",
+    "b_priv_hex": "0a7c04169017a5c0eef2b6e36bf3408d80c6d29c8e38ba2458d88af297efa38e",
+    "key_hex": "d617ddd7a4fdbd6d20c8d6e5809b558c81450c970d43294e12b960ae2a23b4c8",
+    "mac_hex": "8b3e1134dcfb64cf155e1b0cd53a09fae10fca80a1dc18034911ff778dac41a5",
+    "oob_secret_hex": "6f6f622d313233343536"
+  },
+  "meta": {
+    "generator": "packages/iscp/conformance-gen",
+    "note": "deterministic fixtures; private keys here are shared test material, not credentials",
+    "pin": "413d767bd8b47a8c6b7430115bf60dc283aebbc0"
+  },
+  "ticket": {
+    "domain_id": "local",
+    "expires_at": "2026-01-02T03:14:05Z",
+    "issued_at": "2026-01-02T03:04:05Z",
+    "max_uses": 1,
+    "relay_id": "relay-local",
+    "signature": {
+      "alg": "Ed25519",
+      "kid": "X6lvphgbCzbyeV1eDvl4ZkE0hnEV4hkihpzu7AESXJs",
+      "value": "lvu_gqDf4hIC0HHQIDYr3FrXMVbj5fgBg4rGKJ80w0hEZFslJd7TCtRkVn90HebO6MPdi7Jj40YPn9vo-x7yDQ"
+    },
+    "ticket_id": "ticket-vector-1",
+    "trust_root_id": "trust-local",
+    "type": "iscp.pairing_ticket.v2"
+  },
+  "verify_at": "2026-01-02T03:05:05Z"
+}

@@ -1,0 +1,23 @@
+{
+  "cases": [
+    {
+      "name": "envelopes",
+      "method": "POST",
+      "path": "/v2/relay/envelopes",
+      "token": "access-token-vector-1",
+      "challenge": "iscp/v2/relay/access-proof\u0000POST\u0000/v2/relay/envelopes\u0000Cu3S-FhQWRhWCVvnfSYHMODoYpVu8a_MtlRloI50I3Y"
+    },
+    {
+      "name": "other-path",
+      "method": "GET",
+      "path": "/v2/relay/connect",
+      "token": "tok",
+      "challenge": "iscp/v2/relay/access-proof\u0000GET\u0000/v2/relay/connect\u0000GnZ0607njffhrEOak8P6jjyUV4TU3sn9jjARc4svHWI"
+    }
+  ],
+  "meta": {
+    "generator": "packages/iscp/conformance-gen",
+    "note": "deterministic fixtures; private keys here are shared test material, not credentials",
+    "pin": "413d767bd8b47a8c6b7430115bf60dc283aebbc0"
+  }
+}
