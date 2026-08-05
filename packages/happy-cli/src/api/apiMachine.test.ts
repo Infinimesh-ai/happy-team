@@ -245,6 +245,37 @@ describe('team agent env application', () => {
         expect(envFile).not.toContain('personal-oauth-token');
     });
 
+    it('preserves env keys outside clearKeys when applying a partial update', async () => {
+        const home = await mkdtemp(path.join(tmpdir(), 'happy-team-partial-env-'));
+        tempDirs.push(home);
+        process.env.HOME = home;
+
+        await mkdir(path.join(home, '.happy-team'), { recursive: true });
+        await writeFile(path.join(home, '.happy-team', 'agent.env'), [
+            '# Managed by Happy Team Edition. Rewrite through the team UI.',
+            "ANTHROPIC_API_KEY='existing-anthropic-key'",
+            "OPENAI_API_KEY='existing-openai-key'",
+            '',
+        ].join('\n'));
+
+        // Server updates only Claude (e.g. the Codex company key is not
+        // configured server-side) — the Codex key must survive the rewrite.
+        await applyTeamAgentEnv({
+            env: { ANTHROPIC_API_KEY: 'new-anthropic-key' },
+            clearKeys: ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL'],
+            restart: false,
+        }, () => {
+            throw new Error('restart should not be requested');
+        });
+
+        expect(process.env.ANTHROPIC_API_KEY).toBe('new-anthropic-key');
+        expect(process.env.OPENAI_API_KEY).toBe('existing-openai-key');
+
+        const envFile = await readFile(path.join(home, '.happy-team', 'agent.env'), 'utf8');
+        expect(envFile).toContain("ANTHROPIC_API_KEY='new-anthropic-key'");
+        expect(envFile).toContain("OPENAI_API_KEY='existing-openai-key'");
+    });
+
     it('clears stale Claude OAuth tokens when applying Company API mode through daemon RPC', async () => {
         const home = await mkdtemp(path.join(tmpdir(), 'happy-team-company-env-'));
         tempDirs.push(home);

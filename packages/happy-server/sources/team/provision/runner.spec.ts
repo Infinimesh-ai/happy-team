@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 import { describe, expect, it } from "vitest";
-import { buildInstallCliCommand, buildStartDaemonCommand } from "@/team/provision/runner";
+import { buildInstallCliCommand, buildInstallNodeCommand, buildStartDaemonCommand } from "@/team/provision/runner";
 
 describe("provision daemon startup script", () => {
     const serverUrl = "https://happy.example.com/api?x=1&y=2";
@@ -38,6 +38,23 @@ describe("provision daemon startup script", () => {
         expect(command).not.toContain("TEAM_OPENAI_API_KEY");
         expect(command).not.toContain("ANTHROPIC_API_KEY=");
         expect(command).not.toContain("OPENAI_API_KEY=");
+    });
+
+    it("replaces the Node binary through a temp download and atomic rename", () => {
+        const command = buildInstallNodeCommand(serverUrl);
+        const syntax = spawnSync("sh", ["-n"], {
+            input: `set -eu\n${command}\n`,
+            encoding: "utf8",
+        });
+
+        expect(syntax.status).toBe(0);
+        expect(syntax.stderr).toBe("");
+        // Writing the running binary in place fails with ETXTBSY when the
+        // daemon is already up (re-provisioning); rename over it is atomic.
+        expect(command).toContain("\"$HOME/.happy-team/bin/node.download\"");
+        expect(command).toContain("chmod 700 \"$HOME/.happy-team/bin/node.download\"");
+        expect(command).toContain("mv -f \"$HOME/.happy-team/bin/node.download\" \"$HOME/.happy-team/bin/node\"");
+        expect(command).not.toMatch(/curl[^\n]*-o "\$HOME\/\.happy-team\/bin\/node"/);
     });
 
     it("uses the selected Node runtime when installing the CLI", () => {
