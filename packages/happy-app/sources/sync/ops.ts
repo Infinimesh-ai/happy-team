@@ -813,7 +813,7 @@ export async function sessionAnswerQuestion(
     kind: string = 'form',
 ): Promise<void> {
     const reply: SessionCommunicationReply = { id, kind, status: 'answered', answers };
-    await apiSocket.sessionRPC(sessionId, 'communication', reply);
+    await sessionRPC(sessionId, 'communication', reply);
 }
 
 /**
@@ -825,7 +825,7 @@ export async function sessionCancelCommunication(
     kind: string = 'form',
 ): Promise<void> {
     const reply: SessionCommunicationReply = { id, kind, status: 'cancelled' };
-    await apiSocket.sessionRPC(sessionId, 'communication', reply);
+    await sessionRPC(sessionId, 'communication', reply);
 }
 
 /**
