@@ -41,7 +41,7 @@ graph TB
 ## At a glance
 - Runtime: Node.js + Fastify for HTTP, Socket.IO for realtime.
 - Database: Postgres via Prisma.
-- Cache/bus: Redis client is initialized (currently only pinged).
+- Cache/bus: Redis backs the Socket.IO streams adapter for cross-replica broadcast and RPC routing (see [multi-process.md](multi-process.md)).
 - Blob storage: S3-compatible (MinIO) for uploaded assets.
 - Crypto: privacy-kit for auth tokens and encrypted service tokens.
 - Metrics: Prometheus-style `/metrics` server + per-request HTTP metrics.
@@ -117,6 +117,7 @@ graph LR
             R8[userRoutes / feedRoutes]
             R9[pushRoutes]
             R10[connectRoutes / voiceRoutes]
+            R11[v3SessionRoutes / attachmentRoutes]
         end
     end
 
@@ -137,6 +138,8 @@ HTTP routes are organized by domain:
 - Social + feed (`userRoutes`, `feedRoutes`)
 - Push tokens (`pushRoutes`)
 - Integrations (`connectRoutes`, `voiceRoutes`)
+- Reliable v3 messages (`v3SessionRoutes`)
+- Attachments (`attachmentRoutes`)
 - Version checks (`versionRoutes`)
 - Dev-only logging (`devRoutes`)
 
@@ -336,7 +339,7 @@ The server uses S3-compatible storage for user assets (e.g., avatars):
 - Public URLs are derived from `S3_PUBLIC_URL`.
 
 ### Redis
-A Redis client is initialized in `main.ts` and pinged at startup. It can be expanded for caching or pub/sub if needed.
+A Redis client is initialized in `main.ts` and pinged at startup. When `REDIS_URL` is set, `socket.ts` attaches the `@socket.io/redis-streams-adapter`, making Redis load-bearing for cross-replica broadcast and RPC routing — see [multi-process.md](multi-process.md).
 
 ## Data confidentiality model
 

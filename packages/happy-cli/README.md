@@ -115,9 +115,9 @@ The token is minted by a Team admin, is valid for 15 minutes and can be used onc
 
 Normally you never run this by hand: the admin console provisions machines over SSH and invokes it for you. Run it manually only when following a **Manual Command** for a host SSH cannot reach. Add `--force` to re-enroll a machine that already has credentials; it stops the daemon and clears the existing credentials and machine ID first.
 
-### Cloud Agent (`cloud-agent` branch)
+### Cloud Agent
 
-On the `cloud-agent` branch the daemon also executes [Cloud Agent](../../docs/cloud-agent.md) tasks: it prepares a per-task git worktree, mounts the team's skills, runs the project's validation gate, and pushes the finished branch as a pull request. That work arrives as machine RPCs (`task-prepare-worktree`, `task-check-artifacts`, `task-read-artifact` / `task-write-artifact`, `task-run-validation`, `task-deliver`, `task-cleanup`) — there are no user-facing commands for it.
+The daemon also executes [Cloud Agent](../../docs/cloud-agent.md) tasks: it prepares a per-task git worktree, mounts the team's skills, runs the project's validation gate, and pushes the finished branch as a pull request. That work arrives as machine RPCs (`task-prepare-worktree`, `task-check-artifacts`, `task-read-artifact` / `task-write-artifact`, `task-run-validation`, `task-deliver`, `task-cleanup`) — there are no user-facing commands for it.
 
 Two stdio MCP servers are exposed to the agent running inside a task, and neither is meant to be typed by a human:
 
@@ -176,10 +176,10 @@ happy sandbox disable
 ### Building from source
 
 ```bash
-git clone https://github.com/slopus/happy
-cd happy-cli
-yarn install
-yarn workspace happy cli --help
+git clone https://github.com/Infinimesh-ai/happy-team.git
+cd happy-team
+pnpm install
+pnpm --filter happy build
 ```
 
 ## Requirements

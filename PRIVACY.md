@@ -2,6 +2,15 @@
 
 **Last Updated: July 23, 2026**
 
+> **Team Edition fork note.** This policy is inherited from base Happy and describes the stock
+> product, where only the user holds the decryption key. **Team Edition deployments differ in one
+> deliberate way: the company's own server generates and escrows each member's secret key**, so the
+> "we have no ability to decrypt" statements below do not hold between a member and their company's
+> server operator. The operator of a Team Edition deployment — not the authors of this repository —
+> is the data controller for that deployment. See
+> [docs/team-edition.md § Security model](docs/team-edition.md#security-model) for exactly what the
+> server can and cannot read.
+
 ## Overview
 
 Happy Coder is committed to protecting your privacy. This policy explains how we handle data in our zero-knowledge encrypted synchronization features and in the optional voice feature, which has a separate data flow described below.

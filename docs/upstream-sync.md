@@ -61,7 +61,7 @@ pnpm --filter happy-app typecheck
 ```
 
 ```bash
-pnpm --filter happy-server test -- sources/team
+pnpm --filter happy-server exec vitest run sources/team
 ```
 
 ```bash

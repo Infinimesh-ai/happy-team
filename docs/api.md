@@ -45,6 +45,14 @@ Auth flows:
 - `POST /v1/sessions` (create or load by `tag`)
 - `GET /v1/sessions/:sessionId/messages`
 - `DELETE /v1/sessions/:sessionId`
+- `GET /v3/sessions/:sessionId/messages` (reliable HTTP messages API)
+- `POST /v3/sessions/:sessionId/messages`
+
+### Attachments
+- `POST /v1/sessions/:sessionId/attachments/request-upload`
+- `PUT /v1/sessions/:sessionId/attachments/:attachmentFile`
+- `POST /v1/sessions/:sessionId/attachments/request-download`
+- `GET /v1/sessions/:sessionId/attachments/:attachmentFile`
 
 ### Machines
 - `POST /v1/machines` (create or load by id)
@@ -100,7 +108,8 @@ Auth flows:
 
 ### Version and voice
 - `POST /v1/version`
-- `POST /v1/voice/token`
+- `POST /v1/voice/conversations`
+- `GET /v1/voice/usage`
 
 ### Dev-only
 - `POST /logs-combined-from-cli-and-mobile-for-simple-ai-debugging` (only if enabled)

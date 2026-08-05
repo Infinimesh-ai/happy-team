@@ -77,9 +77,9 @@ export const TASK_ARTIFACTS = {
 export const DELIVER_STAGE = "deliver";
 
 /**
- * Placeholder tokens accepted by {@link renderStagePrompt}. Kept explicit so a
- * template author references exactly these and a typo surfaces as a leftover
- * `{{...}}` rather than a silent empty string.
+ * Placeholder tokens accepted by {@link renderStagePrompt}. Unknown tokens
+ * render as empty strings, so this interface is the single source of truth for
+ * what a template author may reference.
  */
 export interface StagePromptVariables {
     goalPrompt: string;

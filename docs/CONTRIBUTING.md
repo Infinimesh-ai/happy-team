@@ -54,8 +54,8 @@ Every issue should start with a **one-paragraph summary** of the problem. Don't 
 ### Getting Started
 
 ```bash
-git clone https://github.com/slopus/happy.git
-cd happy
+git clone https://github.com/Infinimesh-ai/happy-team.git
+cd happy-team
 pnpm install
 ```
 
@@ -125,7 +125,7 @@ This is a monorepo. The packages you'll touch most:
 - **happy-server** — Backend for encrypted sync
 - **happy-wire** — Shared session protocol schemas and types
 
-Also in the workspace: **iscp** (ISCP v2 client for dual-stack networking), **codium** (experimental Electron desktop client), and **happy-app-logs** (local log collector for app development).
+Also in the workspace: **iscp** (ISCP v2 client for dual-stack networking), **codium** (experimental Electron desktop client), **happy-app-logs** (local log collector for app development), and **happy-server-self-host** (standalone publishing wrapper for the server — not the dev server; use `--filter happy-server` for that).
 
 For architecture details, check the [docs/](.) folder or ask Happy itself — it knows how the project is set up.
 

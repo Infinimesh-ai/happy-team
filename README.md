@@ -26,7 +26,7 @@ Happy is a mobile and web client for Claude Code, Codex and other coding agents 
 
 **Team Edition turns that into something a company can run for its employees.** One `docker compose up -d` on a company server; admins create members with an email and a password; admins point the console at a member's machine over SSH and it comes online a few minutes later with the agents already authenticated. No member ever handles a key, a token, or an install command.
 
-**Cloud Agent is what happens next.** With machines online, a member describes a job in one sentence from the web or their phone; a multi-stage agent pipeline runs it in an isolated git worktree on their own machine and delivers a pull request. It lives on the [`cloud-agent`](#cloud-agent) branch.
+**Cloud Agent is what happens next.** With machines online, a member describes a job in one sentence from the web or their phone; a multi-stage agent pipeline runs it in an isolated git worktree on their own machine and delivers a pull request. See [Cloud Agent](#cloud-agent).
 
 This README documents this fork. Anything not described here behaves like [upstream `slopus/happy`](https://github.com/slopus/happy).
 
@@ -53,7 +53,7 @@ This repo is two forks deep. Knowing which layer a feature came from tells you w
 | Agent credentials | Each user logs into Claude/Codex themselves | Company API key injected by default; members can opt into personal OAuth per agent |
 | Administration | — | Members, machines, provisioning jobs, SSH credentials, audit log, deployment preflight |
 | Target machine requirements | Node, network access, manual setup | No root, no public internet — only inbound SSH from the server and outbound reach to the server |
-| Running work | You drive each session yourself | Also: describe a job in one sentence, get a pull request — [Cloud Agent](#cloud-agent), on a branch |
+| Running work | You drive each session yourself | Also: describe a job in one sentence, get a pull request — [Cloud Agent](#cloud-agent) |
 
 ### 1. Self-hosted deployment
 
@@ -98,7 +98,7 @@ Deployment Preflight (`GET /v1/team/admin/preflight`) answers "will provisioning
 
 ## Cloud Agent
 
-> On the **`cloud-agent`** branch, not merged into `main`. Code-complete with tests green; every milestone still carries an owner end-to-end acceptance step. See [status](#status-and-known-limits).
+> Merged into `main` (2026-08-04). Code-complete with all automated tests green; every milestone still carries an owner end-to-end acceptance step, scheduled as part of initial rollout testing. See [status](#status-and-known-limits).
 
 Team Edition ends with a machine that is online and authenticated. Cloud Agent is what runs on it: a member writes one sentence in **Settings → Tasks**, picks a machine, a repository and a template, and a multi-stage agent pipeline executes it inside an isolated git worktree, ending in a pull request.
 
@@ -229,9 +229,9 @@ Milestones M0–M3 are implemented and were accepted against a live compose stac
 
 Full acceptance log and the reasoning behind each decision: [docs/plans/team-edition.md](docs/plans/team-edition.md).
 
-### Cloud Agent (`cloud-agent` branch)
+### Cloud Agent (merged into `main` 2026-08-04)
 
-Milestones C0–C4 are code-complete with unit and integration tests green, and **none has been accepted end to end** — each carries an owner acceptance step needing a real machine, a real browser and real GitHub/GitLab. Don't run this in production yet.
+Milestones C0–C4 are code-complete with unit and integration tests green, and **none has been accepted end to end yet** — each carries an owner acceptance step needing a real machine, a real browser and real GitHub/GitLab, planned as the first round of rollout testing. Treat it as pre-production until those steps are checked off in the [progress tracker](docs/plans/cloud-agent-tasks-progress.md).
 
 - **Proven without a real machine:** the whole spine against real git — worktree creation on a local bare origin, a simulated agent committing `pr.md`, session exit, artifact validation, a real push, delivery, `SUCCEEDED` — plus the negative case where a missing `pr.md` blocks the push. Untested is narrow: encrypted transport to a live daemon, real `gh`/`glab` calls, real agents calling the MCP tools, and the browser UI.
 - **Implemented but not wired to any caller:** pre-distribution skills validation (an unfit ref isn't refused automatically), task-prerequisite detection (a machine missing `gh` fails at delivery rather than warning at provisioning), telemetry aggregation (no route returns it), skills-repo scaffolding, and periodic curator scheduling (a curator run is created like any other task).
@@ -268,6 +268,8 @@ Details: [docs/network-dual-stack/](docs/network-dual-stack/), and the parent fo
 
 Happy is by [slopus/happy](https://github.com/slopus/happy) and its contributors — all credit for the product goes to them. Please don't file this fork's issues on their tracker; open them [here](https://github.com/Infinimesh-ai/happy-team/issues). Their [Discord](https://discord.gg/fX9WBAhyfD) is the right place for questions about Happy itself.
 
-## License
+## Security, privacy and license
+
+Vulnerability reports go through [GitHub private reporting](https://github.com/Infinimesh-ai/happy-team/security/advisories/new) — see [SECURITY.md](SECURITY.md) for scope and the documented design trade-offs. The privacy policy is [PRIVACY.md](PRIVACY.md).
 
 MIT License — see [LICENSE](LICENSE) for details.

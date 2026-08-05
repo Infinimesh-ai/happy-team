@@ -78,7 +78,7 @@ argon2id via the pure-JS `@noble/hashes` (chosen over a native argon2 binding to
 
 ## Data model
 
-Six tables added under `packages/happy-server/prisma/schema.prisma`. `Account`, `Machine`, `Session` and everything else upstream owns are unmodified.
+Six tables added under `packages/happy-server/prisma/schema.prisma` for Team Edition proper; Cloud Agent adds three more (`TeamTask`, `TeamTaskStageRun`, `TeamTaskTransition` — see [cloud-agent.md](cloud-agent.md#data-model)). `Account`, `Machine`, `Session` and everything else upstream owns are unmodified.
 
 | Model | Purpose | Notes |
 | --- | --- | --- |
@@ -89,11 +89,11 @@ Six tables added under `packages/happy-server/prisma/schema.prisma`. `Account`, 
 | `TeamAgentAuthUpdate` | Per-machine agent-auth application state | Unique on `(teamUserId, machineId)`; holds target modes and `PENDING`/`APPLIED`/`FAILED` — never the generated `agent.env` or any key |
 | `TeamAuditLog` | Append-only audit trail | `actorId` nullable (failed logins have no actor; the email goes in `detail`) |
 
-Enums: `TeamRole`, `TeamUserStatus`, `SshAuthType`, `AgentAuthMode`, `ProvisionStatus`, `TeamAgentAuthUpdateStatus`.
+Enums: `TeamRole`, `TeamUserStatus`, `SshAuthType`, `AgentAuthMode`, `ProvisionStatus`, `TeamAgentAuthUpdateStatus`; Cloud Agent adds `TaskMode`, `TaskStatus`, `StageRunStatus`.
 
 ## HTTP API
 
-All under `/v1/team`. Everything except the artifact routes and `enroll` requires a Happy JWT plus an `ACTIVE` `TeamUser`; `admin/*` additionally requires `role = ADMIN`.
+All under `/v1/team`. Everything except `auth/login`, the artifact routes and `enroll` requires a Happy JWT plus an `ACTIVE` `TeamUser`; `admin/*` additionally requires `role = ADMIN`.
 
 ### Public / bootstrap
 
@@ -268,7 +268,7 @@ A single `PATCH /v1/team/admin/users/:id` can emit several of the administration
 Server Team code is covered by Vitest, following this repo's convention of real calls over mocks — the SSH executor is tested against a local sshd container rather than a stubbed `ssh2`.
 
 ```bash
-pnpm --filter happy-server test -- sources/team
+pnpm --filter happy-server exec vitest run sources/team
 ```
 
 ```bash

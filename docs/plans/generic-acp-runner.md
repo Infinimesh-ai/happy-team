@@ -1,5 +1,7 @@
 # Generic ACP Runner
 
+> **Status: landed.** `packages/happy-cli/src/agent/acp/` implements this with tests. The checklists below were never ticked — read them as the executed plan, not open backlog.
+
 ## Overview
 
 Create a clean, generic ACP agent runner that starts any ACP-compatible CLI from a command + args and communicates via ACP protocol. The runner maps ACP events to the new session protocol (envelopes) through a stateful handler class. No vendor-specific hacks. No credentials/env/API key resolution. No session restarts. No conversation history. Just: command in, session protocol out.

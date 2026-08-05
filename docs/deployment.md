@@ -5,7 +5,7 @@ This document describes how to deploy the Happy backend (`packages/happy-server`
 ## Runtime overview
 - **App server:** Node.js running `tsx ./sources/main.ts` (Fastify + Socket.IO).
 - **Database:** Postgres via Prisma.
-- **Cache:** Redis (currently used for connectivity and future expansion).
+- **Cache/bus:** Redis — required for multi-replica Socket.IO fan-out and cross-replica RPC routing via the Redis streams adapter (see [multi-process.md](multi-process.md)).
 - **Object storage:** S3-compatible storage for user-uploaded assets (MinIO works).
 - **Metrics:** Optional Prometheus `/metrics` server on a separate port.
 
@@ -17,7 +17,7 @@ This document describes how to deploy the Happy backend (`packages/happy-server`
 2. **Redis**
    - Required by startup (`redis.ping()` is called).
    - Configure via `REDIS_URL`.
-   - Managed by this repo: `packages/happy-server/deploy/happy-redis.yaml` (StatefulSet + redis-exporter sidecar).
+   - Managed by this repo: the Redis StatefulSet + redis-exporter sidecar inside `packages/happy-server/deploy/handy.yaml`.
 
 3. **S3-compatible storage**
    - Used for avatars and other uploaded assets.
@@ -57,8 +57,7 @@ Key notes:
 
 ## Kubernetes manifests
 Example manifests live in `packages/happy-server/deploy`:
-- `handy.yaml`: Deployment + Service + ExternalSecrets for the server.
-- `happy-redis.yaml`: Redis StatefulSet + Service + ConfigMap.
+- `handy.yaml`: Deployment + Service + ExternalSecrets for the server, plus the Redis StatefulSet + Service + ConfigMap.
 
 The deployment config expects:
 - Prometheus scraping annotations on port `9090`.

@@ -4,7 +4,7 @@ Team Edition gets a member's machine online and authenticated. Cloud Agent is wh
 
 This is the reference. The implementation plan and its milestone-by-milestone acceptance log are [plans/cloud-agent-tasks.md](plans/cloud-agent-tasks.md) and [plans/cloud-agent-tasks-progress.md](plans/cloud-agent-tasks-progress.md) (zh). Architectural background — how members, machines and agent credentials got there in the first place — is [team-edition.md](team-edition.md).
 
-> **Branch status.** Cloud Agent lives on the `cloud-agent` branch and is **not merged into `main`**. Every milestone (C0–C4) is code-complete with tests green; each one still carries an owner end-to-end acceptance step that requires a real machine, a real browser and real GitHub/GitLab. See [Status and known limits](#status-and-known-limits) before treating any of this as production-ready.
+> **Status.** Merged into `main` on 2026-08-04. Every milestone (C0–C4) is code-complete with all automated tests green; each one still carries an owner end-to-end acceptance step that requires a real machine, a real browser and real GitHub/GitLab, scheduled as initial rollout testing. See [Status and known limits](#status-and-known-limits) before treating any of this as production-ready.
 
 Paths and field names reflect the current implementation. The code is canonical — when this document and `packages/happy-server/sources/team/tasks/` disagree, the code wins.
 
@@ -109,15 +109,14 @@ PENDING ─► PREPARING ─► RUNNING ─┬─► WAITING_APPROVAL ─► RUN
                                  └─► CANCELLED      (user)
 ```
 
-### Three-signal completion
+### Completion: two triggers, one gate
 
-A stage is complete when the earliest of three signals arrives, and the other two become no-ops — completion is claimed atomically per `TeamTaskStageRun`:
+Completion is claimed atomically per `TeamTaskStageRun`. Two triggers can claim it — whichever arrives first wins, the other becomes a no-op:
 
-1. **Intent** — the agent calls `complete_stage` over MCP.
-2. **Session exit** — the stage session ends (hooked into the existing `session-end` handler).
-3. **Artifacts** — the stage's `expectedArtifacts` exist in the worktree *and* parse against the [contract](#artifact-contract).
+1. **Intent** — the agent calls `complete_stage` over MCP. The clean path.
+2. **Session exit** — the stage session ends (hooked into the existing `session-end` handler). The fallback for an agent that crashes, is killed, or simply never calls the tool — a task must not hang because an agent forgot its manners.
 
-Signal 1 is the clean path. Signals 2 and 3 exist because an agent may crash, be killed, or simply not call the tool — a task must not hang because an agent forgot its manners.
+Either trigger then passes through the same **artifact gate**: the stage's `expectedArtifacts` must exist in the worktree *and* parse against the [contract](#artifact-contract). Missing or malformed artifacts do not park the stage — they fail the task. Nothing polls artifacts independently; the gate only runs when one of the two triggers fires.
 
 ### Approval
 
@@ -172,8 +171,8 @@ Completion is not "the file exists" — it is "the file parses and carries its r
 | Artifact | Required shape |
 | --- | --- |
 | `.happy-task/plan.md` | frontmatter `goal:` + at least one `- [ ]` checklist item |
-| `.happy-task/findings.md` | frontmatter `verdict:` + at least one bullet |
-| `.happy-task/pr.md` | title line, blank line, non-empty body |
+| `.happy-task/findings.md` | frontmatter `verdict:` of exactly `passed` or `failed`; at least one bullet required only when `failed` |
+| `.happy-task/pr.md` | a title — frontmatter `title:` or the first non-empty body line |
 
 If the daemon cannot read the file at all, completion falls back to existence — a read failure should not be indistinguishable from a malformed artifact.
 
@@ -191,7 +190,7 @@ No skills clone means `skillsCommit: null` and a clean no-op — tasks still run
 
 The contract that makes this safe to distribute is in [`skillsContract.ts`](../packages/happy-server/sources/team/tasks/skillsContract.ts): `skills.yaml` must declare a supported `contractVersion` (currently `1`); every project `SKILL.md` must carry `repo:` and `validation:`; and every `SKILL.md` must stay under a 200-line budget, because an oversized skill is a token tax levied on every task the team runs.
 
-`happy skills-mcp` exposes the repo to agents as MCP tools — `get_skill` (read standards or a project skill by name) and `append_lesson` (append-only write to the lessons inbox, curated by a human later). A `scaffoldSkillsRepo` function generates a contract-valid skeleton for a team starting from an empty repository, but no command or tool currently calls it.
+`happy skills-mcp` exposes the repo to agents as MCP tools — `get_skill` (read standards or a project skill by name) and `append_lesson` (append-only write to the lessons inbox, curated by a human later). The subcommand ships, but worktree preparation currently registers only `task-mcp` in `.mcp.json`, so stage sessions cannot reach these tools yet (see [Status](#status-and-known-limits)). A `scaffoldSkillsRepo` function generates a contract-valid skeleton for a team starting from an empty repository, but no command or tool currently calls it.
 
 ## Validation gate
 
@@ -216,7 +215,7 @@ The reviewing agent therefore opens with the actual result already in context ra
 - The platform is detected from the origin remote host (`github` / `gitlab`); a self-hosted domain that carries neither string can be pinned with an explicit `platform` parameter.
 - Title and body come from `pr.md`; `gh pr create` or `glab mr create` opens the PR/MR and the resulting URL is written to `TeamTask.prUrl`.
 
-Work branches are named `happy/<user>/<slug>` and worktrees live at `<happyHomeDir>/worktrees/<taskId>`. Preparation is idempotent — an already-registered worktree is reused, which makes retries safe. `task-cleanup` retains the worktree by default and never touches the branch.
+Work branches are named `happy/<user>/<slug>-<suffix>` — the slug is truncated to 40 characters and the random suffix avoids collisions — and worktrees live at `<happyHomeDir>/worktrees/<taskId>`. Preparation is idempotent — an already-registered worktree is reused, which makes retries safe. `task-cleanup` retains the worktree by default and never touches the branch; note that nothing on the server invokes it today (see [Status](#status-and-known-limits)), so in practice worktrees are always retained.
 
 ## HTTP API
 
@@ -247,7 +246,7 @@ Registered by `registerTaskHandlers` at a single point in the CLI's machine API,
 | RPC | Effect |
 | --- | --- |
 | `task-prepare-worktree` | fetch, `git worktree add -b happy/…`, `.happy-task/`, skills injection, `.mcp.json` |
-| `task-check-artifacts` | Existence + contract validation of a stage's expected artifacts |
+| `task-check-artifacts` | Existence check for a stage's expected artifacts (contract validation happens server-side, reading each file over `task-read-artifact`) |
 | `task-read-artifact` / `task-write-artifact` | Plan review: read for display, write back an approved edit |
 | `task-run-validation` | Runs the project's validation gate in the worktree, returns real output |
 | `task-deliver` | Branch guards, push, platform detection, `gh`/`glab` |
@@ -274,7 +273,7 @@ Cloud Agent adds no *server* environment variables — task tokens are signed wi
 | `HAPPY_SKILLS_DIR` | machine | `<happyHomeDir>/team-skills` | Skills clone location (leading `~` expanded) |
 | `TEAM_SKILLS_REF` | machine | none | Branch or tag to sync the skills clone to before mounting — the gradual-rollout switch |
 
-These are injected per stage session and are not part of the task token: `HAPPY_TASK_ID`, `HAPPY_TASK_TOKEN`, `HAPPY_TASK_STAGE`, `HAPPY_TASK_PROMPT`, `HAPPY_TASK_PERMISSION_MODE`, `HAPPY_TASK_MODEL`. `happy task-mcp` resolves the server URL from the CLI's own configuration, falling back to `HAPPY_SERVER_URL` only as a development override — a production daemon does not export it.
+These are injected per stage session and are not part of the task token: `HAPPY_TASK_ID`, `HAPPY_TASK_TOKEN`, `HAPPY_TASK_STAGE`, `HAPPY_TASK_PROMPT`, `HAPPY_TASK_PERMISSION_MODE`, `HAPPY_TASK_MODEL`. `happy task-mcp` uses `HAPPY_SERVER_URL` when the environment sets it, and otherwise falls back to the CLI's own configured server URL — production daemons don't export the variable, so configuration is the normal path.
 
 ## Telemetry and the curator
 
@@ -311,6 +310,8 @@ Every milestone is code-complete with unit and integration tests green, and ever
 - `scaffoldSkillsRepo` — generates a contract-valid skills skeleton, but no command or MCP tool exposes it.
 - `computeTaskTelemetry` — no HTTP route returns it, so the aggregate report is not reachable from the admin console.
 - Curator scheduling — the `skills-curator` template exists and runs, but nothing schedules it periodically; a curator run is created like any other task.
+- `happy skills-mcp` registration — the subcommand ships, but preparation writes only `task-mcp` into the worktree `.mcp.json`, so stage agents cannot call `get_skill` / `append_lesson` yet.
+- `task-cleanup` — registered CLI-side, but the server's daemon gateway has no cleanup member and no call site; worktrees are retained because nothing ever asks for removal, not because a default was chosen at call time.
 
 **No admin view over tasks.** Every task route is owner-scoped, so an admin cannot list a team's tasks or approve a plan on behalf of an absent member — a supervised task whose owner is away stays parked until they return or someone cancels it as them.
 

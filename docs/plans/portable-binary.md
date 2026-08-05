@@ -1,5 +1,7 @@
 # Portable Single-Binary Distribution
 
+> **Status: landed.** Shipped as the `happy-server-self-host` standalone package (PGlite + Bun-compiled runtime). The checklists below were never ticked — read them as the executed plan, not open backlog.
+
 ## Overview
 Create a portable, self-contained distribution of happy-server as a single Bun-compiled binary. It runs without Redis (already has in-memory event bus), uses PGlite for embedded PostgreSQL, and local filesystem for file storage. CLI provides `happy-server migrate` and `happy-server serve` commands.
 

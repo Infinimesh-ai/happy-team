@@ -3,7 +3,7 @@
 Internal documentation for this repository. It covers four layers, and knowing which one a document belongs to tells you how much to trust it for *this* fork:
 
 1. **Team Edition** — what this fork adds. Written here, current.
-2. **Cloud Agent** — agent task orchestration built on top of Team Edition. Written here, current, but living on the `cloud-agent` branch and not yet accepted end to end.
+2. **Cloud Agent** — agent task orchestration built on top of Team Edition. Written here, current; merged into `main` (2026-08-04) but not yet accepted end to end.
 3. **Parent fork** — ISCP dual-stack networking, inherited from [`Infinimesh-ai/happy`](https://github.com/Infinimesh-ai/happy).
 4. **Base Happy** — inherited from [`slopus/happy`](https://github.com/slopus/happy). Describes the stock product; still accurate except where Team Edition adds on top.
 
@@ -24,7 +24,7 @@ Team Edition touches `packages/happy-server/sources/team/`, `packages/happy-app/
 
 One-sentence tasks executed by a multi-stage agent pipeline in an isolated git worktree on the member's own machine, ending in a pull request. Built on Team Edition — it assumes members, machines and agent credentials already exist.
 
-**On the `cloud-agent` branch, not merged into `main`.** Code-complete with tests green; every milestone still carries an owner end-to-end acceptance step. Read the status section before relying on any of it.
+**Merged into `main` (2026-08-04).** Code-complete with all automated tests green; every milestone still carries an owner end-to-end acceptance step, scheduled as initial rollout testing. Read the status section before relying on any of it.
 
 - [cloud-agent.md](cloud-agent.md): Reference — templates, task state machine, task-control MCP, artifact and skills contracts, validation gate, delivery guards, API, security model, and the honest gap list.
 - [plans/cloud-agent-tasks.md](plans/cloud-agent-tasks.md): The blueprint and acceptance criteria — what to build, authoritative on scope (zh).
@@ -68,6 +68,9 @@ An opt-in transport that reaches the daemon over ISCP v2 instead of happy-server
 - [dev-environments.md](dev-environments.md): Local `environments/data/` workflow, lab-rat project provisioning, `env:cli` passthrough, daemon usage.
 - [CONTRIBUTING.md](CONTRIBUTING.md): Development workflow, build variants, native builds, local server.
 - [3dparty.md](3dparty.md): Third-party dependencies and licensing.
+- [../AGENTS.md](../AGENTS.md): Working conventions for coding agents in this repo (the sync-to-main workflow).
+- [../SECURITY.md](../SECURITY.md): Vulnerability reporting, scope, and the documented design trade-offs.
+- [../PRIVACY.md](../PRIVACY.md): Privacy policy.
 
 ## Notes, research and planning
 

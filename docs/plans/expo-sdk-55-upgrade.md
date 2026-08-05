@@ -1,6 +1,6 @@
 # Expo SDK 55 Upgrade
 
-## Status: Next native submission
+## Status: Landed — package.json is on Expo ~55.0.8; this document is the upgrade plan as executed
 
 Current: SDK 54 / RN 0.81.4 / React 19.1. Last SDK 54 builds submitted 2026-03-22.
 Target: SDK 55 / RN 0.83 / React 19.2.
