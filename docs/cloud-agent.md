@@ -239,6 +239,17 @@ Task audit actions, filterable in the admin audit view: `team.task.created`, `.p
 
 Push notifications reuse the existing session-event channel (so the "suppress when active" behavior is inherited) and deep-link to the current stage session: `stage_started`, `approval_needed`, `task_escalated`, `task_delivered`, `task_failed`, `task_cancelled`. A user-initiated cancel does not notify — they just did it.
 
+### External assistant MCP
+
+The same task surface is exposed as an MCP server at `POST /v1/team/mcp` (Streamable HTTP, stateless JSON — no SSE; `GET`/`DELETE` answer 405) so a member's personal assistant (e.g. SparkClaw) can follow progress, dispatch tasks and relay the owner's approval decisions. Code: `packages/happy-server/sources/team/mcp/`.
+
+- **Tools**: `list_machines` (ids + liveness only — metadata stays E2E-encrypted), `list_templates`, `list_tasks`, `get_task`, `get_task_plan`, `create_task`, `cancel_task`, `approve_plan`, `reject_plan`. Each is a thin wrapper over the task service above, so ownership scoping and state-machine rules are shared with the REST routes.
+- **Auth**: a personal MCP token minted at `POST /v1/team/mcp/token` (account auth). Stateless HMAC over `HANDY_MASTER_SECRET`, domain-separated from task tokens, 90-day expiry, bound to a digest of the member's current password hash — a password change revokes every issued token, and DISABLED members are rejected at resolve time.
+- **Audit**: issuance writes `team.mcp.token_issued`; every mutating tool call writes `team.mcp.call` with the tool name, so the admin audit view shows which actions came through an assistant.
+- **Approvals**: the `approve_plan`/`reject_plan` tool descriptions instruct the client to surface the decision to the human owner (e.g. SparkClaw's approval inbox) rather than decide autonomously.
+
+For decrypted session content — which this endpoint deliberately cannot serve — the assistant connects to the member-local bridge (`happy-agent mcp`, inherited from the parent fork) as a second MCP endpoint.
+
 ## Daemon RPCs
 
 Registered by `registerTaskHandlers` at a single point in the CLI's machine API, and carried over the same encrypted machine-RPC transport Team Edition already uses for agent-auth changes:
