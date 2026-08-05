@@ -250,6 +250,52 @@ The same task surface is exposed as an MCP server at `POST /v1/team/mcp` (Stream
 
 For decrypted session content — which this endpoint deliberately cannot serve — the assistant connects to the member-local bridge (`happy-agent mcp`, inherited from the parent fork) as a second MCP endpoint.
 
+### Member setup: connecting a personal assistant
+
+Two endpoints, two tokens. The task MCP is served by the company server; the bridge runs on the member's own machine.
+
+**1. Task MCP token** (company server, works from anywhere):
+
+```bash
+# Log in to get an account token, then mint a personal MCP token
+curl -s -X POST "$SERVER_URL/v1/team/auth/login" \
+  -H 'content-type: application/json' \
+  -d '{"email":"you@company.com","password":"..."}' | jq -r .happyToken
+```
+
+```bash
+curl -s -X POST "$SERVER_URL/v1/team/mcp/token" \
+  -H "authorization: Bearer $HAPPY_TOKEN" | jq -r .token
+```
+
+The MCP token lives 90 days and is bound to your current password — changing the password revokes it (mint a new one afterwards). Configure your assistant with endpoint `$SERVER_URL/v1/team/mcp` and this token as the bearer.
+
+**2. Local bridge** (session content — run on the machine that should serve it):
+
+```bash
+happy-agent auth login
+```
+
+```bash
+happy-agent mcp
+```
+
+`auth login` shows a QR code; approve it from the Happy app once. This is **required and not redundant** with the CLI's normal enrollment: the regular `happy` CLI credential (`access.key`) holds only the account's content *public* key in dataKey mode, which can encrypt new session keys but is cryptographically unable to decrypt other sessions' keys. The bridge needs the account master secret, which only the QR authorization delivers (stored at `~/.happy/agent.key`). Without this step, `happy-agent mcp` refuses to start with "Not authenticated".
+
+`happy-agent mcp` then prints the endpoint (`http://127.0.0.1:8790/` by default) and the bearer token location (`~/.happy/mcp.token`). It binds loopback only; if the assistant runs on a different machine, prefer an SSH tunnel (`ssh -L 8790:127.0.0.1:8790 member-machine`) over `--host` LAN exposure — the bridge serves decrypted session transcripts.
+
+Assistant-side configuration is then two MCP servers, e.g.:
+
+```yaml
+mcp_servers:
+  happy-tasks:
+    url: https://happy.example.com/v1/team/mcp
+    token: <personal MCP token>
+  happy-bridge:
+    url: http://127.0.0.1:8790/
+    token_file: ~/.happy/mcp.token
+```
+
 ## Daemon RPCs
 
 Registered by `registerTaskHandlers` at a single point in the CLI's machine API, and carried over the same encrypted machine-RPC transport Team Edition already uses for agent-auth changes:
