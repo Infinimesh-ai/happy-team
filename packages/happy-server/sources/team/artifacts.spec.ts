@@ -204,6 +204,12 @@ describe("team artifacts", () => {
         expect(command).toContain("enroll --server");
         expect(command).not.toContain("TEAM_ANTHROPIC_API_KEY");
         expect(command).not.toContain("TEAM_OPENAI_API_KEY");
+        // Re-running the manual command against a live daemon must not write
+        // busy binaries in place: node goes through a temp download + rename,
+        // the CLI tree through an extract-then-swap.
+        expect(command).toContain("mv -f \"$HOME/.happy-team/bin/node.download\" \"$HOME/.happy-team/bin/node\"");
+        expect(command).toContain("tar -xzf /tmp/happy-cli.tgz -C \"$HOME/.happy-team/cli.tmp\"");
+        expect(command).toContain("mv \"$HOME/.happy-team/cli.tmp\" \"$HOME/.happy-team/cli\"");
     });
 
     it("inspects CLI artifacts for Claude SDK native binaries", async () => {

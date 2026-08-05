@@ -4,7 +4,7 @@ import { getSocketServer } from "@/app/api/socket";
 import { db } from "@/storage/db";
 import { decodeBase64, encodeBase64, encryptRpcPayload, decryptRpcPayload, resolveMachineEncryption } from "@/team/machineRpc";
 
-const TEAM_AGENT_ENV_KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY"] as const;
+const TEAM_AGENT_ENV_KEYS = ["ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "OPENAI_API_KEY", "OPENAI_BASE_URL"] as const;
 type TeamAgentEnvKey = typeof TEAM_AGENT_ENV_KEYS[number];
 
 export type TeamAgentAuthSyncResult = {
@@ -29,13 +29,6 @@ export type TeamAgentAuthStatus = TeamAgentAuthSyncResult & {
         updatedAt: string | null;
     }>;
 };
-
-export class TeamAgentAuthConfigError extends Error {
-    constructor(message: string) {
-        super(message);
-        this.name = "TeamAgentAuthConfigError";
-    }
-}
 
 export async function getAgentAuthStatusForUser(teamUser: TeamUser): Promise<TeamAgentAuthStatus> {
     const machines = await db.machine.findMany({
@@ -202,12 +195,12 @@ async function applyAgentAuthToMachine(teamUser: TeamUser, machine: Machine): Pr
     }
 
     try {
-        const env = buildTeamAgentEnv(teamUser);
+        const { env, clearKeys, warnings } = buildTeamAgentEnv(teamUser);
         const encryption = resolveMachineEncryption(teamUser, machine);
         const method = `${machine.id}:team-apply-agent-env`;
         const encryptedParams = encodeBase64(encryptRpcPayload(encryption, {
             env,
-            clearKeys: TEAM_AGENT_ENV_KEYS,
+            clearKeys,
             restart: true,
         }));
         const rpc = await callRegisteredRpcMethod(io, teamUser.accountId, method, encryptedParams);
@@ -226,7 +219,12 @@ async function applyAgentAuthToMachine(teamUser: TeamUser, machine: Machine): Pr
             return markAgentAuthUpdate(teamUser.id, machine.id, TeamAgentAuthUpdateStatus.FAILED, response.error);
         }
 
-        return markAgentAuthUpdate(teamUser.id, machine.id, TeamAgentAuthUpdateStatus.APPLIED);
+        return markAgentAuthUpdate(
+            teamUser.id,
+            machine.id,
+            TeamAgentAuthUpdateStatus.APPLIED,
+            warnings.length > 0 ? `warning: ${warnings.join("; ")}` : undefined,
+        );
     } catch (error) {
         const message = error instanceof Error ? error.message : "Failed to apply agent auth";
         return markAgentAuthUpdate(teamUser.id, machine.id, TeamAgentAuthUpdateStatus.FAILED, message);
@@ -256,28 +254,50 @@ async function markAgentAuthUpdate(
     };
 }
 
-function buildTeamAgentEnv(teamUser: TeamUser): Partial<Record<TeamAgentEnvKey, string>> {
+// Builds the env update for one member as three per-agent decisions, so a
+// misconfigured company key for one agent never blocks (or wipes) the other:
+// - COMPANY_API with the key configured: clear + set that agent's vars;
+// - PERSONAL_OAUTH: clear that agent's vars so the company key is removed;
+// - COMPANY_API without the key: leave that agent's vars untouched and
+//   surface a warning instead of failing the whole apply.
+export function buildTeamAgentEnv(teamUser: Pick<TeamUser, "claudeAuthMode" | "codexAuthMode">): {
+    env: Partial<Record<TeamAgentEnvKey, string>>;
+    clearKeys: TeamAgentEnvKey[];
+    warnings: string[];
+} {
     const env: Partial<Record<TeamAgentEnvKey, string>> = {};
+    const clearKeys: TeamAgentEnvKey[] = [];
+    const warnings: string[] = [];
 
     if (teamUser.claudeAuthMode === AgentAuthMode.COMPANY_API) {
-        const key = requireCompanySecret("TEAM_ANTHROPIC_API_KEY");
-        env.ANTHROPIC_API_KEY = key;
-        if (process.env.TEAM_ANTHROPIC_BASE_URL) {
-            env.ANTHROPIC_BASE_URL = process.env.TEAM_ANTHROPIC_BASE_URL;
+        const key = process.env.TEAM_ANTHROPIC_API_KEY;
+        if (key) {
+            clearKeys.push("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL");
+            env.ANTHROPIC_API_KEY = key;
+            if (process.env.TEAM_ANTHROPIC_BASE_URL) {
+                env.ANTHROPIC_BASE_URL = process.env.TEAM_ANTHROPIC_BASE_URL;
+            }
+        } else {
+            warnings.push("TEAM_ANTHROPIC_API_KEY is not configured; Claude env left unchanged");
         }
+    } else {
+        clearKeys.push("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL");
     }
 
     if (teamUser.codexAuthMode === AgentAuthMode.COMPANY_API) {
-        env.OPENAI_API_KEY = requireCompanySecret("TEAM_OPENAI_API_KEY");
+        const key = process.env.TEAM_OPENAI_API_KEY;
+        if (key) {
+            clearKeys.push("OPENAI_API_KEY", "OPENAI_BASE_URL");
+            env.OPENAI_API_KEY = key;
+            if (process.env.TEAM_OPENAI_BASE_URL) {
+                env.OPENAI_BASE_URL = process.env.TEAM_OPENAI_BASE_URL;
+            }
+        } else {
+            warnings.push("TEAM_OPENAI_API_KEY is not configured; Codex env left unchanged");
+        }
+    } else {
+        clearKeys.push("OPENAI_API_KEY", "OPENAI_BASE_URL");
     }
 
-    return env;
-}
-
-function requireCompanySecret(name: "TEAM_ANTHROPIC_API_KEY" | "TEAM_OPENAI_API_KEY"): string {
-    const value = process.env[name];
-    if (!value) {
-        throw new TeamAgentAuthConfigError(`${name} is not configured`);
-    }
-    return value;
+    return { env, clearKeys, warnings };
 }

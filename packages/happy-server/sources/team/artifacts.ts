@@ -528,10 +528,15 @@ export function buildManualInstallCommand(input: {
         .join(" ");
     return [
         "mkdir -p \"$HOME/.happy-team/bin\" \"$HOME/.happy-team/cli\"",
-        buildNodeArtifactDownloadCommand(input.serverUrl, "\"$HOME/.happy-team/bin/node\""),
-        "chmod 700 \"$HOME/.happy-team/bin/node\"",
+        buildNodeArtifactDownloadCommand(input.serverUrl, "\"$HOME/.happy-team/bin/node.download\""),
+        "chmod 700 \"$HOME/.happy-team/bin/node.download\"",
+        "mv -f \"$HOME/.happy-team/bin/node.download\" \"$HOME/.happy-team/bin/node\"",
         downloadCommand(cliUrl, "/tmp/happy-cli.tgz"),
-        "tar -xzf /tmp/happy-cli.tgz -C \"$HOME/.happy-team/cli\"",
+        "rm -rf \"$HOME/.happy-team/cli.tmp\"",
+        "mkdir -p \"$HOME/.happy-team/cli.tmp\"",
+        "tar -xzf /tmp/happy-cli.tgz -C \"$HOME/.happy-team/cli.tmp\"",
+        "rm -rf \"$HOME/.happy-team/cli\"",
+        "mv \"$HOME/.happy-team/cli.tmp\" \"$HOME/.happy-team/cli\"",
         `printf '%s\\n' ${wrapperLines} > "$HOME/.happy-team/bin/happy"`,
         "chmod 700 \"$HOME/.happy-team/bin/happy\"",
         buildClaudeSdkCliWrapperCommand(),

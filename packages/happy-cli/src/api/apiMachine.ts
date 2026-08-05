@@ -36,7 +36,7 @@ import {
 } from '@/codex/codexThreadFork';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const TEAM_AGENT_ENV_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'OPENAI_API_KEY'] as const;
+const TEAM_AGENT_ENV_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'OPENAI_API_KEY', 'OPENAI_BASE_URL'] as const;
 const CLAUDE_CODE_OAUTH_TOKEN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN';
 
 interface ServerToDaemonEvents {
@@ -162,6 +162,26 @@ function formatTeamAgentEnvFile(env: Record<string, string>): string {
     return `${lines.join('\n')}\n`;
 }
 
+function parseTeamAgentEnvFile(content: string): Record<string, string> {
+    const env: Record<string, string> = {};
+    for (const line of content.split('\n')) {
+        const match = line.match(/^([A-Z0-9_]+)='(.*)'$/);
+        if (!match || !TEAM_AGENT_ENV_KEYS.includes(match[1] as any)) {
+            continue;
+        }
+        env[match[1]] = match[2].replaceAll("'\\''", "'");
+    }
+    return env;
+}
+
+async function readTeamAgentEnvFile(): Promise<Record<string, string>> {
+    try {
+        return parseTeamAgentEnvFile(await readFile(path.join(os.homedir(), '.happy-team', 'agent.env'), 'utf8'));
+    } catch {
+        return {};
+    }
+}
+
 async function writeTeamAgentEnvFile(env: Record<string, string>): Promise<string> {
     const dir = path.join(os.homedir(), '.happy-team');
     const file = path.join(dir, 'agent.env');
@@ -248,12 +268,23 @@ setTimeout(() => process.exit(0), 2500);
 export async function applyTeamAgentEnv(params: TeamApplyAgentEnvParams, requestShutdown: () => void) {
     const env = normalizeTeamAgentEnv(params);
     const clearKeys = normalizeClearKeys(params);
-    const path = await writeTeamAgentEnvFile(env);
-    await applyTeamAgentEnvToProcess(env, clearKeys);
+    // Keys outside clearKeys belong to an agent this update deliberately does
+    // not touch (e.g. its company key is not configured server-side), so
+    // preserve their current values instead of dropping them from the file.
+    const existing = await readTeamAgentEnvFile();
+    const merged: Record<string, string> = {};
+    for (const key of TEAM_AGENT_ENV_KEYS) {
+        if (!clearKeys.includes(key) && existing[key]) {
+            merged[key] = existing[key];
+        }
+    }
+    Object.assign(merged, env);
+    const envPath = await writeTeamAgentEnvFile(merged);
+    await applyTeamAgentEnvToProcess(merged, clearKeys);
     const restartScheduled = params.restart === false ? false : scheduleDaemonRestart(requestShutdown);
     return {
         applied: true,
-        envPath: path,
+        envPath,
         restartScheduled,
     };
 }

@@ -213,18 +213,25 @@ async function runShell(
     return result;
 }
 
-async function installNode(executor: SshExecutor, jobId: string, serverUrl: string, redactions: string[]): Promise<string> {
-    const command = [
+export function buildInstallNodeCommand(serverUrl: string): string {
+    return [
         "mkdir -p \"$HOME/.happy-team/bin\"",
         "if command -v node >/dev/null 2>&1 && node -e 'const v=Number(process.versions.node.split(\".\")[0]); process.exit(v >= 20 ? 0 : 1)' >/dev/null 2>&1; then",
         "  command -v node",
         "else",
-        buildNodeArtifactDownloadCommand(serverUrl, "\"$HOME/.happy-team/bin/node\"").split("\n").map((line) => `  ${line}`).join("\n"),
-        "  chmod 700 \"$HOME/.happy-team/bin/node\"",
+        // Download to a temp path and rename over the target: a running daemon
+        // keeps the old binary open (writing in place fails with ETXTBSY on
+        // re-provisioning), while rename() swaps it atomically.
+        buildNodeArtifactDownloadCommand(serverUrl, "\"$HOME/.happy-team/bin/node.download\"").split("\n").map((line) => `  ${line}`).join("\n"),
+        "  chmod 700 \"$HOME/.happy-team/bin/node.download\"",
+        "  mv -f \"$HOME/.happy-team/bin/node.download\" \"$HOME/.happy-team/bin/node\"",
         "  printf '%s\\n' \"$HOME/.happy-team/bin/node\"",
         "fi",
     ].join("\n");
-    const result = await runShell(executor, jobId, "install_node", command, redactions, 120_000);
+}
+
+async function installNode(executor: SshExecutor, jobId: string, serverUrl: string, redactions: string[]): Promise<string> {
+    const result = await runShell(executor, jobId, "install_node", buildInstallNodeCommand(serverUrl), redactions, 120_000);
     const nodePath = result.stdout.trim().split("\n").at(-1)?.trim();
     if (!nodePath) {
         throw new Error("Could not determine Node path");
@@ -283,6 +290,9 @@ async function setupAgents(
             throw new Error("TEAM_OPENAI_API_KEY is not configured");
         }
         envLines.push(`OPENAI_API_KEY=${shellQuote(process.env.TEAM_OPENAI_API_KEY)}`);
+        if (process.env.TEAM_OPENAI_BASE_URL) {
+            envLines.push(`OPENAI_BASE_URL=${shellQuote(process.env.TEAM_OPENAI_BASE_URL)}`);
+        }
     }
 
     const envContent = `${envLines.join("\n")}\n`;
