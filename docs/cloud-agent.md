@@ -321,7 +321,7 @@ Every milestone is code-complete with unit and integration tests green, and ever
 ## Testing
 
 ```bash
-pnpm --filter happy-server-self-host exec vitest run sources/team/tasks
+pnpm --filter happy-server exec vitest run sources/team/tasks
 pnpm --filter happy exec vitest run --project unit src/team/tasks
 ```
 

@@ -157,7 +157,7 @@ pnpm install --force
 `--force` matters: [`pnpm-workspace.yaml`](pnpm-workspace.yaml) uses `supportedArchitectures` to materialize the Linux/macOS × x64/arm64 (glibc and musl) native binaries for the Claude Agent SDK and Codex CLI. Without them the CLI tarball only serves the platform you built on.
 
 ```bash
-pnpm --filter happy-server-self-host typecheck
+pnpm --filter happy-server typecheck
 pnpm --filter happy typecheck
 pnpm --filter happy-app typecheck
 ```
@@ -165,13 +165,13 @@ pnpm --filter happy-app typecheck
 Fork tests, narrowed to the directories this fork owns:
 
 ```bash
-pnpm --filter happy-server-self-host exec vitest run sources/team
+pnpm --filter happy-server exec vitest run sources/team
 pnpm --filter happy exec vitest run --project unit src/team
 ```
 
 Use `exec vitest run <path>`, not `test -- <path>` — the package `test` scripts don't forward a path filter, so the latter quietly runs the whole suite instead of the part you asked for.
 
-Note the server package is named `happy-server-self-host`, not `happy-server`. App and CLI development (Expo, native builds, local server) is covered in the [Contributing Guide](docs/CONTRIBUTING.md).
+The server package is `happy-server`; the separate `happy-server-self-host` package is only the standalone publishing wrapper. App and CLI development (Expo, native builds, local server) is covered in the [Contributing Guide](docs/CONTRIBUTING.md).
 
 ## Architecture
 

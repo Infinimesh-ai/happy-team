@@ -34,9 +34,9 @@ COPY packages/happy-server ./packages/happy-server
 COPY packages/happy-cli ./packages/happy-cli
 COPY packages/happy-app/sources/sync ./packages/happy-app/sources/sync
 
-RUN pnpm --filter @slopus/happy-wire build
-RUN pnpm --filter happy-server-self-host typecheck
-RUN pnpm --filter happy build
+RUN pnpm --filter @slopus/happy-wire --fail-if-no-match build
+RUN pnpm --filter happy-server --fail-if-no-match build
+RUN pnpm --filter happy --fail-if-no-match build
 RUN pnpm --filter happy deploy --prod --legacy /repo/.team-artifacts/happy-cli \
     && tar -czf /repo/.team-artifacts/happy-cli.tgz -C /repo/.team-artifacts/happy-cli .
 
@@ -63,4 +63,5 @@ EXPOSE 3005
 
 # Command to run the application
 COPY --from=builder /repo/package.json /repo/pnpm-workspace.yaml /repo/
-CMD ["pnpm", "--filter", "happy-server-self-host", "start"]
+WORKDIR /repo/packages/happy-server
+CMD ["pnpm", "run", "start"]

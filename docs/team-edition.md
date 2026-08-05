@@ -268,11 +268,11 @@ A single `PATCH /v1/team/admin/users/:id` can emit several of the administration
 Server Team code is covered by Vitest, following this repo's convention of real calls over mocks — the SSH executor is tested against a local sshd container rather than a stubbed `ssh2`.
 
 ```bash
-pnpm --filter happy-server-self-host test -- sources/team
+pnpm --filter happy-server test -- sources/team
 ```
 
 ```bash
-pnpm --filter happy-server-self-host typecheck
+pnpm --filter happy-server typecheck
 pnpm --filter happy typecheck
 pnpm --filter happy-app typecheck
 ```

@@ -55,13 +55,13 @@ pnpm install --force
 `--force` re-materializes the cross-platform optional native binaries pinned by `supportedArchitectures` in `pnpm-workspace.yaml`. Without it a later CLI artifact build silently covers only your own platform.
 
 ```bash
-pnpm --filter happy-server-self-host typecheck
+pnpm --filter happy-server typecheck
 pnpm --filter happy typecheck
 pnpm --filter happy-app typecheck
 ```
 
 ```bash
-pnpm --filter happy-server-self-host test -- sources/team
+pnpm --filter happy-server test -- sources/team
 ```
 
 ```bash

@@ -93,8 +93,8 @@ services:
     volumes:
       - ${TEAM_NODE_ARTIFACT_HOST_DIR:-./.team-artifacts/node}:/opt/happy-team/artifacts/node:ro
     command: >
-      sh -c "pnpm --filter happy-server-self-host exec prisma migrate deploy --schema=prisma/schema.prisma &&
-      exec pnpm --filter happy-server-self-host start"
+      sh -c "pnpm --filter happy-server exec prisma migrate deploy --schema=prisma/schema.prisma &&
+      exec pnpm --filter happy-server start"
     ports:
       - "${HAPPY_SERVER_PORT:-3005}:3005"
     healthcheck:
