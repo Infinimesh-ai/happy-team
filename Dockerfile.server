@@ -11,12 +11,13 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY scripts ./scripts
 COPY patches ./patches
 
-RUN mkdir -p packages/happy-app packages/happy-server packages/happy-cli packages/happy-wire
+RUN mkdir -p packages/happy-app packages/happy-server packages/happy-cli packages/happy-wire packages/iscp
 
 COPY packages/happy-app/package.json packages/happy-app/
 COPY packages/happy-server/package.json packages/happy-server/
 COPY packages/happy-cli/package.json packages/happy-cli/
 COPY packages/happy-wire/package.json packages/happy-wire/
+COPY packages/iscp/package.json packages/iscp/
 
 # Workspace postinstall requirements
 COPY packages/happy-app/patches packages/happy-app/patches
@@ -30,11 +31,13 @@ RUN SKIP_HAPPY_WIRE_BUILD=1 pnpm install --frozen-lockfile --force
 FROM deps AS builder
 
 COPY packages/happy-wire ./packages/happy-wire
+COPY packages/iscp ./packages/iscp
 COPY packages/happy-server ./packages/happy-server
 COPY packages/happy-cli ./packages/happy-cli
 COPY packages/happy-app/sources/sync ./packages/happy-app/sources/sync
 
 RUN pnpm --filter @slopus/happy-wire --fail-if-no-match build
+RUN pnpm --filter @slopus/iscp --fail-if-no-match build
 RUN pnpm --filter happy-server --fail-if-no-match build
 RUN pnpm --filter happy --fail-if-no-match build
 RUN pnpm --filter happy deploy --prod --legacy /repo/.team-artifacts/happy-cli \
