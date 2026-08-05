@@ -1,10 +1,11 @@
 # Happy Docs
 
-Internal documentation for this repository. It covers three layers, and knowing which one a document belongs to tells you how much to trust it for *this* fork:
+Internal documentation for this repository. It covers four layers, and knowing which one a document belongs to tells you how much to trust it for *this* fork:
 
 1. **Team Edition** — what this fork adds. Written here, current.
-2. **Parent fork** — ISCP dual-stack networking, inherited from [`Infinimesh-ai/happy`](https://github.com/Infinimesh-ai/happy).
-3. **Base Happy** — inherited from [`slopus/happy`](https://github.com/slopus/happy). Describes the stock product; still accurate except where Team Edition adds on top.
+2. **Cloud Agent** — agent task orchestration built on top of Team Edition. Written here, current, but living on the `cloud-agent` branch and not yet accepted end to end.
+3. **Parent fork** — ISCP dual-stack networking, inherited from [`Infinimesh-ai/happy`](https://github.com/Infinimesh-ai/happy).
+4. **Base Happy** — inherited from [`slopus/happy`](https://github.com/slopus/happy). Describes the stock product; still accurate except where Team Edition adds on top.
 
 Start with the [root README](../README.md) for what this fork is.
 
@@ -16,9 +17,19 @@ Start with the [root README](../README.md) for what this fork is.
 - [../.env.example](../.env.example): Annotated environment template; required vs optional, and why `HAPPY_PUBLIC_SERVER_URL` and `TEAM_PUBLIC_SERVER_URL` are separate (zh).
 - [plans/team-edition.md](plans/team-edition.md): The implementation plan, decisions that are settled and not up for re-litigation, and the full acceptance log per milestone (zh).
 - [upstream-sync.md](upstream-sync.md): Merging from the parent fork and upstream without breaking Team boundaries.
-- [plans/cloud-agent-tasks.md](plans/cloud-agent-tasks.md): Cloud agent task plan.
 
 Team Edition touches `packages/happy-server/sources/team/`, `packages/happy-app/sources/app/(app)/team/`, `packages/happy-cli/src/commands/enroll.ts`, and the root deployment files. Nothing else.
+
+## Cloud Agent
+
+One-sentence tasks executed by a multi-stage agent pipeline in an isolated git worktree on the member's own machine, ending in a pull request. Built on Team Edition — it assumes members, machines and agent credentials already exist.
+
+**On the `cloud-agent` branch, not merged into `main`.** Code-complete with tests green; every milestone still carries an owner end-to-end acceptance step. Read the status section before relying on any of it.
+
+- [cloud-agent.md](cloud-agent.md): Reference — templates, task state machine, task-control MCP, artifact and skills contracts, validation gate, delivery guards, API, security model, and the honest gap list.
+- [plans/cloud-agent-tasks.md](plans/cloud-agent-tasks.md): The blueprint and acceptance criteria — what to build, authoritative on scope (zh).
+- [plans/cloud-agent-tasks-progress.md](plans/cloud-agent-tasks-progress.md): Single source of truth for state — per-item checkboxes, the pending manual acceptance steps, and the decision log with every recorded deviation (zh).
+- [plans/cloud-agent-tasks-goal.md](plans/cloud-agent-tasks-goal.md): The execution contract a working session follows — ordering rules, red lines, decision authority (zh).
 
 ## Parent fork: ISCP dual-stack
 
@@ -70,5 +81,5 @@ An opt-in transport that reaches the daemon over ISCP v2 instead of happy-server
 ## Conventions
 
 - Paths and field names reflect the current implementation; the canonical source is always the code, and examples are illustrative.
-- Team Edition documents state what the code does today. Where a milestone was accepted with a gap, the gap is written down rather than omitted.
+- Fork documents state what the code does today, not what a plan intended. Where a milestone was accepted with a gap — or was never accepted at all — the gap is written down rather than omitted, and code that exists but nothing calls is named as such.
 - Documents inherited from upstream describe base Happy. They are not rewritten for Team Edition unless Team Edition actually changed the behavior they describe.

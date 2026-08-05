@@ -510,6 +510,16 @@ Conversation history is preserved on the server, but in-flight tool calls are in
       process.exit(1)
     }
     return;
+  } else if (subcommand === 'task-mcp') {
+    // Task-control MCP server (stdio) for cloud-agent task sessions.
+    const { runTaskMcp } = await import('@/team/tasks/taskMcp')
+    await runTaskMcp()
+    return;
+  } else if (subcommand === 'skills-mcp') {
+    // Skills write-back MCP server (stdio): get_skill / append_lesson.
+    const { runSkillsMcp } = await import('@/team/tasks/skillsMcp')
+    await runSkillsMcp()
+    return;
   } else if (subcommand === 'notify') {
     // Handle notification command
     try {

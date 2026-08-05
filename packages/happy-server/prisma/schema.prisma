@@ -89,6 +89,28 @@ enum TeamAgentAuthUpdateStatus {
     FAILED
 }
 
+enum TaskMode {
+    SUPERVISED
+    AUTONOMOUS
+}
+
+enum TaskStatus {
+    PENDING
+    PREPARING
+    RUNNING
+    WAITING_APPROVAL
+    SUCCEEDED
+    FAILED
+    ESCALATED
+    CANCELLED
+}
+
+enum StageRunStatus {
+    RUNNING
+    SUCCEEDED
+    FAILED
+}
+
 model TeamUser {
     id                 String         @id @default(cuid())
     email              String         @unique
@@ -189,6 +211,65 @@ model TeamAuditLog {
     @@index([actorId, createdAt])
     @@index([action, createdAt])
     @@index([createdAt])
+}
+
+model TeamTask {
+    id           String     @id @default(cuid())
+    ownerUserId  String
+    machineId    String
+    templateId   String
+    mode         TaskMode   @default(SUPERVISED)
+    status       TaskStatus @default(PENDING)
+    title        String
+    goalPrompt   String
+    repoPath     String
+    baseBranch   String
+    workBranch   String
+    worktreePath String?
+    currentStage String?
+    round        Int        @default(0)
+    maxRounds    Int        @default(3)
+    skillsCommit String?
+    prUrl        String?
+    error        String?
+    createdAt    DateTime   @default(now())
+    updatedAt    DateTime   @updatedAt
+    finishedAt   DateTime?
+
+    @@index([ownerUserId, createdAt])
+    @@index([machineId, status])
+    @@index([status, createdAt])
+}
+
+model TeamTaskStageRun {
+    id        String         @id @default(cuid())
+    taskId    String
+    stage     String
+    round     Int
+    agent     String
+    model     String?
+    sessionId String?
+    status    StageRunStatus @default(RUNNING)
+    summary   String?
+    startedAt DateTime       @default(now())
+    endedAt   DateTime?
+
+    @@index([taskId, startedAt])
+    @@index([sessionId])
+}
+
+model TeamTaskTransition {
+    id          String   @id @default(cuid())
+    taskId      String
+    fromStage   String?
+    toStage     String
+    requestedBy String
+    reason      String?
+    decision    String
+    decidedBy   String?
+    createdAt   DateTime @default(now())
+
+    @@index([taskId, createdAt])
 }
 
 model TerminalAuthRequest {

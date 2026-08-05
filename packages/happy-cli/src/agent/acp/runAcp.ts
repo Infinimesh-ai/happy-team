@@ -21,6 +21,7 @@ import { startHappyServer } from '@/claude/utils/startHappyServer';
 import { projectPath } from '@/projectPath';
 import { BasePermissionHandler, type PermissionResult } from '@/utils/BasePermissionHandler';
 import { connectionState } from '@/utils/serverConnectionErrors';
+import { readTaskSessionBootstrap } from '@/team/tasks/taskSessionBootstrap';
 import {
   extractConfigOptionsFromPayload,
   extractCurrentModeIdFromPayload,
@@ -879,7 +880,9 @@ export async function runAcp(opts: {
   });
 
   try {
-    const started = await backend.startSession();
+    // Cloud-agent task stages ship their stage prompt via spawn env — seed the
+    // session with it so an unattended stage kicks itself off (plan §6).
+    const started = await backend.startSession(readTaskSessionBootstrap()?.prompt);
     acpSessionId = started.sessionId;
     if (verbose) {
       if (!sawSlashCommands) {

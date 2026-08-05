@@ -20,6 +20,7 @@ import { detectCLIAvailability, CLIAvailability } from '@/utils/detectCLI';
 import { detectResumeSupport, type ResumeSupport } from '@/resume/localHappyAgentAuth';
 import { shouldReconnect } from '@/utils/lidState';
 import { getProjectPath } from '@/claude/utils/path';
+import { registerTaskHandlers } from '@/team/tasks/registerTaskHandlers';
 import {
     forkSession as claudeForkSession,
     forkAndTruncateSession as claudeForkAndTruncateSession,
@@ -467,6 +468,10 @@ export class ApiMachineClient {
             logger.debug('[API MACHINE] Received team agent env update request');
             return applyTeamAgentEnv(params || {}, requestShutdown);
         });
+
+        // Cloud-agent task daemon RPCs (prepare-worktree / deliver / cleanup).
+        // All new task handlers register through this single entry point.
+        registerTaskHandlers(this.rpcHandlerManager);
 
         // Register stop daemon handler
         this.rpcHandlerManager.registerHandler('stop-daemon', () => {

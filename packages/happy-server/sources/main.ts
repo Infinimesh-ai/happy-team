@@ -11,6 +11,7 @@ import { initEncrypt } from "./modules/encrypt";
 import { initGithub } from "./modules/github";
 import { loadFiles } from "./storage/files";
 import { seedTeamAdmin } from "@/team/seedAdmin";
+import { startTaskTimeoutSweeper } from "@/team/tasks/taskRuntime";
 
 async function main() {
 
@@ -43,6 +44,7 @@ async function main() {
     await startMetricsServer();
     startDatabaseMetricsUpdater();
     startTimeout();
+    startTaskTimeoutSweeper();
 
     //
     // Ready

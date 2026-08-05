@@ -39,6 +39,7 @@ import { getProjectPath } from './utils/path';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { RawJSONLinesSchema, type RawJSONLines } from './types';
+import { readTaskSessionBootstrap } from '@/team/tasks/taskSessionBootstrap';
 
 /** JavaScript runtime to use for spawning Claude Code */
 export type JsRuntime = 'node' | 'bun'
@@ -98,6 +99,15 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     let machineId = settings?.machineId
     const sandboxConfig = options.noSandbox ? undefined : settings?.sandboxConfig;
     const sandboxEnabled = Boolean(sandboxConfig?.enabled);
+    // Cloud-agent task stages arrive via spawn env (HAPPY_TASK_*): apply the
+    // stage's permission mode / model before the initial mode is resolved.
+    const taskBootstrap = readTaskSessionBootstrap();
+    if (taskBootstrap?.permissionMode && !options.permissionMode) {
+        options.permissionMode = taskBootstrap.permissionMode;
+    }
+    if (taskBootstrap?.model && !options.model) {
+        options.model = taskBootstrap.model;
+    }
     const initialPermissionMode = applySandboxPermissionPolicy(
         resolveInitialClaudePermissionMode(options.permissionMode ?? DEFAULT_CLAUDE_PERMISSION_MODE, options.claudeArgs),
         sandboxEnabled,
@@ -557,6 +567,12 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         disallowedTools: currentDisallowedTools,
         effort: currentEffort,
     });
+
+    // Seed a task stage session with its rendered stage prompt — the daemon
+    // spawn has no first message, so the session kicks itself off here.
+    if (taskBootstrap) {
+        messageQueue.push(taskBootstrap.prompt, currentEnhancedMode());
+    }
 
     session.rpcHandlerManager.registerHandler('goal-action', async (params: unknown) => {
         const actionParams = params && typeof params === 'object' && !Array.isArray(params)

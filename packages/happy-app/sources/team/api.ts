@@ -295,3 +295,132 @@ export function createTeamEnrollToken(credentials: AuthCredentials, input: {
         body: input,
     });
 }
+
+// Cloud-agent tasks (plan §10.1) ------------------------------------------------
+
+export type TaskMode = 'SUPERVISED' | 'AUTONOMOUS';
+export type TaskStatus =
+    | 'PENDING' | 'PREPARING' | 'RUNNING' | 'WAITING_APPROVAL'
+    | 'SUCCEEDED' | 'FAILED' | 'ESCALATED' | 'CANCELLED';
+export type TaskStageRunStatus = 'RUNNING' | 'SUCCEEDED' | 'FAILED';
+
+export interface TeamTaskSummary {
+    id: string;
+    title: string;
+    templateId: string;
+    mode: TaskMode;
+    status: TaskStatus;
+    machineId: string;
+    repoPath: string;
+    baseBranch: string;
+    workBranch: string;
+    currentStage: string | null;
+    round: number;
+    maxRounds: number;
+    prUrl: string | null;
+    error: string | null;
+    createdAt: string;
+    updatedAt: string;
+    finishedAt: string | null;
+}
+
+export interface TeamTaskStageRun {
+    id: string;
+    stage: string;
+    round: number;
+    agent: string;
+    model: string | null;
+    sessionId: string | null;
+    status: TaskStageRunStatus;
+    summary: string | null;
+    startedAt: string;
+    endedAt: string | null;
+}
+
+export interface TeamTaskTransition {
+    id: string;
+    fromStage: string | null;
+    toStage: string;
+    requestedBy: string;
+    reason: string | null;
+    decision: string;
+    decidedBy: string | null;
+    createdAt: string;
+}
+
+export interface TeamTaskDetail extends TeamTaskSummary {
+    goalPrompt: string;
+    worktreePath: string | null;
+    skillsCommit: string | null;
+    stageRuns: TeamTaskStageRun[];
+    transitions: TeamTaskTransition[];
+}
+
+export interface TeamTaskTemplateStage {
+    agent: string;
+    model: string | null;
+    permissionMode: string;
+    expectedArtifacts: string[];
+}
+
+export interface TeamTaskTemplate {
+    id: string;
+    stages: Record<string, TeamTaskTemplateStage>;
+    transitions: { from: string | null; to: string; requiresApproval?: boolean; condition?: string }[];
+}
+
+export interface CreateTeamTaskInput {
+    machineId: string;
+    repoPath: string;
+    templateId: string;
+    mode: TaskMode;
+    title: string;
+    goalPrompt: string;
+    baseBranch: string;
+}
+
+export function listTeamTasks(credentials: AuthCredentials): Promise<{ tasks: TeamTaskSummary[] }> {
+    return teamRequest<{ tasks: TeamTaskSummary[] }>('/v1/team/tasks', { credentials });
+}
+
+export function getTeamTask(credentials: AuthCredentials, id: string): Promise<{ task: TeamTaskDetail }> {
+    return teamRequest<{ task: TeamTaskDetail }>(`/v1/team/tasks/${encodeURIComponent(id)}`, { credentials });
+}
+
+export function createTeamTask(credentials: AuthCredentials, input: CreateTeamTaskInput): Promise<{ task: TeamTaskDetail }> {
+    return teamRequest<{ task: TeamTaskDetail }>('/v1/team/tasks', {
+        method: 'POST',
+        credentials,
+        body: input,
+    });
+}
+
+export function cancelTeamTask(credentials: AuthCredentials, id: string): Promise<{ task: TeamTaskSummary }> {
+    return teamRequest<{ task: TeamTaskSummary }>(`/v1/team/tasks/${encodeURIComponent(id)}/cancel`, {
+        method: 'POST',
+        credentials,
+    });
+}
+
+export function listTeamTaskTemplates(credentials: AuthCredentials): Promise<{ templates: TeamTaskTemplate[] }> {
+    return teamRequest<{ templates: TeamTaskTemplate[] }>('/v1/team/tasks/templates', { credentials });
+}
+
+export function getTeamTaskPlan(credentials: AuthCredentials, id: string): Promise<{ plan: string | null }> {
+    return teamRequest<{ plan: string | null }>(`/v1/team/tasks/${encodeURIComponent(id)}/plan`, { credentials });
+}
+
+export function approveTeamTask(credentials: AuthCredentials, id: string, plan?: string): Promise<{ task: TeamTaskDetail }> {
+    return teamRequest<{ task: TeamTaskDetail }>(`/v1/team/tasks/${encodeURIComponent(id)}/approve`, {
+        method: 'POST',
+        credentials,
+        body: plan === undefined ? {} : { plan },
+    });
+}
+
+export function rejectTeamTask(credentials: AuthCredentials, id: string): Promise<{ task: TeamTaskDetail }> {
+    return teamRequest<{ task: TeamTaskDetail }>(`/v1/team/tasks/${encodeURIComponent(id)}/reject`, {
+        method: 'POST',
+        credentials,
+    });
+}

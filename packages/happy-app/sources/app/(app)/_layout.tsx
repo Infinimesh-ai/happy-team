@@ -231,6 +231,30 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="team/tasks/index"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('team.tasks.boardTitle'),
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
+                name="team/tasks/new"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('team.tasks.newTaskTitle'),
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
+                name="team/tasks/[id]"
+                options={{
+                    headerShown: true,
+                    headerTitle: t('team.tasks.detailTitle'),
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
                 name="changelog"
                 options={{
                     headerShown: true,
