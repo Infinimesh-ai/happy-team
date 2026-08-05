@@ -25,6 +25,7 @@ import { v3SessionRoutes } from "./routes/v3SessionRoutes";
 import { attachmentRoutes } from "./routes/attachmentRoutes";
 import { teamRoutes } from "@/team/routes";
 import { teamTaskRoutes } from "@/team/tasks/routes";
+import { teamMcpRoutes } from "@/team/mcp/routes";
 import { isLocalStorage, getLocalFilesDir } from "@/storage/files";
 import * as path from "path";
 import * as fs from "fs";
@@ -116,6 +117,7 @@ export async function startApi(opts: StartApiOptions = {}) {
     attachmentRoutes(typed);
     teamRoutes(typed);
     teamTaskRoutes(typed);
+    teamMcpRoutes(typed);
 
     // Static webapp (self-host mode)
     if (opts.staticDir) {
