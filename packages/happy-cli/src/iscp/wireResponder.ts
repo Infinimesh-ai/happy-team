@@ -6,8 +6,12 @@
  *
  * Method catalog (transport-owned; unknown methods → 'unsupported'):
  *   sessions.list / sessions.spawn / sessions.stop
+ *   sessions.archive { sessionId, archived? } (history housekeeping; running → conflict)
  *   messages.pull { sessionId, afterCursor?, limit? }
- *   messages.send { sessionId, body }        (idempotencyKey required)
+ *   messages.send { sessionId, body }        (idempotencyKey required; 'retryable'
+ *                                             failure when the agent is unreachable —
+ *                                             the message stays persisted and a retry
+ *                                             with the same idempotencyKey redelivers)
  *   session.rpc   { sessionId, method, params }
  *   machine.rpc   { method, params }
  *   events.subscribe { }                     (live push flag; caller pulls backlog)
@@ -18,15 +22,18 @@
  * through ISCP. Fully serverless sessions are a later phase.
  */
 
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { z } from 'zod'
 
 import {
   encodeWireCursor,
   decodeWireCursor,
+  PhoneTextViewBodySchema,
+  UserMessageSchema,
   type HappyWireRequest,
   type HappyWireResponse,
   type HappyWireError,
+  type WireHistoryView,
 } from '@slopus/happy-wire'
 
 import type { TrackedSession } from '@/daemon/types'
@@ -43,6 +50,11 @@ const SessionsSpawnParams = z.object({
 })
 
 const SessionsStopParams = z.object({ sessionId: z.string().min(1) })
+
+const SessionsArchiveParams = z.object({
+  sessionId: z.string().min(1),
+  archived: z.boolean().optional(),
+})
 
 const MessagesPullParams = z.object({
   sessionId: z.string().min(1),
@@ -77,6 +89,14 @@ function success(id: string, result: unknown): HappyWireResponse {
 export interface WireResponderDeps {
   iscp: DaemonIscpService
   profileId: string
+  /**
+   * History surface this peer's Trust Grant authorizes
+   * (wireViewForPermissions): 'raw' serves the internal session protocol
+   * verbatim (official Happy client), 'text' serves the materialized
+   * phone/text view — projected bubbles, view-local contiguous cursors, and
+   * a text-only write boundary (OPS 2026-08-18 §10.16).
+   */
+  view: WireHistoryView
   getChildren: () => TrackedSession[]
   stopSession: (sessionId: string) => boolean
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>
@@ -84,10 +104,43 @@ export interface WireResponderDeps {
   fetchImpl?: typeof fetch
 }
 
+/** Short stable hash for logging opaque cursors without their content. */
+function cursorHash(cursor: string | undefined): string | null {
+  if (cursor === undefined) return null
+  return createHash('sha256').update(cursor).digest('hex').slice(0, 12)
+}
+
 export class WireResponder {
   constructor(private readonly deps: WireResponderDeps) {}
 
+  /**
+   * sessionId → localIds confirmed delivered to the agent process. Delivery
+   * (not persistence) is the success criterion for messages.send, so a
+   * deduped retry must re-forward until the agent has actually confirmed.
+   * In-memory only: after a daemon restart a retried send re-forwards, which
+   * is the safe direction (at-least-once toward the agent).
+   */
+  private readonly deliveredUserMessages = new Map<string, Set<string>>()
+
   async handle(request: HappyWireRequest): Promise<HappyWireResponse> {
+    // P1 wire logging contract: request id / method / session / result code /
+    // duration — never bodies.
+    const startedAt = Date.now()
+    const response = await this.dispatch(request)
+    const params = request.params as { sessionId?: unknown } | undefined
+    logger.debug('[WIRE RESPONDER] request handled', {
+      profileId: this.deps.profileId,
+      requestId: request.id,
+      method: request.method,
+      sessionId: typeof params?.sessionId === 'string' ? params.sessionId : null,
+      view: this.deps.view,
+      resultCode: response.ok ? 'ok' : response.error.code,
+      durationMs: Date.now() - startedAt,
+    })
+    return response
+  }
+
+  private async dispatch(request: HappyWireRequest): Promise<HappyWireResponse> {
     try {
       switch (request.method) {
         case 'sessions.list':
@@ -98,6 +151,8 @@ export class WireResponder {
           const params = SessionsStopParams.parse(request.params)
           return success(request.id, { stopped: this.deps.stopSession(params.sessionId) })
         }
+        case 'sessions.archive':
+          return this.sessionsArchive(request)
         case 'messages.pull':
           return this.messagesPull(request)
         case 'messages.send':
@@ -125,24 +180,88 @@ export class WireResponder {
     }
   }
 
-  private sessionsList(): unknown {
-    const log = this.deps.iscp.log(this.deps.profileId)
+  private runningSessions(): Map<string, TrackedSession> {
     const running = new Map<string, TrackedSession>()
     for (const child of this.deps.getChildren()) {
       if (child.happySessionId !== undefined) running.set(child.happySessionId, child)
     }
-    const known = new Set<string>([...running.keys(), ...log.listSessions()])
+    return running
+  }
+
+  /**
+   * Liveness is the UNION of the child-process table and the registered
+   * session RPC bridges. After a daemon restart the agent process is not a
+   * child of the new daemon (it cannot be re-adopted — there is no
+   * ChildProcess handle and the registration carries no pid), but its
+   * lifetime heartbeat re-registers the RPC port; that registration is the
+   * daemon's authoritative proof of a reachable agent.
+   */
+  private isSessionLive(sessionId: string, running: Map<string, TrackedSession>): boolean {
+    return running.has(sessionId)
+      || this.deps.iscp.sessionRpcPort(this.deps.profileId, sessionId) !== null
+  }
+
+  private sessionsList(): unknown {
+    const log = this.deps.iscp.log(this.deps.profileId)
+    const running = this.runningSessions()
+    // Persist display attributes while the process is alive, so history
+    // entries stay identifiable (not just an opaque id) after it exits.
+    for (const [sessionId, child] of running) {
+      const metadata = child.happySessionMetadataFromLocalWebhook
+      if (!metadata) continue
+      log.describe(sessionId, {
+        ...(metadata.name !== undefined ? { displayName: metadata.name } : {}),
+        directory: metadata.path,
+        ...(metadata.flavor !== undefined ? { agentType: metadata.flavor } : {}),
+      })
+    }
+    const known = new Set<string>([
+      ...running.keys(),
+      ...this.deps.iscp.sessionIdsWithRpcPort(this.deps.profileId),
+      ...log.listSessions(),
+    ])
     const sessions = [...known].map((sessionId) => {
       const info = log.sessionInfo(sessionId)
+      const active = this.isSessionLive(sessionId, running)
+      // Lifecycle contract for list consumers: show 'active' prominently,
+      // fold 'idle' history away, and let 'archived' be safely hidden.
+      const lifecycle = active ? 'active' : (info?.archived ?? false) ? 'archived' : 'idle'
+      // A text-view peer's cursor line lives in view coordinates: advertising
+      // the raw lastSeq here would make the phone chase seqs it can never
+      // pull (the "filtered raw cursor" trap the projection contract forbids).
+      const cursorFacts = this.deps.view === 'text' && info
+        ? this.deps.iscp.textView(this.deps.profileId).info(sessionId)
+        : info
       return {
         sessionId,
-        active: running.has(sessionId),
+        active,
+        lifecycle,
         pid: running.get(sessionId)?.pid,
-        lastSeq: info?.lastSeq ?? 0,
-        lastCursor: info ? encodeWireCursor({ scope: sessionId, seq: info.lastSeq, epoch: info.epoch }) : undefined,
+        lastSeq: cursorFacts?.lastSeq ?? 0,
+        lastCursor: cursorFacts ? encodeWireCursor({ scope: sessionId, seq: cursorFacts.lastSeq, epoch: cursorFacts.epoch }) : undefined,
+        ...(info?.createdAt !== undefined ? { createdAt: info.createdAt } : {}),
+        ...(info?.lastActiveAt !== undefined ? { lastActiveAt: info.lastActiveAt } : {}),
+        ...(info?.displayName !== undefined ? { displayName: info.displayName } : {}),
+        ...(info?.directory !== undefined ? { directory: info.directory } : {}),
+        ...(info?.agentType !== undefined ? { agentType: info.agentType } : {}),
       }
     })
     return { sessions }
+  }
+
+  private sessionsArchive(request: HappyWireRequest): HappyWireResponse {
+    const params = SessionsArchiveParams.parse(request.params)
+    const archived = params.archived ?? true
+    // Same union as sessions.list: an agent that only re-registered via the
+    // heartbeat (daemon restarted) is still running and must not be archived.
+    if (archived && this.isSessionLive(params.sessionId, this.runningSessions())) {
+      return failure(request.id, 'conflict', `session ${params.sessionId} is running; stop it before archiving`)
+    }
+    const found = this.deps.iscp.log(this.deps.profileId).setArchived(params.sessionId, archived)
+    if (!found) {
+      return failure(request.id, 'not_found', `session ${params.sessionId} has no history on this machine`)
+    }
+    return success(request.id, { sessionId: params.sessionId, archived })
   }
 
   private async sessionsSpawn(request: HappyWireRequest): Promise<HappyWireResponse> {
@@ -174,19 +293,40 @@ export class WireResponder {
     if (!info) {
       return success(request.id, { events: [], hasMore: false, lastCursor: null, reset: false })
     }
+    const epoch = this.deps.view === 'text'
+      ? this.deps.iscp.textView(this.deps.profileId).info(params.sessionId)!.epoch
+      : info.epoch
     // Cursor validation: wrong scope or stale epoch → full re-sync from 0,
-    // flagged so the client knows to discard local state.
+    // flagged so the client knows to discard local state. For a text-view
+    // peer the epoch is the VIEW epoch — a projector rebuild invalidates the
+    // phone's cursor even when the raw log kept its own.
     let afterSeq = 0
     let reset = false
     if (params.afterCursor !== undefined) {
       const cursor = decodeWireCursor(params.afterCursor)
-      if (cursor !== null && cursor.scope === params.sessionId && cursor.epoch === info.epoch) {
+      if (cursor !== null && cursor.scope === params.sessionId && cursor.epoch === epoch) {
         afterSeq = cursor.seq
       } else {
         reset = true
       }
     }
-    const page = log.read(params.sessionId, afterSeq, params.limit ?? 200)!
+    const limit = params.limit ?? 200
+    const page = this.deps.view === 'text'
+      ? this.readTextPage(params.sessionId, afterSeq, limit)
+      : log.read(params.sessionId, afterSeq, limit)!
+    logger.debug('[WIRE RESPONDER] messages.pull', {
+      profileId: this.deps.profileId,
+      requestId: request.id,
+      sessionId: params.sessionId,
+      view: this.deps.view,
+      afterCursorHash: cursorHash(params.afterCursor),
+      afterSeq,
+      returnedRange: page.events.length > 0 ? [page.events[0].seq, page.events[page.events.length - 1].seq] : null,
+      returnedCount: page.events.length,
+      reset,
+      hasMore: page.hasMore,
+      lastSeq: page.lastSeq,
+    })
     return success(request.id, {
       events: page.events.map((event) => ({
         seq: event.seq,
@@ -201,24 +341,93 @@ export class WireResponder {
     })
   }
 
+  /**
+   * Text-view history page in the raw page's shape (seq/localId/body/at).
+   * Every body is re-validated against the published view schema — the
+   * responder never emits anything that does not pass it (fail-closed).
+   */
+  private readTextPage(sessionId: string, afterSeq: number, limit: number): {
+    events: Array<{ seq: number; localId?: string; body: unknown; at: number }>
+    lastSeq: number
+    epoch: string
+    hasMore: boolean
+  } {
+    const page = this.deps.iscp.textView(this.deps.profileId).read(sessionId, afterSeq, limit)!
+    return {
+      events: page.events
+        .filter((event) => PhoneTextViewBodySchema.safeParse(event.body).success)
+        .map((event) => ({
+          seq: event.viewSeq,
+          ...(event.localId !== undefined ? { localId: event.localId } : {}),
+          body: event.body,
+          at: event.at,
+        })),
+      lastSeq: page.lastSeq,
+      epoch: page.epoch,
+      hasMore: page.hasMore,
+    }
+  }
+
   private async messagesSend(request: HappyWireRequest): Promise<HappyWireResponse> {
     const params = MessagesSendParams.parse(request.params)
-    if (request.idempotencyKey === undefined || request.idempotencyKey === '') {
+    const localId = request.idempotencyKey
+    if (localId === undefined || localId === '') {
       return failure(request.id, 'invalid', 'messages.send requires an idempotencyKey')
     }
-    const result = this.deps.iscp.ingest(this.deps.profileId, params.sessionId, [
-      { localId: request.idempotencyKey, body: params.body },
-    ])[0]
-    // Forward to the running session exactly once (dedupe suppresses redelivery).
-    if (!result.deduped) {
-      const delivered = await this.forwardToSession(params.sessionId, USER_MESSAGE_METHOD, params.body)
-      if (delivered !== null) {
-        logger.debug('[WIRE RESPONDER] user message forwarded', { sessionId: params.sessionId, seq: result.seq })
+    // Write boundary for a text-permission grant: only plain user text may
+    // enter the log. Anything else is rejected before persistence — the
+    // permission gate cuts both directions.
+    if (this.deps.view === 'text') {
+      const userText = UserMessageSchema.safeParse(params.body)
+      if (!userText.success || userText.data.content.text === '') {
+        return failure(request.id, 'invalid', 'this grant only permits plain text user messages')
       }
+    }
+    // Persist first (idempotent outbox), but success means DELIVERED to the
+    // agent, not persisted: a send whose forward fails returns 'retryable'
+    // and the caller redelivers with the same idempotencyKey — the dedupe
+    // then reuses the stored seq while the forward is attempted again.
+    const result = this.deps.iscp.ingest(this.deps.profileId, params.sessionId, [
+      { localId, body: params.body },
+    ])[0]
+    const alreadyDelivered = this.deliveredUserMessages.get(params.sessionId)?.has(localId) ?? false
+    if (!alreadyDelivered) {
+      const delivered = await this.forwardToSession(params.sessionId, USER_MESSAGE_METHOD, params.body)
+      if (delivered === null || !delivered.ok) {
+        return failure(
+          request.id,
+          'retryable',
+          `session ${params.sessionId} agent is not reachable; the message is persisted — retry with the same idempotencyKey to deliver it`,
+        )
+      }
+      let deliveredSet = this.deliveredUserMessages.get(params.sessionId)
+      if (!deliveredSet) {
+        deliveredSet = new Set()
+        this.deliveredUserMessages.set(params.sessionId, deliveredSet)
+      }
+      deliveredSet.add(localId)
+      logger.debug('[WIRE RESPONDER] user message delivered', { sessionId: params.sessionId, seq: result.seq })
+    }
+    // A text-view peer's ack cursor must live on the VIEW seq line (same
+    // localId), or its next pull would resume from a raw seq it cannot see.
+    if (this.deps.view === 'text') {
+      const view = this.deps.iscp.textView(this.deps.profileId)
+      const viewSeq = view.viewSeqForLocalId(params.sessionId, localId)
+      const viewInfo = view.info(params.sessionId)
+      if (viewSeq === null || viewInfo === null) {
+        return failure(request.id, 'retryable', 'message persisted but not yet visible in the text view; retry with the same idempotencyKey')
+      }
+      return success(request.id, {
+        seq: viewSeq,
+        deduped: result.deduped,
+        delivery: 'delivered',
+        cursor: encodeWireCursor({ scope: params.sessionId, seq: viewSeq, epoch: viewInfo.epoch }),
+      })
     }
     return success(request.id, {
       seq: result.seq,
       deduped: result.deduped,
+      delivery: 'delivered',
       cursor: encodeWireCursor({ scope: params.sessionId, seq: result.seq, epoch: result.epoch }),
     })
   }
@@ -227,7 +436,15 @@ export class WireResponder {
     const params = SessionRpcParams.parse(request.params)
     const result = await this.forwardToSession(params.sessionId, params.method, params.params)
     if (result === null) {
-      return failure(request.id, 'not_found', `session ${params.sessionId} is not reachable`)
+      // Distinguish "no such session" from "session exists but its agent
+      // bridge is down": the latter is transient (heartbeat re-registers) and
+      // must not be classified as a missing session by the caller.
+      const known = this.isSessionLive(params.sessionId, this.runningSessions())
+        || this.deps.iscp.log(this.deps.profileId).sessionInfo(params.sessionId) !== null
+      if (!known) {
+        return failure(request.id, 'not_found', `session ${params.sessionId} is unknown on this machine`)
+      }
+      return failure(request.id, 'retryable', `session ${params.sessionId} agent is not reachable`)
     }
     if (!result.ok) {
       return failure(request.id, 'invalid', result.error)
@@ -254,7 +471,7 @@ export class WireResponder {
     method: string,
     params: unknown,
   ): Promise<{ ok: true; result: unknown } | { ok: false; error: string } | null> {
-    const port = this.deps.iscp.sessionRpcPort(sessionId)
+    const port = this.deps.iscp.sessionRpcPort(this.deps.profileId, sessionId)
     if (port === null) return null
     const fetchImpl = this.deps.fetchImpl ?? fetch
     try {

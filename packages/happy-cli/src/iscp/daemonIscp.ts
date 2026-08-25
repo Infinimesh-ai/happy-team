@@ -9,6 +9,8 @@ import { join } from 'node:path'
 
 import { iscpProfileDir } from '@/iscp/enrollment'
 import { DaemonEventLog, type EventLogAppendResult, type EventLogRecord } from '@/iscp/eventLog'
+import { TextViewLog, type TextViewRecord } from '@/iscp/textViewLog'
+import { logger } from '@/ui/logger'
 
 export interface IngestedSessionEvent {
   localId?: string
@@ -24,22 +26,101 @@ export interface SessionEventNotification {
   deduped: boolean
 }
 
+export interface SessionLifecycleNotification {
+  profileId: string
+  sessionId: string
+  change: 'added' | 'changed'
+  reason: 'session_created' | 'agent_reachable' | 'agent_unreachable'
+}
+
+/**
+ * A newly materialized phone/text-view record (OPS 2026-08-18 §10.16). Fired
+ * regardless of which entry point triggered the projection, so live push
+ * never depends on WHO caused the catch-up. Text-view peers subscribe to
+ * this instead of 'session-event'.
+ */
+export interface TextViewEventNotification {
+  profileId: string
+  sessionId: string
+  record: TextViewRecord
+  viewEpoch: string
+}
+
 export class DaemonIscpService {
   /** Injectable for tests; defaults to the enrolled profile directory. */
   constructor(private readonly profileDirFor: (profileId: string) => string = iscpProfileDir) {}
 
   private readonly logs = new Map<string, DaemonEventLog>()
-  /** Emits 'session-event' with SessionEventNotification for live subscribers. */
+  private readonly textViews = new Map<string, TextViewLog>()
+  /**
+   * Emits 'session-event' with SessionEventNotification, 'session-lifecycle'
+   * with SessionLifecycleNotification and 'text-view-event' with
+   * TextViewEventNotification for live subscribers.
+   */
   readonly events = new EventEmitter()
   /** sessionId → localhost RPC port of the running ISCP session process. */
   private readonly sessionRpcPorts = new Map<string, { profileId: string; port: number }>()
 
-  registerSessionRpcPort(profileId: string, sessionId: string, port: number): void {
+  /**
+   * Sessions re-register on a heartbeat, so an unchanged registration is the
+   * steady state; only changes are worth logging or pushing to peers.
+   * Returns true when the registration is new or the port moved.
+   */
+  registerSessionRpcPort(profileId: string, sessionId: string, port: number): boolean {
+    const existing = this.sessionRpcPorts.get(sessionId)
+    if (existing?.profileId === profileId && existing.port === port) return false
     this.sessionRpcPorts.set(sessionId, { profileId, port })
+    this.events.emit('session-lifecycle', {
+      profileId,
+      sessionId,
+      change: 'changed',
+      reason: 'agent_reachable',
+    } satisfies SessionLifecycleNotification)
+    return true
   }
 
-  sessionRpcPort(sessionId: string): number | null {
-    return this.sessionRpcPorts.get(sessionId)?.port ?? null
+  /** Drop a registration when the session process exits (agent unreachable). */
+  unregisterSessionRpcPort(sessionId: string): void {
+    const existing = this.sessionRpcPorts.get(sessionId)
+    if (!existing) return
+    this.sessionRpcPorts.delete(sessionId)
+    this.events.emit('session-lifecycle', {
+      profileId: existing.profileId,
+      sessionId,
+      change: 'changed',
+      reason: 'agent_unreachable',
+    } satisfies SessionLifecycleNotification)
+  }
+
+  /** The port is scoped to the owning profile: no cross-profile resolution. */
+  sessionRpcPort(profileId: string, sessionId: string): number | null {
+    const entry = this.sessionRpcPorts.get(sessionId)
+    if (!entry || entry.profileId !== profileId) return null
+    return entry.port
+  }
+
+  /**
+   * Sessions whose agent RPC bridge is currently registered for a profile.
+   * After a daemon restart the agent processes are NOT children of the new
+   * daemon, but their lifetime heartbeat re-registers here within one
+   * interval — a live registration is the daemon's proof of a reachable
+   * agent, so liveness views must union this with the child-process table.
+   */
+  sessionIdsWithRpcPort(profileId: string): string[] {
+    const ids: string[] = []
+    for (const [sessionId, entry] of this.sessionRpcPorts) {
+      if (entry.profileId === profileId) ids.push(sessionId)
+    }
+    return ids
+  }
+
+  /** All registered agent RPC bridges (for the daemon control /list view). */
+  listRegisteredRpcSessions(): Array<{ sessionId: string; profileId: string; port: number }> {
+    return [...this.sessionRpcPorts.entries()].map(([sessionId, entry]) => ({
+      sessionId,
+      profileId: entry.profileId,
+      port: entry.port,
+    }))
   }
 
   log(profileId: string): DaemonEventLog {
@@ -54,9 +135,39 @@ export class DaemonIscpService {
     return log
   }
 
+  /**
+   * The materialized phone/text view over a profile's event log. Projection
+   * traces go to the daemon log WITHOUT body content (P1 logging contract);
+   * appended records fan out as 'text-view-event'.
+   */
+  textView(profileId: string): TextViewLog {
+    let view = this.textViews.get(profileId)
+    if (!view) {
+      const log = this.log(profileId)
+      view = new TextViewLog(
+        log,
+        join(this.profileDirFor(profileId), 'eventlog'),
+        (trace) => {
+          logger.debug('[TEXT VIEW] projected', { profileId, ...trace })
+        },
+        (sessionId, record, viewEpoch) => {
+          this.events.emit('text-view-event', {
+            profileId,
+            sessionId,
+            record,
+            viewEpoch,
+          } satisfies TextViewEventNotification)
+        },
+      )
+      this.textViews.set(profileId, view)
+    }
+    return view
+  }
+
   /** Ingest a batch of session events (idempotent per localId). */
   ingest(profileId: string, sessionId: string, events: IngestedSessionEvent[]): EventLogAppendResult[] {
     const log = this.log(profileId)
+    const isNewSession = log.sessionInfo(sessionId) === null
     const results: EventLogAppendResult[] = []
     for (const event of events) {
       const result = log.append(sessionId, event.body, event.localId)
@@ -68,6 +179,19 @@ export class DaemonIscpService {
         epoch: result.epoch,
         deduped: result.deduped,
       } satisfies SessionEventNotification)
+    }
+    if (isNewSession && events.length > 0) {
+      this.events.emit('session-lifecycle', {
+        profileId,
+        sessionId,
+        change: 'added',
+        reason: 'session_created',
+      } satisfies SessionLifecycleNotification)
+    }
+    // Materialize the text view in the same tick so live 'text-view-event'
+    // pushes fire alongside the raw 'session-event' ones.
+    if (events.length > 0) {
+      this.textView(profileId).sync(sessionId)
     }
     return results
   }

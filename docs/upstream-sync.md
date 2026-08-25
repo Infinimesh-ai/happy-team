@@ -65,7 +65,7 @@ pnpm --filter happy-server exec vitest run sources/team
 ```
 
 ```bash
-pnpm --filter happy exec vitest run --project unit src/api/apiMachine.test.ts src/utils/detectCLI.test.ts
+pnpm --filter happy exec vitest run --project unit src/api/apiMachine.test.ts src/utils/detectCLI.test.ts src/utils/detectCLI.sdk.test.ts
 ```
 
 Commit the merge with a message that mentions the upstream sync.
