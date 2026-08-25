@@ -12,6 +12,7 @@ vi.mock('os', () => ({
   default: {
     homedir: vi.fn(() => '/home/person'),
     platform: vi.fn(() => 'darwin'),
+    arch: vi.fn(() => 'arm64'),
   },
 }));
 vi.mock('@/agy/constants', () => ({ findAgyBin: vi.fn() }));

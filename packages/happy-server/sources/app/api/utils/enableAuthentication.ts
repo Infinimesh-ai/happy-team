@@ -1,5 +1,5 @@
 import { Fastify } from "../types";
-import { debug } from "@/utils/log";
+import { debug, log } from "@/utils/log";
 import { auth } from "@/app/auth/auth";
 import { isTeamAccountDisabled } from "@/team/status";
 
