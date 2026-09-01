@@ -1,24 +1,45 @@
-import { describe, expect, it } from 'vitest';
-import { getClaudeAgentSdkBinaryCandidates, hasBundledClaudeAgentSdk, resolveClaudeAvailability } from './detectCLI';
+import { execSync } from 'child_process';
+import { existsSync } from 'fs';
+import os from 'os';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-describe('detectCLIAvailability Claude support', () => {
-  it('treats the bundled Claude Agent SDK as remote-mode Claude availability', () => {
-    expect(resolveClaudeAvailability(false, true)).toBe(true);
+import { findAgyBin } from '@/agy/constants';
+import { detectCLIAvailability } from './detectCLI';
+
+vi.mock('child_process', () => ({ execSync: vi.fn() }));
+vi.mock('fs', () => ({ existsSync: vi.fn() }));
+vi.mock('os', () => ({
+  default: {
+    homedir: vi.fn(() => '/home/person'),
+    platform: vi.fn(() => 'darwin'),
+    arch: vi.fn(() => 'arm64'),
+  },
+}));
+vi.mock('@/agy/constants', () => ({ findAgyBin: vi.fn() }));
+
+const mockedExecSync = vi.mocked(execSync);
+const mockedExistsSync = vi.mocked(existsSync);
+const mockedFindAgyBin = vi.mocked(findAgyBin);
+const mockedPlatform = vi.mocked(os.platform);
+
+describe('CLI availability detection', () => {
+  beforeEach(() => {
+    mockedExecSync.mockReset();
+    mockedExecSync.mockImplementation(() => {
+      throw new Error('not installed');
+    });
+    mockedExistsSync.mockReset();
+    mockedExistsSync.mockReturnValue(false);
+    mockedFindAgyBin.mockReset();
+    mockedFindAgyBin.mockReturnValue(undefined);
+    mockedPlatform.mockReturnValue('darwin');
   });
 
-  it('keeps the global claude command as sufficient availability', () => {
-    expect(resolveClaudeAvailability(true, false)).toBe(true);
-  });
+  it('reports Antigravity only when its executable resolver finds an installation', () => {
+    expect(detectCLIAvailability().agy).toBe(false);
 
-  it('reports unavailable when neither global claude nor the bundled SDK can be found', () => {
-    expect(resolveClaudeAvailability(false, false)).toBe(false);
-  });
+    mockedFindAgyBin.mockReturnValue('/home/person/.local/bin/agy');
 
-  it('can resolve the declared Claude Agent SDK dependency', () => {
-    expect(hasBundledClaudeAgentSdk()).toBe(true);
-  });
-
-  it('knows the current platform Claude SDK native binary package name', () => {
-    expect(getClaudeAgentSdkBinaryCandidates().length).toBeGreaterThan(0);
+    expect(detectCLIAvailability().agy).toBe(true);
   });
 });

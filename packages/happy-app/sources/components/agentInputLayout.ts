@@ -59,7 +59,7 @@ export function resolveMobileComposerHeight(inputHeight: number, hasAttachments 
         + (hasAttachments ? MOBILE_COMPOSER_METRICS.attachmentExtraHeight : 0);
 }
 
-export type MobileComposerMenuVariant = 'icon' | 'model' | 'effort';
+export type MobileComposerMenuVariant = 'icon' | 'model' | 'effort' | 'permission';
 
 export interface MobileComposerGeometryStyle {
     width?: number | '100%';
@@ -83,6 +83,39 @@ export interface MobileComposerMenuGeometry {
     content: MobileComposerGeometryStyle;
 }
 
+export interface MobileCollapsedComposerGeometry {
+    shellHeight: number;
+    shellRadius: number;
+    contentPaddingLeft: number;
+    contentPaddingRight: number;
+    inputPaddingLeft: number;
+    inputPaddingRight: number;
+    textInset: number;
+}
+
+/**
+ * Places collapsed-composer text at the tangent where the capsule's rounded
+ * end meets its straight edge, rather than halfway through the rounded end.
+ */
+export function resolveMobileCollapsedComposerGeometry(
+    shellHeight = 56,
+    contentPaddingHorizontal = 7,
+    inputPaddingRight = 4,
+): MobileCollapsedComposerGeometry {
+    const shellRadius = shellHeight / 2;
+    const inputPaddingLeft = shellRadius - contentPaddingHorizontal;
+
+    return {
+        shellHeight,
+        shellRadius,
+        contentPaddingLeft: contentPaddingHorizontal,
+        contentPaddingRight: contentPaddingHorizontal,
+        inputPaddingLeft,
+        inputPaddingRight,
+        textInset: contentPaddingHorizontal + inputPaddingLeft,
+    };
+}
+
 /**
  * Keeps the Expo native-menu host frame free of visual padding. Padding and
  * alignment belong exclusively to the visible React Native label inside it.
@@ -102,6 +135,26 @@ export function resolveMobileComposerMenuGeometry(
                 height: '100%',
                 alignItems: 'center',
                 justifyContent: 'center',
+            },
+        };
+    }
+
+    // The permission chip anchors the left of the row next to the add button,
+    // so it sizes to its own label and never shrinks: it is always one word,
+    // and a clipped permission is worse than a clipped model name.
+    if (variant === 'permission') {
+        return {
+            frame: {
+                flexShrink: 0,
+                height: MOBILE_COMPOSER_METRICS.secondaryActionHeight,
+            },
+            content: {
+                height: MOBILE_COMPOSER_METRICS.secondaryActionHeight,
+                borderRadius: MOBILE_COMPOSER_METRICS.secondaryActionHeight / 2,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+                paddingHorizontal: 10,
             },
         };
     }

@@ -20,7 +20,8 @@ import type { PersistedSession } from '@/persistence';
 import { cleanupDaemonState, isDaemonRunningCurrentlyInstalledHappyVersion, stopDaemon } from './controlClient';
 import { startDaemonControlServer } from './controlServer';
 import { DaemonIscpService } from '@/iscp/daemonIscp';
-import { startDaemonIscpPeers } from '@/iscp/daemonPeer';
+import { createIscpPeersController, startDaemonIscpPeers } from '@/iscp/daemonPeer';
+import { startDaemonAutoRenewal } from '@/iscp/autoRenewal';
 import { statSync } from 'fs';
 import { join } from 'path';
 import { projectPath } from '@/projectPath';
@@ -35,6 +36,7 @@ import {
   sanitizeSessionEnvironment,
   wrapTmuxCommandWithSessionEnvironmentSanitizer,
 } from './sessionEnvironment';
+import { startHappyTerminalDaemon } from './happyTerminalBoot';
 
 /** Shell-escape a string for safe interpolation into tmux commands. */
 function shellescape(s: string): string {
@@ -45,13 +47,11 @@ function appendDaemonSpawnModeArgs(args: string[], options: SpawnSessionOptions,
   if (agent !== 'claude' && agent !== 'codex') {
     return;
   }
-  // For claude, 'default' is the app's ambient "no override" value — forwarding
-  // it would pin the session to prompting mode and lose the CLI's own default
-  // (e.g. a --yolo setup where sessions must bypass permissions). For codex,
-  // 'default' IS a concrete ask-first mode (untrusted + workspace-write)
-  // distinct from the codex launch default ('yolo'), so it must be forwarded
-  // or the user's explicit ask-first pick silently yields a yolo session.
-  if (options.permissionMode && (agent === 'codex' || options.permissionMode !== 'default')) {
+  // 'default' is the app's "no override" value for every agent: it means run
+  // the harness the way it is already configured. Forwarding it would replace
+  // that configuration with one specific mode, which is the opposite of what
+  // the word promises. Each runner supplies its own launch default instead.
+  if (options.permissionMode && options.permissionMode !== 'default') {
     args.push('--permission-mode', options.permissionMode);
   }
   if (options.modelMode && options.modelMode !== 'default') {
@@ -177,6 +177,11 @@ export async function startDaemon(): Promise<void> {
   // 2. Should not have another daemon process running
 
   try {
+    // Happy Agent is a machine-level service shared by the mobile app and
+    // Happy Terminal. Start it concurrently and keep this daemon boot path
+    // independent from its install/download/network state.
+    startHappyTerminalDaemon();
+
     // Start caffeinate
     const caffeinateStarted = startCaffeinate();
     if (caffeinateStarted) {
@@ -736,10 +741,9 @@ export async function startDaemon(): Promise<void> {
         if (options?.model) {
           launch.args.push('--model', options.model);
         }
-        // Same as spawnSession: for claude, ambient 'default' must not
-        // override the CLI default; for codex, 'default' is a concrete
-        // ask-first mode and must be forwarded.
-        if (options?.permissionMode && (metadata.flavor === 'codex' || options.permissionMode !== 'default')) {
+        // Same as spawnSession: ambient 'default' must not override whatever
+        // the harness is already configured to do.
+        if (options?.permissionMode && options.permissionMode !== 'default') {
           launch.args.push('--permission-mode', options.permissionMode);
         }
 
@@ -777,11 +781,34 @@ export async function startDaemon(): Promise<void> {
           (sessionId.startsWith('PID-') && pid === parseInt(sessionId.replace('PID-', '')))) {
 
           if (session.startedBy === 'daemon' && session.childProcess) {
-            try {
-              session.childProcess.kill('SIGTERM');
-              logger.debug(`[DAEMON RUN] Sent SIGTERM to daemon-spawned session ${sessionId}`);
-            } catch (error) {
-              logger.debug(`[DAEMON RUN] Failed to kill session ${sessionId}:`, error);
+            // Signal the whole process group, not just the Happy CLI parent.
+            // The harness runs its own backend as a grandchild — Codex spawns
+            // `codex app-server` (codexAppServerClient.ts:647) and only kills it
+            // from its own disconnect path, which a bare SIGTERM to the parent
+            // never reaches. Killing the parent alone therefore left the agent
+            // running, reparented and invisible. The daemon spawns with
+            // `detached: true` (see spawnSession above), which makes the parent
+            // a group leader, so the negative pid covers every descendant.
+            let signalled = false;
+            if (process.platform !== 'win32') {
+              try {
+                process.kill(-pid, 'SIGTERM');
+                signalled = true;
+                logger.debug(`[DAEMON RUN] Sent SIGTERM to process group of session ${sessionId}`);
+              } catch (error) {
+                logger.debug(`[DAEMON RUN] Group kill failed for session ${sessionId}, falling back:`, error);
+              }
+            }
+            // Windows has no process groups to signal, and a group kill can
+            // still fail if the child already exited or never led a group.
+            // Either way the parent is worth killing on its own.
+            if (!signalled) {
+              try {
+                session.childProcess.kill('SIGTERM');
+                logger.debug(`[DAEMON RUN] Sent SIGTERM to daemon-spawned session ${sessionId}`);
+              } catch (error) {
+                logger.debug(`[DAEMON RUN] Failed to kill session ${sessionId}:`, error);
+              }
             }
           } else {
             // For externally started sessions, try to kill by PID
@@ -794,6 +821,7 @@ export async function startDaemon(): Promise<void> {
           }
 
           pidToTrackedSession.delete(pid);
+          iscp.unregisterSessionRpcPort(sessionId);
           logger.debug(`[DAEMON RUN] Removed session ${sessionId} from tracking`);
           return true;
         }
@@ -813,11 +841,24 @@ export async function startDaemon(): Promise<void> {
         logger.debug(`[DAEMON RUN] Removing exited process PID ${pid} from tracking`);
       }
       pidToTrackedSession.delete(pid);
+      if (session?.happySessionId) {
+        iscp.unregisterSessionRpcPort(session.happySessionId);
+      }
     };
 
     // ISCP dual-stack: event-log ingestion is always available; the ISCP
     // peer itself (workstream 2) only comes online for enrolled profiles.
     const iscp = new DaemonIscpService();
+
+    // Reload-able ISCP peers: enrolled profiles are (re)scanned on startup
+    // and whenever POST /iscp/reload fires (single-flight — concurrent
+    // triggers coalesce, and the previous peers are always stopped first).
+    const iscpPeers = createIscpPeersController(() => startDaemonIscpPeers({
+      iscp,
+      getChildren: getCurrentChildren,
+      stopSession,
+      spawnSession
+    }));
 
     // Start control server
     const { port: controlPort, stop: stopControlServer } = await startDaemonControlServer({
@@ -826,7 +867,9 @@ export async function startDaemon(): Promise<void> {
       spawnSession,
       requestShutdown: () => requestShutdown('happy-cli'),
       onHappySessionWebhook,
-      iscp
+      iscp,
+      reloadIscpPeers: () => iscpPeers.reload(),
+      getIscpPeerStatuses: () => iscpPeers.statuses()
     });
 
     // Write initial daemon state (no lock needed for state file)
@@ -842,20 +885,24 @@ export async function startDaemon(): Promise<void> {
 
     // ISCP dual-stack: bring enrolled profiles online as ISCP peers. Failures
     // are logged and never block legacy operation.
-    let iscpPeers: { profiles: string[]; stop: () => void } = { profiles: [], stop: () => { } };
     try {
-      iscpPeers = await startDaemonIscpPeers({
-        iscp,
-        getChildren: getCurrentChildren,
-        stopSession,
-        spawnSession
-      });
-      if (iscpPeers.profiles.length > 0) {
-        logger.debug(`[DAEMON RUN] ISCP peers online for profiles: ${iscpPeers.profiles.join(', ')}`);
+      const { profiles } = await iscpPeers.reload();
+      if (profiles.length > 0) {
+        logger.debug(`[DAEMON RUN] ISCP peers online for profiles: ${profiles.join(', ')}`);
       }
     } catch (error) {
       logger.debug('[DAEMON RUN] ISCP peer startup failed', { error });
     }
+
+    // ISCP bounded auto-renewal (OPS 2026-08-17 §8.3/§8.4): the daemon — not
+    // the phone app or a session — keeps every enrolled profile's trust grant
+    // fresh, recovering persisted in-flight attempts across daemon restarts.
+    // Deliberately independent of the peers: a profile whose peer failed to
+    // start must still renew its grant.
+    const autoRenewal = startDaemonAutoRenewal({
+      reloadPeers: () => iscpPeers.reload(),
+      log: (line) => logger.debug(`[ISCP AUTO-RENEW] ${line}`),
+    });
 
     // Capture the bundled CLI's mtime at startup so the heartbeat can detect
     // when npm replaces `dist/index.mjs` on disk (= the user ran `npm i -g happy`).
@@ -924,7 +971,7 @@ export async function startDaemon(): Promise<void> {
       }
 
       // Prune stale sessions
-      for (const [pid, _] of pidToTrackedSession.entries()) {
+      for (const [pid, session] of pidToTrackedSession.entries()) {
         try {
           // Check if process is still alive (signal 0 doesn't kill, just checks)
           process.kill(pid, 0);
@@ -932,6 +979,9 @@ export async function startDaemon(): Promise<void> {
           // Process is dead, remove from tracking
           logger.debug(`[DAEMON RUN] Removing stale session with PID ${pid} (process no longer exists)`);
           pidToTrackedSession.delete(pid);
+          if (session.happySessionId) {
+            iscp.unregisterSessionRpcPort(session.happySessionId);
+          }
         }
       }
 
@@ -959,6 +1009,7 @@ export async function startDaemon(): Promise<void> {
         // `happy daemon start` reads our still-present daemon.state.json, sees
         // isDaemonRunningCurrentlyInstalledHappyVersion() === true, and exits —
         // leaving nothing running once we also exit.
+        autoRenewal.stop();
         iscpPeers.stop();
         apiMachine.shutdown();
         await stopControlServer();
@@ -1029,6 +1080,7 @@ export async function startDaemon(): Promise<void> {
       // Give time for metadata update to send
       await new Promise(resolve => setTimeout(resolve, 100));
 
+      autoRenewal.stop();
       iscpPeers.stop();
       apiMachine.shutdown();
       await stopControlServer();

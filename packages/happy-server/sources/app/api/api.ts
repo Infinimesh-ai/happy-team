@@ -1,5 +1,5 @@
 import fastify from "fastify";
-import { log, logger } from "@/utils/log";
+import { isProduction, log, logger } from "@/utils/log";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 import { onShutdown } from "@/utils/shutdown";
 import { Fastify } from "./types";
@@ -26,6 +26,7 @@ import { attachmentRoutes } from "./routes/attachmentRoutes";
 import { teamRoutes } from "@/team/routes";
 import { teamTaskRoutes } from "@/team/tasks/routes";
 import { teamMcpRoutes } from "@/team/mcp/routes";
+import { projectRoutes } from "./routes/projectRoutes";
 import { isLocalStorage, getLocalFilesDir } from "@/storage/files";
 import * as path from "path";
 import * as fs from "fs";
@@ -45,6 +46,7 @@ export async function startApi(opts: StartApiOptions = {}) {
     // Start API
     const app = fastify({
         loggerInstance: logger,
+        disableRequestLogging: isProduction,
         bodyLimit: 1024 * 1024 * 100, // 100MB
     });
     app.register(import('@fastify/cors'), {
@@ -118,6 +120,7 @@ export async function startApi(opts: StartApiOptions = {}) {
     teamRoutes(typed);
     teamTaskRoutes(typed);
     teamMcpRoutes(typed);
+    projectRoutes(typed);
 
     // Static webapp (self-host mode)
     if (opts.staticDir) {
