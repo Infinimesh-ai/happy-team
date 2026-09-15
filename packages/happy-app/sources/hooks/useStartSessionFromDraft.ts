@@ -1,13 +1,12 @@
 import * as React from 'react';
-import { useAllMachines, useSetting } from '@/sync/storage';
-import { resolveAgentDefaultConfig } from '@/sync/agentDefaults';
+import { useAllMachines, useSessions, useSetting } from '@/sync/storage';
+import { getCodeAgentDefaults, resolveAgentDefaultConfig } from '@/sync/agentDefaults';
 import {
     machineSpawnNewSession,
     machineStopSession,
     sessionArchive,
     sessionKill,
     sessionSetAgentModes,
-    type SessionAgentModesPatch,
 } from '@/sync/ops';
 import { sync } from '@/sync/sync';
 import { useNewSessionDraft } from '@/hooks/useNewSessionDraft';
@@ -19,6 +18,8 @@ import {
     getEffortLevelsForModel,
     getHardcodedModelModes,
     getHardcodedPermissionModes,
+    filterPermissionModesForCli,
+    getSupportsWorktree,
     includeConfiguredModel,
 } from '@/components/modelModeOptions';
 import { Modal } from '@/modal';
@@ -27,7 +28,8 @@ import {
     collectMachineChoices,
     findMachineChoice,
     resolveAgentMachine,
-    resolveNewSessionAgent,
+    resolveChoiceAgent,
+    resolveWorktreeCreationMachine,
 } from '@/sync/machineChoices';
 import { delay } from '@/utils/time';
 import {
@@ -38,9 +40,14 @@ import {
 import {
     buildSpawnRequestSignature,
     completeSpawnRequest,
+    getSpawnedSessionId,
+    rememberSpawnedSession,
     resolveSpawnRequestId,
 } from '@/sync/spawnRequestId';
 import type { NewSessionStartPhase } from '@/components/newSessionProgress';
+import type { Session } from '@/sync/storageTypes';
+import { collectSessionPlaces, collectSessionWorkspaces } from '@/sync/agentSessionPlaces';
+import { resolveHappyAgentSpawnTarget } from '@/sync/happyAgentSpawn';
 
 const MAX_RIG_PENDING_RESULTS = 3;
 
@@ -61,6 +68,8 @@ const CANCELED = Symbol('canceled');
  */
 type StartRun = {
     canceled: boolean;
+    controller: AbortController;
+    accepted: boolean;
     signal: Promise<typeof CANCELED>;
     cancel: () => void;
 };
@@ -70,9 +79,12 @@ function beginRun(): StartRun {
     const signal = new Promise<typeof CANCELED>((r) => { resolve = r; });
     const run: StartRun = {
         canceled: false,
+        controller: new AbortController(),
+        accepted: false,
         signal,
         cancel: () => {
             run.canceled = true;
+            run.controller.abort();
             resolve(CANCELED);
         },
     };
@@ -93,8 +105,8 @@ function resolveOption<T extends { key: string }>(
 
 export function useStartSessionFromDraft() {
     const machines = useAllMachines({ includeOffline: true });
+    const sessions = useSessions();
     const defaultOverrides = useSetting('agentDefaultOverrides');
-    const experiments = useSetting('experiments');
     const navigateToSession = useNavigateToSession();
     // The composer stays on screen for the whole flow, so what it is waiting on
     // is state rather than a bare boolean: creating a worktree, asking the
@@ -116,7 +128,7 @@ export function useStartSessionFromDraft() {
 
     const cancelStart = React.useCallback(() => {
         const run = activeRunRef.current;
-        if (!run) return;
+        if (!run || run.accepted) return;
         run.cancel();
         // Spent here, synchronously, and not when the canceled flow eventually
         // resumes. Stop hands the composer back on this same tick, so a new
@@ -149,7 +161,7 @@ export function useStartSessionFromDraft() {
         // The draft survives machine changes and app upgrades. Resolve it again
         // at launch time so a stale Claude selection cannot spawn Claude while
         // the selected computer only reports Codex (the Android 1.7.0 regression).
-        const agentType = resolveNewSessionAgent(choice, draft.agentType, experiments);
+        const agentType = resolveChoiceAgent(choice, draft.agentType);
         const agentChanged = agentType !== draft.agentType;
         const machine = resolveAgentMachine(choice, agentType);
         if (!machine) {
@@ -157,12 +169,17 @@ export function useStartSessionFromDraft() {
                 t('common.error'),
                 agentType === 'rig'
                     ? 'Happy Agent is not running on this computer'
-                    : 'This computer has no Happy CLI daemon to start that agent',
+                    : 'Happy CLI is not available on your computer. Run `happy daemon start` on your computer, then try again.',
             );
             return false;
         }
         if (!isMachineOnline(machine)) {
-            Modal.alert(t('common.error'), 'Machine is offline');
+            Modal.alert(
+                t('common.error'),
+                agentType === 'rig'
+                    ? 'Machine is offline'
+                    : 'Happy CLI is offline on your computer. Run `happy daemon start` on your computer, then try again.',
+            );
             return false;
         }
         const rigCreation = agentType === 'rig'
@@ -178,12 +195,20 @@ export function useStartSessionFromDraft() {
                 modelMode: rigCreation.defaultModelKey ?? '',
                 effortLevel: rigCreation.defaultEffortForModel(rigCreation.defaultModelKey),
             }
-            : resolveAgentDefaultConfig(defaultOverrides, agentType);
+            : resolveAgentDefaultConfig(defaultOverrides, agentType, machine.metadata?.happyCliVersion);
         const permission = resolveOption<{ key: string }>(
-            rigCreation?.permissionModes ?? getHardcodedPermissionModes(agentType, t),
+            // The daemon machine's CLI is what will parse the mode; older CLIs
+            // drop the whole prompt on modes they do not know (e.g. `auto`).
+            rigCreation?.permissionModes ?? filterPermissionModesForCli(
+                getHardcodedPermissionModes(agentType, t),
+                machine.metadata?.happyCliVersion,
+            ),
+            // The code default last: when the saved and configured modes were
+            // both filtered out for an old CLI, land there rather than on
+            // whichever mode happens to lead the list.
             agentChanged
-                ? [defaults.permissionMode]
-                : [draft.permissionMode, defaults.permissionMode],
+                ? [defaults.permissionMode, rigCreation ? null : getCodeAgentDefaults(agentType, machine.metadata?.happyCliVersion).permissionMode]
+                : [draft.permissionMode, defaults.permissionMode, rigCreation ? null : getCodeAgentDefaults(agentType, machine.metadata?.happyCliVersion).permissionMode],
         );
         const model = resolveOption<{ key: string }>(
             rigCreation?.models ?? includeConfiguredModel(
@@ -212,14 +237,59 @@ export function useStartSessionFromDraft() {
 
         const prompt = draft.input.trim();
         const attachments = draft.attachments;
+        let ownsCreatedSession = true;
+        const isCurrentTarget = () => {
+            const current = useNewSessionDraft.getState();
+            return ownsCreatedSession && (['selectedMachineId', 'selectedPath', 'agentType', 'permissionMode', 'modelMode', 'effortLevel', 'sessionType', 'worktreeKey'] as const)
+                .every(key => current[key] === draft[key]);
+        };
         const selectedPath = draft.selectedPath?.trim() || '~';
         const absolutePath = resolveAbsolutePath(selectedPath, machine.metadata?.homeDir);
+        const sessionList = (sessions ?? []).filter((item): item is Session => typeof item !== 'string');
+        const places = collectSessionPlaces({
+            machineIds: choice.machineIds,
+            selectedPath,
+            sessions: sessionList,
+        });
+        const selectedProjectId = places.find((place) => place.path === selectedPath)?.projectId ?? null;
+        const projectWorkspaces = collectSessionWorkspaces({
+            machineIds: choice.machineIds,
+            projectId: selectedProjectId,
+            sessions: sessionList,
+        });
         const requestedWorktree = draft.sessionType === 'worktree'
             ? draft.worktreeKey ?? '__new__'
             : '__none__';
-        // A workspace that already exists is only a directory to start in, so it stands whatever
-        // the machine says about making new ones. Making one is what the capability governs.
-        const worktreeSelection = rigCreation?.supportsWorktrees === false && requestedWorktree === '__new__'
+        let happyAgentTarget: ReturnType<typeof resolveHappyAgentSpawnTarget>;
+        try {
+            happyAgentTarget = rigCreation
+                ? resolveHappyAgentSpawnTarget({
+                    projectId: selectedProjectId,
+                    workspaceSelection: requestedWorktree,
+                    workspaces: projectWorkspaces,
+                })
+                : null;
+        } catch (error) {
+            Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : 'The selected workspace is unavailable',
+            );
+            return false;
+        }
+        const worktreeCreationMachine = happyAgentTarget
+            ? null
+            : resolveWorktreeCreationMachine(
+                choice,
+                agentType,
+                rigCreation?.supportsWorktrees
+                    ?? (agentType === 'rig' ? false : getSupportsWorktree(agentType)),
+            );
+        // Happy Agent creates and selects catalog workspaces by durable identity. The Git RPC is
+        // only for ordinary code-agent worktrees; without either route, a stale draft safely falls
+        // back to the main tree.
+        const worktreeSelection = !happyAgentTarget
+            && !worktreeCreationMachine
+            && requestedWorktree === '__new__'
             ? '__none__'
             : requestedWorktree;
         // Reused across every retry of this exact request so a second press of
@@ -250,6 +320,10 @@ export function useStartSessionFromDraft() {
         // A session that arrives after Stop still has to be put down, and by
         // then nobody is on this screen to do it, so this runs unattended.
         const stopAbandonedSession = async (createdSessionId: string) => {
+            // Every cleanup route shares this ownership, including late async
+            // completions. Opening/using the session elsewhere revokes it.
+            if (!ownsCreatedSession) return;
+            ownsCreatedSession = false;
             // The daemon first: it holds the child process and its socket is the
             // one this session was spawned through. The session's own kill RPC
             // is tried after, for a session already up and detached from the
@@ -265,9 +339,12 @@ export function useStartSessionFromDraft() {
             await sync.refreshSessions().catch(() => { /* the list catches up on its own */ });
         };
         try {
+            const existingSessionId = getSpawnedSessionId(clientRequestId);
             let spawnDirectory = absolutePath;
-            if (worktreeSelection === '__new__') {
-                const worktreeResult = await untilCanceled(createWorktree(machine.id, absolutePath));
+            if (!existingSessionId && worktreeSelection === '__new__' && !happyAgentTarget) {
+                // `worktreeSelection` can only remain `__new__` when a creation
+                // machine was resolved above.
+                const worktreeResult = await untilCanceled(createWorktree(worktreeCreationMachine!.id, absolutePath));
                 // The worktree itself is left wherever git got to: it is a
                 // directory, not a running agent, and the next start offers it.
                 if (worktreeResult === CANCELED) return false;
@@ -277,7 +354,7 @@ export function useStartSessionFromDraft() {
                 }
                 spawnDirectory = worktreeResult.worktreePath;
                 showPhase('spawning');
-            } else if (worktreeSelection !== '__none__') {
+            } else if (worktreeSelection !== '__none__' && worktreeSelection !== '__new__') {
                 spawnDirectory = worktreeSelection;
             }
 
@@ -293,16 +370,16 @@ export function useStartSessionFromDraft() {
                             permissionMode: permission.key,
                             effort: effort?.key,
                         }),
+                        ...(happyAgentTarget ? { happyAgentTarget } : {}),
                     }
                     : {
                         machineId: machine.id,
                         directory: spawnDirectory,
                         approvedNewDirectoryCreation,
                         agent: agentType,
-                        // 'default' means "leave the harness on the mode it is
-                        // already configured with", so it is deliberately not
-                        // sent for any agent.
-                        permissionMode: permission.key !== 'default'
+                        // Codex Default is a concrete ask-first policy, not an
+                        // ambient absence of an override.
+                        permissionMode: agentType === 'codex' || permission.key !== 'default'
                             ? permission.key
                             : undefined,
                         modelMode: model.key !== 'default' ? model.key : undefined,
@@ -346,7 +423,7 @@ export function useStartSessionFromDraft() {
                 return approved ? spawn(true) : null;
             };
 
-            const spawning = spawn();
+            const spawning = existingSessionId ? Promise.resolve(existingSessionId) : spawn();
             const spawned = await untilCanceled(spawning);
             if (spawned === CANCELED) {
                 // The key was already spent by cancelStart, on the tick Stop
@@ -359,47 +436,63 @@ export function useStartSessionFromDraft() {
             }
             const sessionId = spawned;
             if (!sessionId) return false;
-            // The idempotency key did its job; the next Start is a new session.
-            completeSpawnRequest();
+            rememberSpawnedSession(clientRequestId, sessionId, () => {
+                run.cancel();
+                void stopAbandonedSession(sessionId).catch(error => console.error('Failed to stop abandoned session:', error));
+            }, () => { ownsCreatedSession = false; });
             showPhase('opening');
 
-            if (await untilCanceled(sync.refreshSessions()) === CANCELED) {
+            if (await untilCanceled(sync.ensureSessionReady(sessionId)) === CANCELED) {
+                void stopAbandonedSession(sessionId);
+                return false;
+            }
+
+            // Ownership must still hold before changing modes as well as before
+            // sending: a session adopted elsewhere is no longer this attempt's.
+            if (run.canceled || !isCurrentTarget()) {
+                completeSpawnRequest(clientRequestId);
                 void stopAbandonedSession(sessionId);
                 return false;
             }
 
             if (!rigCreation) {
-                const modesPatch: SessionAgentModesPatch = {};
-                if (permission.key !== defaults.permissionMode) modesPatch.permissionMode = permission.key;
-                if (model.key !== defaults.modelMode) modesPatch.modelMode = model.key;
-                if ((effort?.key ?? null) !== defaults.effortLevel) modesPatch.effortLevel = effort?.key ?? null;
-                if (Object.keys(modesPatch).length > 0) {
-                    sessionSetAgentModes(sessionId, modesPatch);
-                }
-            }
-
-            // Last look before anything becomes irreversible. Past this line the
-            // prompt is cleared, the screen changes, and the message goes out —
-            // a Stop that lands a moment too late must not do all three anyway.
-            if (run.canceled) {
-                void stopAbandonedSession(sessionId);
-                return false;
-            }
-
-            draft.setInput('');
-            draft.setAttachments([]);
-            navigateToSession(sessionId);
-            if (prompt || attachments.length > 0) {
-                // The session is ready at this point. Open it immediately and
-                // let the first message enqueue without keeping the user on Home
-                // during image upload or a slower network round-trip.
-                void sync.sendMessage(sessionId, prompt, { source: 'new_session', attachments }).catch((error) => {
-                    Modal.alert(
-                        t('common.error'),
-                        error instanceof Error ? error.message : 'Failed to send the first message',
-                    );
+                // Pin the actual launch selection to this session. Keeping
+                // defaults as null lets a later settings change rewrite an
+                // existing session's displayed and transmitted mode/model.
+                sessionSetAgentModes(sessionId, {
+                    permissionMode: permission.key,
+                    modelMode: model.key,
+                    effortLevel: effort?.key ?? null,
                 });
             }
+
+            if (prompt || attachments.length > 0) {
+                const accepted = await untilCanceled(sync.sendMessage(sessionId, prompt, {
+                    source: 'new_session', attachments, signal: run.controller.signal,
+                    isCurrent: isCurrentTarget,
+                    onAccepted: () => {
+                        run.accepted = true;
+                        completeSpawnRequest(clientRequestId);
+                    },
+                }));
+                if (accepted === CANCELED) {
+                    void stopAbandonedSession(sessionId);
+                    return false;
+                }
+                if (!accepted) {
+                    if (!isCurrentTarget()) {
+                        completeSpawnRequest(clientRequestId);
+                        void stopAbandonedSession(sessionId);
+                    }
+                    return false;
+                }
+            }
+            completeSpawnRequest(clientRequestId);
+            // Do not erase edits made while hydration or attachment upload ran.
+            const currentDraft = useNewSessionDraft.getState();
+            if (currentDraft.input === draft.input) currentDraft.setInput('');
+            if (currentDraft.attachments === attachments) currentDraft.setAttachments([]);
+            navigateToSession(sessionId);
             return true;
         } catch (error) {
             // A failure the user already walked away from is not news.
@@ -419,7 +512,7 @@ export function useStartSessionFromDraft() {
                 if (isMountedRef.current) setPhase(null);
             }
         }
-    }, [defaultOverrides, experiments, machines, navigateToSession]);
+    }, [defaultOverrides, machines, navigateToSession, sessions]);
 
     return { isStarting: phase !== null, phase, startSession, cancelStart };
 }

@@ -1,10 +1,14 @@
 import { z } from "zod";
+import { RigBotSchema } from '@slopus/happy-wire';
+import type { SessionAvatarDescriptor } from './sessionAvatarTypes';
+import type { ProjectAvatar } from './projectTypes';
 
 //
 // Agent states
 //
 
 export const MetadataSchema = z.object({
+    bot: RigBotSchema.optional(),
     models: z.array(z.object({
         code: z.string(),
         value: z.string(),
@@ -82,6 +86,11 @@ export const MetadataSchema = z.object({
             search: z.boolean(),
             write: z.boolean(),
         }).passthrough(),
+        // Daemon emits `user-message-accepted` receipts when a message enters
+        // the agent's context. Optional: absent on daemons that predate it,
+        // and the app must not hold messages for those — with no receipt ever
+        // coming, a held message would stay "Sending…" forever.
+        messageReceipts: z.boolean().optional(),
         modelSelection: z.boolean(),
         reasoningSelection: z.boolean(),
         permissionModeSelection: z.boolean(),
@@ -350,6 +359,11 @@ export const AgentStateSchema = z.object({
         reason: z.string().nullish(),
         mode: z.string().nullish(),
         allowedTools: z.array(z.string()).nullish(),
+        // The CLI completes a request by echoing the RPC's own field name,
+        // `allowTools`, so every deployed CLI reports the "don't ask again"
+        // grant under this key. Declared here so parsing keeps it; the
+        // reducer folds it into `allowedTools` when reading.
+        allowTools: z.array(z.string()).nullish(),
         decision: z.enum(['approved', 'approved_for_session', 'denied', 'abort']).nullish(),
         toolUseId: z.string().nullish()
     })).nullish(),
@@ -381,6 +395,12 @@ export interface SessionAgentModesPatch {
 
 export interface Session {
     id: string,
+    avatarDescriptor?: SessionAvatarDescriptor | null,
+    avatar?: ProjectAvatar | null,
+    /** Local account-event watermark; not the session message sequence. */
+    avatarUpdateSeq?: number,
+    /** Server avatar revision, including explicit removal snapshots. */
+    avatarRevision?: number,
     seq: number,
     createdAt: number,
     updatedAt: number,

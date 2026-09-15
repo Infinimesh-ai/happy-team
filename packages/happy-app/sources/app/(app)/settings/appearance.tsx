@@ -10,7 +10,7 @@ import { Switch } from '@/components/Switch';
 import { Appearance, Platform, Pressable, Text, View } from 'react-native';
 import * as SystemUI from 'expo-system-ui';
 import { darkTheme, lightTheme } from '@/theme';
-import { SESSION_STATUS_BAR_DISPLAY_MODES, type SessionStatusBarDisplay } from '@/sync/settings';
+import { type SessionListGrouping } from '@/sync/settings';
 import { t, getLanguageNativeName, SUPPORTED_LANGUAGES } from '@/text';
 import {
     normalizeUserMessageBubbleColor,
@@ -22,6 +22,10 @@ import {
 import * as React from 'react';
 import { MobileGlassSurface } from '@/components/MobileGlass';
 import { AnimatedCollapsible } from '@/components/AnimatedOverlay';
+import { AvatarBrutalist } from '@/components/AvatarBrutalist';
+import { AvatarSkia } from '@/components/AvatarSkia';
+import { AvatarGradient } from '@/components/AvatarGradient';
+import { AVATAR_STYLES, normalizeAvatarStyle, type AvatarStyle } from '@/utils/avatarStyle';
 
 const getUserMessageBubbleColorLabel = (color: UserMessageBubbleColor): string => {
     switch (color) {
@@ -40,25 +44,93 @@ const getUserMessageBubbleColorLabel = (color: UserMessageBubbleColor): string =
     }
 };
 
-const getSessionStatusDisplayLabel = (mode: SessionStatusBarDisplay): string => {
-    switch (mode) {
-        case 'hidden':
-            return t('settingsAppearance.sessionStatusDisplayOptions.hidden');
-        case 'above':
-            return t('settingsAppearance.sessionStatusDisplayOptions.above');
-        case 'below':
-            return t('settingsAppearance.sessionStatusDisplayOptions.below');
+const getAvatarStyleLabel = (style: AvatarStyle): string => {
+    switch (style) {
+        case 'brutalist':
+            return t('settingsAppearance.avatarStyleOptions.brutalist');
+        case 'pixelated':
+            return t('settingsAppearance.avatarStyleOptions.pixelated');
+        case 'gradient':
+            return t('settingsAppearance.avatarStyleOptions.gradient');
     }
 };
 
-const getSessionStatusDisplayIcon = (mode: SessionStatusBarDisplay): React.ComponentProps<typeof Ionicons>['name'] => {
+// One fixed id so the three previews stay comparable: same seed, different
+// renderer.
+const AVATAR_PREVIEW_ID = 'avatar-style-preview';
+
+function AvatarStylePreview({ style, monochrome }: { style: AvatarStyle; monochrome: boolean }) {
+    const size = 28;
+    switch (style) {
+        case 'brutalist':
+            return <AvatarBrutalist id={AVATAR_PREVIEW_ID} size={size} monochrome={monochrome} />;
+        case 'pixelated':
+            return <AvatarSkia id={AVATAR_PREVIEW_ID} size={size} monochrome={monochrome} />;
+        case 'gradient':
+            return <AvatarGradient id={AVATAR_PREVIEW_ID} size={size} monochrome={monochrome} />;
+    }
+}
+
+function AvatarStyleDropdownValue(props: {
+    style: AvatarStyle;
+    monochrome: boolean;
+    expanded: boolean;
+}) {
+    const { theme } = useUnistyles();
+    const styles = stylesheet;
+
+    return (
+        <View style={styles.dropdownValue}>
+            <AvatarStylePreview style={props.style} monochrome={props.monochrome} />
+            <Text style={styles.dropdownValueText} numberOfLines={1}>
+                {getAvatarStyleLabel(props.style)}
+            </Text>
+            <Ionicons
+                name={props.expanded ? 'chevron-up' : 'chevron-down'}
+                size={18}
+                color={theme.colors.groupped.chevron}
+            />
+        </View>
+    );
+}
+
+function AvatarStyleOption(props: {
+    style: AvatarStyle;
+    monochrome: boolean;
+    selected: boolean;
+    onPress: () => void;
+}) {
+    const { theme } = useUnistyles();
+    const styles = stylesheet;
+
+    return (
+        <Pressable
+            onPress={props.onPress}
+            style={({ pressed }) => [
+                styles.statusPlacementOption,
+                props.selected && styles.statusPlacementOptionSelected,
+                pressed && styles.statusPlacementOptionPressed,
+            ]}
+        >
+            <AvatarStylePreview style={props.style} monochrome={props.monochrome} />
+            <Text style={styles.statusPlacementOptionText} numberOfLines={1}>
+                {getAvatarStyleLabel(props.style)}
+            </Text>
+            {props.selected ? (
+                <Ionicons name="checkmark-circle" size={20} color={theme.colors.status.connecting} />
+            ) : (
+                <View style={styles.bubbleColorOptionCheckPlaceholder} />
+            )}
+        </Pressable>
+    );
+}
+
+const getSessionListGroupingLabel = (mode: SessionListGrouping): string => {
     switch (mode) {
-        case 'hidden':
-            return 'eye-off-outline';
-        case 'above':
-            return 'chevron-up-outline';
-        case 'below':
-            return 'chevron-down-outline';
+        case 'flat':
+            return t('sessionsFilter.flatList');
+        case 'project':
+            return t('sessionsFilter.groupByProject');
     }
 };
 
@@ -110,61 +182,6 @@ function BubbleColorDropdownValue(props: {
     );
 }
 
-function StatusDisplayDropdownValue(props: {
-    mode: SessionStatusBarDisplay;
-    expanded: boolean;
-}) {
-    const { theme } = useUnistyles();
-    const styles = stylesheet;
-
-    return (
-        <View style={styles.dropdownValue}>
-            <Text style={styles.dropdownValueText} numberOfLines={1}>
-                {getSessionStatusDisplayLabel(props.mode)}
-            </Text>
-            <Ionicons
-                name={props.expanded ? 'chevron-up' : 'chevron-down'}
-                size={18}
-                color={theme.colors.groupped.chevron}
-            />
-        </View>
-    );
-}
-
-function StatusDisplayOption(props: {
-    mode: SessionStatusBarDisplay;
-    selected: boolean;
-    onPress: () => void;
-}) {
-    const { theme } = useUnistyles();
-    const styles = stylesheet;
-
-    return (
-        <Pressable
-            onPress={props.onPress}
-            style={({ pressed }) => [
-                styles.statusPlacementOption,
-                props.selected && styles.statusPlacementOptionSelected,
-                pressed && styles.statusPlacementOptionPressed,
-            ]}
-        >
-            <Ionicons
-                name={getSessionStatusDisplayIcon(props.mode)}
-                size={20}
-                color={props.selected ? theme.colors.status.connecting : theme.colors.textSecondary}
-            />
-            <Text style={styles.statusPlacementOptionText} numberOfLines={1}>
-                {getSessionStatusDisplayLabel(props.mode)}
-            </Text>
-            {props.selected ? (
-                <Ionicons name="checkmark-circle" size={20} color={theme.colors.status.connecting} />
-            ) : (
-                <View style={styles.bubbleColorOptionCheckPlaceholder} />
-            )}
-        </Pressable>
-    );
-}
-
 function BubbleColorOption(props: {
     color: UserMessageBubbleColor;
     selected: boolean;
@@ -204,20 +221,23 @@ export default function AppearanceSettingsScreen() {
     const [showHarnessIconInSessionHeader, setShowHarnessIconInSessionHeader] = useSettingMutable('showHarnessIconInSessionHeader');
     const [compactToolCalls, setCompactToolCalls] = useSettingMutable('compactToolCalls');
     const [userMessageBubbleColor, setUserMessageBubbleColor] = useSettingMutable('userMessageBubbleColor');
-    const [sessionStatusBarDisplay, setSessionStatusBarDisplay] = useSettingMutable('sessionStatusBarDisplay');
     const [usageLimitShowRemaining, setUsageLimitShowRemaining] = useSettingMutable('usageLimitShowRemaining');
     const [themePreference, setThemePreference] = useLocalSettingMutable('themePreference');
     const [preferredLanguage] = useSettingMutable('preferredLanguage');
-    const [statusPlacementDropdownOpen, setStatusPlacementDropdownOpen] = React.useState(false);
+    const [avatarStyleSetting, setAvatarStyle] = useSettingMutable('avatarStyle');
+    const [avatarMonochrome, setAvatarMonochrome] = useSettingMutable('avatarMonochrome');
+    const [sessionListGrouping, setSessionListGrouping] = useSettingMutable('sessionListGrouping');
+    const [agentInputEnterToSend, setAgentInputEnterToSend] = useSettingMutable('agentInputEnterToSend');
+    const [commandPaletteEnabled, setCommandPaletteEnabled] = useLocalSettingMutable('commandPaletteEnabled');
+    const [fileDiffsSidebar, setFileDiffsSidebar] = useSettingMutable('fileDiffsSidebar');
+    const [groupToolCalls, setGroupToolCalls] = useSettingMutable('groupToolCalls');
     const [bubbleColorDropdownOpen, setBubbleColorDropdownOpen] = React.useState(false);
-    
+    const [avatarStyleDropdownOpen, setAvatarStyleDropdownOpen] = React.useState(false);
+
+    const avatarStyle = normalizeAvatarStyle(avatarStyleSetting);
     const displayBubbleColor = normalizeUserMessageBubbleColor(userMessageBubbleColor);
     const displayBubblePalette = resolveUserMessageBubbleColor(displayBubbleColor, theme.dark);
     const displayBubbleColorLabel = getUserMessageBubbleColorLabel(displayBubbleColor);
-    const applySessionStatusDisplay = React.useCallback((mode: SessionStatusBarDisplay) => {
-        setSessionStatusBarDisplay(mode);
-        setStatusPlacementDropdownOpen(false);
-    }, [setSessionStatusBarDisplay]);
     
     // Language display
     const getLanguageDisplayText = () => {
@@ -290,34 +310,6 @@ export default function AppearanceSettingsScreen() {
 
             <ItemGroup title={t('settingsAppearance.chat')} footer={t('settingsAppearance.chatDescription')}>
                 <Item
-                    title={t('settingsAppearance.sessionStatusBar')}
-                    subtitle={t('settingsAppearance.sessionStatusBarDescription')}
-                    icon={<Ionicons name="stats-chart-outline" size={29} color={theme.colors.status.connecting} />}
-                    rightElement={
-                        <StatusDisplayDropdownValue
-                            mode={sessionStatusBarDisplay}
-                            expanded={statusPlacementDropdownOpen}
-                        />
-                    }
-                    onPress={() => {
-                        setBubbleColorDropdownOpen(false);
-                        setStatusPlacementDropdownOpen((open) => !open);
-                    }}
-                    showDivider={statusPlacementDropdownOpen}
-                />
-                {statusPlacementDropdownOpen && (
-                    <AnimatedCollapsible style={stylesheet.statusPlacementDropdown}>
-                        {SESSION_STATUS_BAR_DISPLAY_MODES.map((mode) => (
-                            <StatusDisplayOption
-                                key={mode}
-                                mode={mode}
-                                selected={mode === sessionStatusBarDisplay}
-                                onPress={() => applySessionStatusDisplay(mode)}
-                            />
-                        ))}
-                    </AnimatedCollapsible>
-                )}
-                <Item
                     title={t('settingsAppearance.usageLimitShowRemaining')}
                     subtitle={t('settingsAppearance.usageLimitShowRemainingDescription')}
                     icon={<Ionicons name="speedometer-outline" size={29} color={theme.colors.status.connecting} />}
@@ -340,7 +332,7 @@ export default function AppearanceSettingsScreen() {
                         />
                     }
                     onPress={() => {
-                        setStatusPlacementDropdownOpen(false);
+                        setAvatarStyleDropdownOpen(false);
                         setBubbleColorDropdownOpen((open) => !open);
                     }}
                     showDivider={bubbleColorDropdownOpen}
@@ -360,6 +352,53 @@ export default function AppearanceSettingsScreen() {
                         ))}
                     </AnimatedCollapsible>
                 )}
+            </ItemGroup>
+
+            {/* Avatar Settings */}
+            <ItemGroup title={t('settingsAppearance.avatars')} footer={t('settingsAppearance.avatarsDescription')}>
+                <Item
+                    title={t('settingsAppearance.avatarStyle')}
+                    icon={<Ionicons name="person-circle-outline" size={29} color={theme.colors.status.connecting} />}
+                    rightElement={
+                        <AvatarStyleDropdownValue
+                            style={avatarStyle}
+                            monochrome={avatarMonochrome}
+                            expanded={avatarStyleDropdownOpen}
+                        />
+                    }
+                    onPress={() => {
+                        setBubbleColorDropdownOpen(false);
+                        setAvatarStyleDropdownOpen((open) => !open);
+                    }}
+                    showDivider={avatarStyleDropdownOpen}
+                />
+                {avatarStyleDropdownOpen && (
+                    <AnimatedCollapsible style={stylesheet.statusPlacementDropdown}>
+                        {AVATAR_STYLES.map((style) => (
+                            <AvatarStyleOption
+                                key={style}
+                                style={style}
+                                monochrome={avatarMonochrome}
+                                selected={style === avatarStyle}
+                                onPress={() => {
+                                    setAvatarStyle(style);
+                                    setAvatarStyleDropdownOpen(false);
+                                }}
+                            />
+                        ))}
+                    </AnimatedCollapsible>
+                )}
+                <Item
+                    title={t('settingsAppearance.avatarMonochrome')}
+                    subtitle={t('settingsAppearance.avatarMonochromeDescription')}
+                    icon={<Ionicons name="contrast-outline" size={29} color={theme.colors.status.connecting} />}
+                    rightElement={
+                        <Switch
+                            value={avatarMonochrome}
+                            onValueChange={setAvatarMonochrome}
+                        />
+                    }
+                />
             </ItemGroup>
 
             {/* Text Settings */}
@@ -383,7 +422,63 @@ export default function AppearanceSettingsScreen() {
             </ItemGroup> */}
 
             {/* Display Settings */}
+            <ItemGroup title={t('settingsAppearance.input')} footer={t('settingsAppearance.inputDescription')}>
+                <Item
+                    title={t('settingsAppearance.alwaysShowContextSize')}
+                    subtitle={t('settingsAppearance.alwaysShowContextSizeDescription')}
+                    icon={<Ionicons name="analytics-outline" size={29} color="#5856D6" />}
+                    rightElement={
+                        <Switch
+                            value={alwaysShowContextSize}
+                            onValueChange={setAlwaysShowContextSize}
+                        />
+                    }
+                />
+                {Platform.OS === 'web' && (
+                    <>
+                        <Item
+                            title={t('settingsFeatures.enterToSend')}
+                            subtitle={agentInputEnterToSend
+                                ? t('settingsFeatures.enterToSendEnabled')
+                                : t('settingsFeatures.enterToSendDisabled')}
+                            icon={<Ionicons name="return-down-forward-outline" size={29} color="#007AFF" />}
+                            rightElement={
+                                <Switch
+                                    value={agentInputEnterToSend}
+                                    onValueChange={setAgentInputEnterToSend}
+                                />
+                            }
+                            showChevron={false}
+                        />
+                        <Item
+                            title={t('settingsFeatures.commandPalette')}
+                            subtitle={commandPaletteEnabled
+                                ? t('settingsFeatures.commandPaletteEnabled')
+                                : t('settingsFeatures.commandPaletteDisabled')}
+                            icon={<Ionicons name="keypad-outline" size={29} color="#007AFF" />}
+                            rightElement={
+                                <Switch
+                                    value={commandPaletteEnabled}
+                                    onValueChange={setCommandPaletteEnabled}
+                                />
+                            }
+                            showChevron={false}
+                        />
+                    </>
+                )}
+            </ItemGroup>
+
             <ItemGroup title={t('settingsAppearance.display')} footer={t('settingsAppearance.displayDescription')}>
+                {/* Same setting the home filter menu drives; two values, so a
+                    tap flips between them like the theme row does. */}
+                <Item
+                    title={t('sessionsFilter.groupingTitle')}
+                    icon={<Ionicons name="list-outline" size={29} color="#5856D6" />}
+                    detail={getSessionListGroupingLabel(sessionListGrouping === 'project' ? 'project' : 'flat')}
+                    onPress={() => {
+                        setSessionListGrouping(sessionListGrouping === 'project' ? 'flat' : 'project');
+                    }}
+                />
                 <Item
                     title={t('settingsAppearance.compactToolCalls')}
                     subtitle={t('settingsAppearance.compactToolCallsDescription')}
@@ -396,6 +491,30 @@ export default function AppearanceSettingsScreen() {
                     }
                 />
                 <Item
+                    title="File Diffs Sidebar"
+                    subtitle="Show git changes next to the chat on desktop"
+                    icon={<Ionicons name="git-branch-outline" size={29} color="#5AC8FA" />}
+                    rightElement={
+                        <Switch
+                            value={fileDiffsSidebar}
+                            onValueChange={setFileDiffsSidebar}
+                        />
+                    }
+                    showChevron={false}
+                />
+                <Item
+                    title={t('settingsFeatures.groupToolCalls')}
+                    subtitle={t('settingsFeatures.groupToolCallsSubtitle')}
+                    icon={<Ionicons name="layers-outline" size={29} color="#AF52DE" />}
+                    rightElement={
+                        <Switch
+                            value={groupToolCalls}
+                            onValueChange={setGroupToolCalls}
+                        />
+                    }
+                    showChevron={false}
+                />
+                <Item
                     title={t('settingsAppearance.showLineNumbersInToolViews')}
                     subtitle={t('settingsAppearance.showLineNumbersInToolViewsDescription')}
                     icon={<Ionicons name="code-working-outline" size={29} color="#5856D6" />}
@@ -403,17 +522,6 @@ export default function AppearanceSettingsScreen() {
                         <Switch
                             value={showLineNumbersInToolViews}
                             onValueChange={setShowLineNumbersInToolViews}
-                        />
-                    }
-                />
-                <Item
-                    title={t('settingsAppearance.alwaysShowContextSize')}
-                    subtitle={t('settingsAppearance.alwaysShowContextSizeDescription')}
-                    icon={<Ionicons name="analytics-outline" size={29} color="#5856D6" />}
-                    rightElement={
-                        <Switch
-                            value={alwaysShowContextSize}
-                            onValueChange={setAlwaysShowContextSize}
                         />
                     }
                 />

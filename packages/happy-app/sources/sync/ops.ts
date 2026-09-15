@@ -3,7 +3,7 @@
  * Provides strictly typed functions for all session-related RPC operations
  */
 
-import { sessionRPC, machineRPC, legacyRequest, legacyEmitWithAck } from './transport/transport';
+import { getTransport, sessionRPC, machineRPC, legacyRequest, legacyEmitWithAck } from './transport/transport';
 import { sync } from './sync';
 import { storage } from './storage';
 import type { AgentQuestionAnswer, MachineMetadata, SessionAgentModesPatch } from './storageTypes';
@@ -17,6 +17,8 @@ import {
     rigCanWriteFiles,
     rigHasRpcMethod,
 } from './rig';
+import type { HappyAgentSpawnTarget } from './happyAgentSpawn';
+import { encodeBase64 } from '@/encryption/base64';
 
 export type { SessionAgentModesPatch };
 
@@ -181,6 +183,8 @@ export interface SpawnSessionOptions {
     providerId?: string;
     modelId?: string;
     effort?: string;
+    /** Catalog destination for Happy Agent's native project/workspace spawn. */
+    happyAgentTarget?: HappyAgentSpawnTarget;
     /**
      * If set, the daemon spawns the agent with `--resume <id>` so the new
      * Happy session attaches to a pre-existing on-disk Claude conversation
@@ -257,13 +261,16 @@ export interface ResumeSessionOptions {
  */
 export async function machineSpawnNewSession(options: SpawnSessionOptions): Promise<SpawnSessionResult> {
 
-    const { machineId, directory, approvedNewDirectoryCreation = false, token, agent, permissionMode, modelMode, effortLevel, clientRequestId, providerId, modelId, effort, resumeClaudeSessionId, resumeCodexThreadId, parentSessionId, forkedFromMessageId, isSideChat } = options;
+    const { machineId, directory, approvedNewDirectoryCreation = false, token, agent, permissionMode, modelMode, effortLevel, clientRequestId, providerId, modelId, effort, happyAgentTarget, resumeClaudeSessionId, resumeCodexThreadId, parentSessionId, forkedFromMessageId, isSideChat } = options;
 
     try {
         if (agent === 'rig' && !clientRequestId) {
             throw new Error('Rig session creation requires a client request ID');
         }
-        type SpawnRequest = {
+        if (happyAgentTarget && agent !== 'rig') {
+            throw new Error('Happy Agent catalog targets require the Happy Agent harness');
+        }
+        type DirectorySpawnRequest = {
             type: 'spawn-in-directory'
             directory: string
             approvedNewDirectoryCreation?: boolean,
@@ -282,7 +289,33 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             forkedFromMessageId?: string,
             isSideChat?: boolean,
         };
-        const request: SpawnRequest = agent === 'rig'
+        type HappyAgentSpawnRequest = {
+            type: 'happy-agent-spawn';
+            clientRequestId: string;
+            target: HappyAgentSpawnTarget;
+            agentConfiguration: {
+                type: 'happy-agent';
+                permissionMode?: string;
+                providerId?: string;
+                modelId?: string;
+                effort?: string;
+            };
+        };
+        type SpawnRequest = DirectorySpawnRequest | HappyAgentSpawnRequest;
+        const request: SpawnRequest = agent === 'rig' && happyAgentTarget
+            ? {
+                type: 'happy-agent-spawn',
+                clientRequestId: clientRequestId!,
+                target: happyAgentTarget,
+                agentConfiguration: {
+                    type: 'happy-agent',
+                    ...(permissionMode ? { permissionMode } : {}),
+                    ...(providerId ? { providerId } : {}),
+                    ...(modelId ? { modelId } : {}),
+                    ...((effort ?? effortLevel) ? { effort: effort ?? effortLevel } : {}),
+                },
+            }
+            : agent === 'rig'
             ? {
                 type: 'spawn-in-directory',
                 agent: 'rig',
@@ -461,15 +494,76 @@ export async function codexListRewindPoints(
     }
 }
 
+/**
+ * Everything the daemon needs to revive a session it has no memory of. The
+ * daemon cannot build this itself: reconnecting requires the per-session data
+ * key, and ~/.happy/access.key only holds the account *public* key, so a
+ * session the daemon did not create is undecryptable to it. The client is the
+ * only party holding the account secret, so it ships the key and the already
+ * decrypted metadata over the machine RPC — which is end-to-end encrypted with
+ * the machine key (the legacy transport's machine RPC), the same key the daemon already has.
+ */
+type ResumeFallbackPayload = {
+    metadata: unknown;
+    metadataVersion: number;
+    agentStateVersion: number;
+    seq: number;
+    encryptionKey: string;
+    encryptionVariant: 'dataKey';
+};
+
+/**
+ * `fallback: undefined` disappears in JSON, so a client that cannot build one
+ * is indistinguishable on the wire from a client too old to know about it.
+ * The reason is always sent: the daemon puts it in the error message, which is
+ * the only place a user can see why an untracked session refused to resume.
+ */
+function buildResumeFallback(sessionId: string, machineId: string): { fallback?: ResumeFallbackPayload; reason: string } {
+    // ISCP owns its session history and encryption. Never export a legacy
+    // session data key through a different network profile's transport.
+    if (!getTransport().legacy) {
+        return { reason: 'client-transport-has-no-data-key' };
+    }
+    const session = storage.getState().sessions[sessionId];
+    if (!session || !session.metadata) {
+        return { reason: 'client-has-no-session-row' };
+    }
+    // Only the session's owning machine may receive its data key.
+    if (session.metadata.machineId !== machineId) {
+        return { reason: 'client-session-machine-mismatch' };
+    }
+    // Legacy sessions encrypt with the account master secret; that never
+    // leaves this device, so they stay resumable only while tracked.
+    const dataKey = sync.encryption.getSessionDataKey(sessionId);
+    if (!dataKey) {
+        return { reason: 'client-has-no-data-key' };
+    }
+    return {
+        reason: 'ok',
+        fallback: {
+            metadata: session.metadata,
+            metadataVersion: session.metadataVersion,
+            agentStateVersion: session.agentStateVersion,
+            seq: session.seq,
+            encryptionKey: encodeBase64(dataKey),
+            encryptionVariant: 'dataKey',
+        },
+    };
+}
+
 export async function machineResumeSession(options: ResumeSessionOptions & { model?: string; permissionMode?: string }): Promise<SpawnSessionResult> {
     const { machineId, sessionId, model, permissionMode } = options;
 
     try {
-        const result = await machineRPC<SpawnSessionResult, { sessionId: string; model?: string; permissionMode?: string }>(
+        const { fallback, reason } = buildResumeFallback(sessionId, machineId);
+        const result = await machineRPC<SpawnSessionResult | { error: string }, { sessionId: string; model?: string; permissionMode?: string; fallback?: unknown; fallbackReason?: string }>(
             machineId,
             'resume-happy-session',
-            { sessionId, model, permissionMode },
+            { sessionId, model, permissionMode, fallback, fallbackReason: reason },
         );
+        if ('error' in result) {
+            return { type: 'error', errorMessage: result.error };
+        }
         return result;
     } catch (error) {
         return {
@@ -1104,6 +1198,9 @@ export async function sessionKill(sessionId: string): Promise<SessionKillRespons
  * Use this when the CLI process is already dead and sessionKill can't reach it.
  */
 export async function sessionArchive(sessionId: string): Promise<{ success: boolean; message?: string }> {
+    if (storage.getState().sessions[sessionId]?.metadata?.bot) {
+        return { success: false, message: 'Connect to the bot’s machine to archive it.' };
+    }
     try {
         const response = await legacyRequest(`/v1/sessions/${sessionId}/archive`, {
             method: 'POST'
@@ -1123,6 +1220,9 @@ export async function sessionArchive(sessionId: string): Promise<{ success: bool
  * The session should be inactive/archived before deletion
  */
 export async function sessionDelete(sessionId: string): Promise<{ success: boolean; message?: string }> {
+    if (storage.getState().sessions[sessionId]?.metadata?.bot) {
+        return { success: false, message: 'A bot keeps one continuous conversation. Archive the bot instead.' };
+    }
     try {
         const response = await legacyRequest(`/v1/sessions/${sessionId}`, {
             method: 'DELETE'

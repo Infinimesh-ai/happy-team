@@ -18,6 +18,23 @@ const RIG = 'rig-machine';
 const CLI = 'cli-machine';
 
 describe('where a Happy Agent session may be started', () => {
+    it('never offers a bot folder for a second conversation', () => {
+        const bot = { id: 'bot-1', name: 'Assistant', username: 'assistant', workspaceId: 'bot-ws', orderKey: '1' };
+        const botSession = session({
+            machineId: RIG,
+            path: '/home/steve/Happy/Bots/assistant',
+            bot,
+            project: { id: 'old-synthetic-project', name: 'Assistant' },
+            workspace: { id: 'bot-ws', name: 'Assistant' },
+        });
+        expect(collectSessionPlaces({ machineIds: [RIG], sessions: [session({
+            machineId: RIG, path: '/home/steve/Happy/Bots/assistant', bot,
+        })] })).toEqual([]);
+        expect(collectSessionWorkspaces({
+            machineIds: [RIG], projectId: 'old-synthetic-project', sessions: [botSession],
+        })).toEqual([]);
+    });
+
     it('offers the directories legacy sessions established, on either machine of the pair', () => {
         const places = collectSessionPlaces({
             machineIds: [RIG, CLI],
@@ -137,6 +154,7 @@ describe('which workspaces a project offers', () => {
             sessions,
         });
         expect(found.map((w) => w.name)).toEqual(['Retry policy rewrite']);
+        expect(found[0].id).toBe('w1');
         expect(found[0].path).toBe('/home/steve/rig/.worktrees/retry');
     });
 

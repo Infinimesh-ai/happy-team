@@ -8,7 +8,7 @@ import { CodeView } from '../CodeView';
 import { ToolSectionView } from './ToolSectionView';
 import { useElapsedTime } from '@/hooks/useElapsedTime';
 import { ToolError } from './ToolError';
-import { knownTools } from '@/components/tools/knownTools';
+import { getToolCategoryIcon, knownTools } from '@/components/tools/knownTools';
 import { Metadata } from '@/sync/storageTypes';
 import { useRouter } from 'expo-router';
 import { PermissionFooter } from './PermissionFooter';
@@ -17,6 +17,8 @@ import { t } from '@/text';
 import {
     formatMCPTitle,
     getToolActivityLabel,
+    getToolDisplayTitle,
+    getToolSummaryCategory,
     getTerminalToolCommand,
     shouldRenderToolCardHeader,
     shouldUseCompactToolRow,
@@ -67,7 +69,8 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
     let description: string | null = null;
     let status: string | null = null;
     let minimal = false;
-    let icon = <Ionicons name="construct-outline" size={18} color={theme.colors.textSecondary} />;
+    let icon = getToolCategoryIcon(getToolSummaryCategory(tool.name), 18, theme.colors.text)
+        ?? <Ionicons name="construct-outline" size={18} color={theme.colors.textSecondary} />;
     let noStatus = false;
     let hideDefaultError = false;
     
@@ -88,7 +91,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
     }
 
     // Handle optional title and function type
-    let toolTitle = tool.name;
+    let toolTitle = getToolDisplayTitle(tool);
     
     // Special handling for MCP tools
     if (tool.name.startsWith('mcp__')) {
@@ -173,11 +176,13 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
 
     const terminalCommand = getTerminalToolCommand(tool);
     const isCompactTerminalTool = terminalCommand !== null;
-    const isCompactActivityTool = shouldUseCompactToolRow(tool, compactToolCalls)
+    const SpecificToolView = getToolViewComponent(tool.name);
+    const needsApprovalInput = tool.permission?.status === 'pending' && SpecificToolView === null;
+    const isCompactActivityTool = !needsApprovalInput && (shouldUseCompactToolRow(tool, compactToolCalls, SpecificToolView !== null)
         || minimal
-        || isCompactTerminalTool;
+        || isCompactTerminalTool);
     const activityLabel = getToolActivityLabel(tool);
-    const isInlineCodexPatch = Platform.OS === 'web' && tool.name === 'CodexPatch';
+    const isInlineCodexPatch = Platform.OS === 'web' && (tool.name === 'CodexPatch' || tool.name === 'apply_patch');
     const renderCardHeader = isCompactActivityTool || shouldRenderToolCardHeader(tool.name, Platform.OS);
     const renderPermissionFooter = () => (
         tool.permission && sessionId && tool.name !== 'AskUserQuestion'
@@ -250,7 +255,6 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                 }
 
                 // Try to use a specific tool view component first
-                const SpecificToolView = getToolViewComponent(tool.name);
                 if (SpecificToolView) {
                     return (
                         <View style={styles.content}>
@@ -259,6 +263,7 @@ export const ToolView = React.memo<ToolViewProps>((props) => {
                                 metadata={props.metadata}
                                 messages={props.messages ?? []}
                                 sessionId={sessionId}
+                                messageId={messageId}
                                 permissionFooter={isInlineCodexPatch ? renderPermissionFooter() : undefined}
                             />
                             {tool.state === 'error' && tool.result &&
@@ -324,7 +329,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     compactContainer: {
         backgroundColor: 'transparent',
-        marginVertical: 1,
+        marginVertical: 2,
         overflow: 'visible',
     },
     inlineContainer: {

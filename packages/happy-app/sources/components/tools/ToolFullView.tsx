@@ -4,42 +4,51 @@ import { Ionicons } from '@expo/vector-icons';
 import { ToolCall, Message } from '@/sync/typesMessage';
 import { CodeView } from '../CodeView';
 import { Metadata } from '@/sync/storageTypes';
+import { getToolDisplayTitle, getToolSummaryCategory, isTerminalToolName } from '@/utils/toolDisplay';
+import { toolResultText } from '@/utils/toolResult';
 import { getToolFullViewComponent } from './views/_all';
 import { layout } from '../layout';
 import { useLocalSetting } from '@/sync/storage';
 import { StyleSheet } from 'react-native-unistyles';
 import { t } from '@/text';
+import { ToolError } from './ToolError';
+import { ToolSectionView } from './ToolSectionView';
 
 interface ToolFullViewProps {
     tool: ToolCall;
     metadata?: Metadata | null;
     messages?: Message[];
+    /** Show only this file, for when the user tapped one diff out of many. */
+    focusFile?: string;
 }
 
-export function ToolFullView({ tool, metadata, messages = [] }: ToolFullViewProps) {
+export function ToolFullView({ tool, metadata, messages = [], focusFile }: ToolFullViewProps) {
     // Check if there's a specialized content view for this tool
     const SpecializedFullView = getToolFullViewComponent(tool.name);
     const screenWidth = useWindowDimensions().width;
     const devModeEnabled = (useLocalSetting('devModeEnabled') || __DEV__);
-    console.log('ToolFullView', devModeEnabled);
+    const wideContent = getToolSummaryCategory(tool.name) === 'edit';
 
     return (
-        <ScrollView style={[styles.container, { paddingHorizontal: screenWidth > 700 ? 16 : 0 }]}>
-            <View style={styles.contentWrapper}>
+        <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+            <View style={[
+                styles.contentWrapper,
+                wideContent ? { paddingHorizontal: screenWidth > 700 ? 16 : 0 } : styles.readableContent,
+            ]}>
                 {/* Tool-specific content or generic fallback */}
                 {SpecializedFullView ? (
-                    <SpecializedFullView tool={tool} metadata={metadata || null} messages={messages} />
+                    <SpecializedFullView tool={tool} metadata={metadata || null} messages={messages} focusFile={focusFile} />
                 ) : (
                     <>
                     {/* Generic fallback for tools without specialized views */}
                     {/* Tool Description */}
-                    {tool.description && (
+                    {(tool.description || tool.title) && (
                         <View style={styles.section}>
                             <View style={styles.sectionHeader}>
                                 <Ionicons name="information-circle" size={20} color="#5856D6" />
                                 <Text style={styles.sectionTitle}>{t('tools.fullView.description')}</Text>
                             </View>
-                            <Text style={styles.description}>{tool.description}</Text>
+                            <Text style={styles.description}>{tool.description || getToolDisplayTitle(tool)}</Text>
                         </View>
                     )}
                     {/* Input Parameters */}
@@ -74,7 +83,7 @@ export function ToolFullView({ tool, metadata, messages = [] }: ToolFullViewProp
                                 <Text style={styles.sectionTitle}>{t('tools.fullView.error')}</Text>
                             </View>
                             <View style={styles.errorContainer}>
-                                <Text style={styles.errorText}>{String(tool.result)}</Text>
+                                <Text style={styles.errorText}>{toolResultText(tool.result)}</Text>
                             </View>
                         </View>
                     )}
@@ -92,6 +101,18 @@ export function ToolFullView({ tool, metadata, messages = [] }: ToolFullViewProp
 
                 </>
                 )}
+
+                {/* Specialized non-terminal views show the inputs (diffs, task
+                    children), not the execution outcome. Keep that outcome here. */}
+                {SpecializedFullView && !isTerminalToolName(tool.name) && (
+                    tool.state === 'error' ? (
+                        <ToolError message={toolResultText(tool.result) || t('tools.fullView.error')} />
+                    ) : tool.state === 'completed' && tool.result != null ? (
+                        <ToolSectionView title={t('tools.fullView.output')}>
+                            <CodeView code={toolResultText(tool.result) ?? ''} />
+                        </ToolSectionView>
+                    ) : null
+                )}
                 
                 {/* Raw JSON View (Dev Mode Only) */}
                 {devModeEnabled && (
@@ -103,6 +124,7 @@ export function ToolFullView({ tool, metadata, messages = [] }: ToolFullViewProp
                         <CodeView 
                             code={JSON.stringify({
                                 name: tool.name,
+                                title: tool.title,
                                 state: tool.state,
                                 description: tool.description,
                                 input: tool.input,
@@ -125,16 +147,23 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
         backgroundColor: Platform.select({ web: theme.colors.groupped.background, default: 'transparent' }),
+    },
+    scrollContent: {
         paddingTop: 12,
+        paddingBottom: 32,
     },
     contentWrapper: {
         maxWidth: layout.maxWidth,
         alignSelf: 'center',
         width: '100%',
     },
+    readableContent: {
+        maxWidth: 800,
+        paddingHorizontal: 16,
+    },
     section: {
         marginBottom: 28,
-        paddingHorizontal: 4,
+        paddingHorizontal: 0,
     },
     sectionFullWidth: {
         marginBottom: 28,

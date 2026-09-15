@@ -39,18 +39,21 @@ import { sync } from '@/sync/sync';
 import { isMachineOnline } from '@/utils/machineUtils';
 import {
     machineSpawnNewSession,
+    machineStopSession,
+    sessionArchive,
+    sessionKill,
     machineListDirectory,
     machineListLocalSessions,
     sessionSetAgentModes,
-    type SessionAgentModesPatch,
     type MachineDirectoryEntry,
     type LocalAgentSession,
 } from '@/sync/ops';
-import { createWorktree, listWorktrees } from '@/utils/worktree';
+import { createWorktree } from '@/utils/worktree';
 import { resolveAbsolutePath } from '@/utils/pathUtils';
 import { formatPathRelativeToHome, formatLastSeen } from '@/utils/sessionUtils';
 import { useNavigateToSession } from '@/hooks/useNavigateToSession';
 import { useNewSessionDraft } from '@/hooks/useNewSessionDraft';
+import { useWorktrees } from '@/hooks/useWorktrees';
 import { useShallow } from 'zustand/react/shallow';
 import type { MultiTextInputHandle } from '@/components/MultiTextInput';
 import { Modal } from '@/modal';
@@ -61,9 +64,11 @@ import {
     findMachineChoice,
     machineChoiceAgentAvailable,
     resolveAgentMachine,
-    resolveNewSessionAgent,
+    resolveChoiceAgent,
+    resolveWorktreeCreationMachine,
 } from '@/sync/machineChoices';
 import {
+    filterPermissionModesForCli,
     getHardcodedPermissionModes,
     getHardcodedModelModes,
     getEffortLevelsForModel,
@@ -81,7 +86,7 @@ import {
     cancelPendingPickerOpenState,
     resolvePickerToggleAction,
 } from '@/utils/newSessionPickerInteraction';
-import { resolveAgentDefaultConfig } from '@/sync/agentDefaults';
+import { getCodeAgentDefaults, resolveAgentDefaultConfig } from '@/sync/agentDefaults';
 import { delay } from '@/utils/time';
 import {
     buildRigSpawnConfiguration,
@@ -91,9 +96,12 @@ import {
 import {
     buildSpawnRequestSignature,
     completeSpawnRequest,
+    getSpawnedSessionId,
+    rememberSpawnedSession,
     resolveSpawnRequestId,
 } from '@/sync/spawnRequestId';
 import { resolvePermissionStyle, resolveSelectedOption } from '@/utils/newSessionModeSelection';
+import { resolveHappyAgentSpawnTarget } from '@/sync/happyAgentSpawn';
 import { MobileGlassSurface } from '@/components/MobileGlass';
 import { getNativeGlassInteractivity } from '@/components/glassInteractionPolicy';
 import { BubblePressable } from '@/components/BubblePressable';
@@ -125,7 +133,7 @@ const ALL_AGENTS: { key: AgentKey; label: string }[] = [
     { key: 'rig', label: 'happy' },
 ];
 
-type PickerItem = { key: string; label: string; subtitle?: string; dimmed?: boolean };
+type PickerItem = { key: string; label: string; subtitle?: string; dimmed?: boolean; section?: string };
 
 // Agents whose discovered local conversations can be resumed on spawn,
 // mapped to the spawn-happy-session option carrying the resume id.
@@ -396,7 +404,16 @@ function PickerContent({
                 {fixedItems && fixedItems.length > 0 && filtered.length > 0 && (
                     <View style={[pickerStyles.divider, { backgroundColor: theme.colors.divider }]} />
                 )}
-                {filtered.map(renderOption)}
+                {filtered.map((item, index) => (
+                    <React.Fragment key={item.key}>
+                        {item.section && item.section !== filtered[index - 1]?.section ? (
+                            <Text style={[pickerStyles.sectionLabel, { color: theme.colors.textSecondary }]}>
+                                {item.section}
+                            </Text>
+                        ) : null}
+                        {renderOption(item)}
+                    </React.Fragment>
+                ))}
                 {filtered.length === 0 && search.length > 0 && (
                     <Text style={[pickerStyles.emptyText, { color: theme.colors.textSecondary }]}>
                         no results
@@ -882,7 +899,6 @@ function NewSessionScreen() {
     const sessions = useSessions();
     const agentInputEnterToSend = useSetting('agentInputEnterToSend');
     const agentDefaultOverrides = useSetting('agentDefaultOverrides');
-    const experiments = useSetting('experiments');
     const fileDiffsSidebarEnabled = useSetting('fileDiffsSidebar');
     const zenMode = useLocalSetting('zenMode');
     const { width: windowWidth, height: windowHeight } = useWindowDimensions();
@@ -934,6 +950,7 @@ function NewSessionScreen() {
     const [modelIndex, setModelIndex] = React.useState(0);
     const [effortIndex, setEffortIndex] = React.useState(0);
     const [isSpawning, setIsSpawning] = React.useState(false);
+    const sendingRef = React.useRef<AbortController | null>(null);
     const [activePicker, setActivePicker] = React.useState<PickerType | null>(null);
     const [composerSettingsPage, setComposerSettingsPage] = React.useState<ComposerSettingPickerType | null>(null);
     const [mobileComposerHeight, setMobileComposerHeight] = React.useState(NATIVE_COMPOSER_RESERVED_HEIGHT);
@@ -959,7 +976,7 @@ function NewSessionScreen() {
         () => findMachineChoice(machineChoices, selectedMachineId),
         [machineChoices, selectedMachineId],
     );
-    const selectedAgent = resolveNewSessionAgent(selectedChoice, draftAgent, experiments);
+    const selectedAgent = resolveChoiceAgent(selectedChoice, draftAgent);
     const selectedMachine = React.useMemo(
         () => resolveAgentMachine(selectedChoice, selectedAgent),
         [selectedAgent, selectedChoice],
@@ -996,6 +1013,7 @@ function NewSessionScreen() {
         [selectedRigMachine],
     );
     const rigCreation = selectedAgent === 'rig' ? selectedRigCreation : null;
+    const happyCliVersion = selectedChoice?.happyMachine?.metadata?.happyCliVersion;
     const supportsWorktree = rigCreation?.supportsWorktrees
         ?? (selectedAgent === 'rig' ? false : getSupportsWorktree(selectedAgent));
     const selectedHomeDir = selectedChoice?.happyMachine?.metadata?.homeDir
@@ -1086,45 +1104,40 @@ function NewSessionScreen() {
         return () => clearTimeout(timeout);
     }, [resolvedSelectedPath]);
 
-    // Existing Happy Agent workspaces are named places in the same project. Git worktrees remain
-    // available for ordinary CLI projects, and their RPC always goes to Happy CLI's machine even
-    // when the session itself will be started by Happy Agent.
+    // Existing Happy Agent workspaces are named places in the same project. Happy Agent creates
+    // new ones through its own catalog; Git worktree RPCs remain for ordinary code-agent projects.
     const picksWorkspaces = selectedProjectId !== null;
+    const createsNativeHappyAgentWorkspace = selectedAgent === 'rig'
+        && picksWorkspaces
+        && rigCreation !== null;
     const worktreeMachine = selectedChoice?.happyMachine ?? selectedMachine;
     const canPickWorktree = supportsWorktree || picksWorkspaces;
+    const worktreeCreationMachine = React.useMemo(
+        () => resolveWorktreeCreationMachine(selectedChoice, selectedAgent, supportsWorktree),
+        [selectedAgent, selectedChoice, supportsWorktree],
+    );
+    const canCreateWorktree = createsNativeHappyAgentWorkspace
+        || (selectedAgent !== 'rig' && worktreeCreationMachine !== null);
+    const worktreeMachineId = worktreeMachine?.id ?? null;
+    const worktreeMachineOnline = worktreeMachine !== null && isMachineOnline(worktreeMachine);
 
-    // Fetch existing worktrees/workspaces from the selected computer/path
-    const [worktreeItems, setWorktreeItems] = React.useState<PickerItem[]>([]);
-    React.useEffect(() => {
-        if (!debouncedResolvedSelectedPath) {
-            setWorktreeItems([]);
-            return;
-        }
-
-        if (picksWorkspaces) {
-            setWorktreeItems(agentWorkspaces.map((workspace) => ({
-                key: workspace.key,
-                label: workspace.name,
-                subtitle: workspace.path,
-            })));
-            return;
-        }
-
-        if (!supportsWorktree || !worktreeMachine || !isMachineOnline(worktreeMachine)) {
-            setWorktreeItems([]);
-            return;
-        }
-        let cancelled = false;
-        listWorktrees(worktreeMachine.id, debouncedResolvedSelectedPath).then(worktrees => {
-            if (cancelled) return;
-            setWorktreeItems(worktrees.map(wt => ({
-                key: wt.path,
-                label: wt.branch,
-                subtitle: wt.path,
-            })));
-        });
-        return () => { cancelled = true; };
-    }, [agentWorkspaces, debouncedResolvedSelectedPath, picksWorkspaces, supportsWorktree, worktreeMachine]);
+    const { worktrees, refresh: refreshWorktrees } = useWorktrees(
+        worktreeMachineId,
+        debouncedResolvedSelectedPath,
+        !picksWorkspaces && supportsWorktree && worktreeMachineOnline,
+    );
+    // Native workspace options follow session updates without triggering Git discovery.
+    const worktreeItems = React.useMemo<PickerItem[]>(() => picksWorkspaces
+        ? (debouncedResolvedSelectedPath ? agentWorkspaces.map((workspace) => ({
+            key: workspace.key,
+            label: workspace.name,
+            subtitle: workspace.path,
+        })) : [])
+        : worktrees.map((worktree) => ({
+            key: worktree.path,
+            label: worktree.branch,
+            subtitle: worktree.path,
+        })), [agentWorkspaces, debouncedResolvedSelectedPath, picksWorkspaces, worktrees]);
 
     React.useEffect(() => {
         if (!canPickWorktree) {
@@ -1145,6 +1158,8 @@ function NewSessionScreen() {
     // existing conversation instead of starting fresh.
     const [localSessions, setLocalSessions] = React.useState<LocalAgentSession[]>([]);
     const [resumeSession, setResumeSession] = React.useState<LocalAgentSession | null>(null);
+    const resumeSessionRef = React.useRef(resumeSession);
+    resumeSessionRef.current = resumeSession;
     const machineOnline = selectedMachine ? isMachineOnline(selectedMachine) : false;
 
     React.useEffect(() => {
@@ -1196,20 +1211,17 @@ function NewSessionScreen() {
     }, [selectedPath, selectedHomeDir, resumeSession]);
 
     const worktreeFixedItems = React.useMemo<PickerItem[]>(() => [
-        { key: '__none__', label: picksWorkspaces ? 'no workspace' : 'no worktree' },
-        ...(supportsWorktree
-            ? [{ key: '__new__', label: picksWorkspaces ? 'new workspace' : 'new worktree' }]
+        ...(canCreateWorktree
+            ? [{ key: '__new__', label: picksWorkspaces ? 'Create New' : 'new worktree' }]
             : []),
-    ], [picksWorkspaces, supportsWorktree]);
+        { key: '__none__', label: picksWorkspaces ? 'Main' : 'no worktree' },
+    ], [canCreateWorktree, picksWorkspaces]);
 
     // Filter available agents based on the daemon that actually runs each harness on this
     // computer, rather than the machine id that happened to be stored in the draft.
     const availableAgents = React.useMemo(() => {
-        return ALL_AGENTS.filter((agent) => (
-            (experiments || agent.key !== 'rig')
-            && machineChoiceAgentAvailable(selectedChoice, agent.key)
-        ));
-    }, [experiments, selectedChoice]);
+        return ALL_AGENTS.filter((agent) => machineChoiceAgentAvailable(selectedChoice, agent.key));
+    }, [selectedChoice]);
 
     // If current agent not available on this machine, switch to first available
     React.useEffect(() => {
@@ -1218,10 +1230,15 @@ function NewSessionScreen() {
         }
     }, [availableAgents, draftAgent, selectedAgent, setSelectedAgent]);
 
-    // Derive options from agent type
+    // Derive options from agent type. The CLI daemon on the picked computer is
+    // what will parse the mode; older CLIs drop the whole prompt on modes they
+    // do not know (`auto`), so those are not offered.
     const permissionModes = React.useMemo<PermissionMode[]>(
-        () => rigCreation?.permissionModes ?? getHardcodedPermissionModes(selectedAgent, t),
-        [selectedAgent, rigCreation],
+        () => rigCreation?.permissionModes ?? filterPermissionModesForCli(
+            getHardcodedPermissionModes(selectedAgent, t),
+            happyCliVersion,
+        ),
+        [happyCliVersion, selectedAgent, rigCreation],
     );
     const effectiveAgentDefaults = React.useMemo(() => rigCreation
         ? {
@@ -1229,7 +1246,7 @@ function NewSessionScreen() {
             modelMode: rigCreation.defaultModelKey ?? '',
             effortLevel: rigCreation.defaultEffortForModel(rigCreation.defaultModelKey),
         }
-        : resolveAgentDefaultConfig(agentDefaultOverrides, selectedAgent), [agentDefaultOverrides, selectedAgent, rigCreation]);
+        : resolveAgentDefaultConfig(agentDefaultOverrides, selectedAgent, happyCliVersion), [agentDefaultOverrides, happyCliVersion, selectedAgent, rigCreation]);
     const modelModes = React.useMemo<ModelMode[]>(
         () => rigCreation?.models ?? includeConfiguredModel(
             selectedAgent,
@@ -1259,6 +1276,10 @@ function NewSessionScreen() {
         setPermissionIndex(findPreferredModeIndex(permissionModes, [
             draft.permissionMode,
             effectiveAgentDefaults.permissionMode,
+            // When the saved and default modes were both filtered out for an
+            // old CLI, land on the flavor's code default rather than whichever
+            // mode happens to lead the list.
+            rigCreation ? null : getCodeAgentDefaults(selectedAgent, happyCliVersion).permissionMode,
         ]));
 
         setModelIndex(findPreferredModeIndex(modelModes, [
@@ -1276,6 +1297,9 @@ function NewSessionScreen() {
         draft.modelMode,
         effectiveAgentDefaults.permissionMode,
         effectiveAgentDefaults.modelMode,
+        rigCreation,
+        happyCliVersion,
+        selectedAgent,
     ]);
 
     // Reset effort when model changes
@@ -1335,6 +1359,7 @@ function NewSessionScreen() {
         }
 
         closePicker();
+        if (type === 'worktree') refreshWorktrees();
         if (isDesktop || !Keyboard.isVisible()) {
             setActivePicker(type);
             return;
@@ -1352,9 +1377,12 @@ function NewSessionScreen() {
         pickerOpenTimerRef.current = setTimeout(finishOpening, 420);
         composerInputRef.current?.blur();
         Keyboard.dismiss();
-    }, [activePicker, cancelPendingPickerOpen, closePicker, isDesktop]);
+    }, [activePicker, cancelPendingPickerOpen, closePicker, isDesktop, refreshWorktrees]);
 
     const isOffline = selectedMachine ? !isMachineOnline(selectedMachine) : false;
+    const offlineHelp = selectedAgent === 'rig'
+        ? 'Happy Agent is offline on this computer'
+        : t('machine.offlineHelp');
     const agent = availableAgents.find(a => a.key === selectedAgent)
         ?? ALL_AGENTS.find((candidate) => candidate.key === selectedAgent)
         ?? ALL_AGENTS[0];
@@ -1419,9 +1447,9 @@ function NewSessionScreen() {
         ? formatPathRelativeToHome(trimPathInput(selectedPath), selectedHomeDir)
         : '~';
     const worktreeLabel = worktreeKey === '__none__'
-        ? picksWorkspaces ? 'no workspace' : 'no worktree'
+        ? picksWorkspaces ? 'Main' : 'no worktree'
         : worktreeKey === '__new__'
-            ? picksWorkspaces ? 'new workspace' : 'new worktree'
+            ? picksWorkspaces ? 'Create New' : 'new worktree'
             : worktreeItems.find(wt => wt.key === worktreeKey)?.label || worktreeKey;
     const selectedMachineKey = selectedChoice?.id ?? selectedMachineId;
 
@@ -1612,6 +1640,15 @@ function NewSessionScreen() {
     const handleSend = React.useCallback(async (
         approvedNewDirectoryCreation: boolean = false,
     ) => {
+        if (sendingRef.current) return;
+        const draftState = useNewSessionDraft.getState();
+        let ownsCreatedSession = true;
+        const isCurrentTarget = () => {
+            const current = useNewSessionDraft.getState();
+            return ownsCreatedSession && resumeSessionRef.current?.id === resumeSession?.id
+                && (['selectedMachineId', 'selectedPath', 'agentType', 'permissionMode', 'modelMode', 'effortLevel', 'sessionType', 'worktreeKey'] as const)
+                .every(key => current[key] === draftState[key]);
+        };
         const choice = findMachineChoice(collectMachineChoices(allMachines), selectedMachineId);
         if (!choice) {
             Modal.alert(t('common.error'), 'Please select a machine');
@@ -1619,19 +1656,24 @@ function NewSessionScreen() {
         }
         // Resolve again at the moment of use: the draft can outlive a daemon restart, a machine
         // pairing update, or a change in the CLI catalog.
-        const agentType = resolveNewSessionAgent(choice, selectedAgent, experiments);
+        const agentType = resolveChoiceAgent(choice, selectedAgent);
         const machine = resolveAgentMachine(choice, agentType);
         if (!machine) {
             Modal.alert(
                 t('common.error'),
                 agentType === 'rig'
                     ? 'Happy Agent is not running on this computer'
-                    : 'This computer has no Happy CLI daemon to start that agent',
+                    : 'Happy CLI is not available on your computer. Run `happy daemon start` on your computer, then try again.',
             );
             return;
         }
         if (!isMachineOnline(machine)) {
-            Modal.alert(t('common.error'), 'Machine is offline');
+            Modal.alert(
+                t('common.error'),
+                agentType === 'rig'
+                    ? 'Machine is offline'
+                    : 'Happy CLI is offline on your computer. Run `happy daemon start` on your computer, then try again.',
+            );
             return;
         }
         const spawnRigCreation = agentType === 'rig'
@@ -1644,10 +1686,37 @@ function NewSessionScreen() {
         const agentSupportsWorktree = spawnRigCreation?.supportsWorktrees
             ?? (agentType === 'rig' ? false : getSupportsWorktree(agentType));
         const requestedWorktree = canPickWorktree ? worktreeKey : '__none__';
-        const worktreeSelection = !agentSupportsWorktree && requestedWorktree === '__new__'
+        let happyAgentTarget: ReturnType<typeof resolveHappyAgentSpawnTarget>;
+        try {
+            happyAgentTarget = spawnRigCreation
+                ? resolveHappyAgentSpawnTarget({
+                    projectId: selectedProjectId,
+                    workspaceSelection: requestedWorktree,
+                    workspaces: agentWorkspaces,
+                })
+                : null;
+        } catch (error) {
+            Modal.alert(
+                t('common.error'),
+                error instanceof Error ? error.message : 'The selected workspace is unavailable',
+            );
+            return;
+        }
+        const creationMachine = happyAgentTarget
+            ? null
+            : resolveWorktreeCreationMachine(
+                choice,
+                agentType,
+                agentSupportsWorktree,
+            );
+        const canCreateSelectedWorktree = happyAgentTarget?.kind === 'newWorkspace'
+            || creationMachine !== null;
+        const worktreeSelection = !canCreateSelectedWorktree && requestedWorktree === '__new__'
             ? '__none__'
             : requestedWorktree;
 
+        const controller = new AbortController();
+        sendingRef.current = controller;
         setIsSpawning(true);
         try {
             const pathToUse = trimPathInput(selectedPath) || '~';
@@ -1666,24 +1735,31 @@ function NewSessionScreen() {
                 modelKey: currentModelKey,
                 permissionMode: permissionKey,
                 effort: currentEffort?.key ?? null,
+                resumeSessionId: resumeSession?.id,
             }));
 
             // Handle worktree selection
+            const existingSessionId = getSpawnedSessionId(clientRequestId);
             let spawnDirectory = absolutePath;
-            const worktreeMachine = choice.happyMachine ?? machine;
             if (resumeSession) {
                 // Resuming an on-disk conversation — it must spawn in the
                 // conversation's original working directory (claude --resume
                 // looks the JSONL up via the cwd-derived project dir)
                 spawnDirectory = resumeSession.directory;
-            } else if (worktreeSelection === '__new__') {
-                const worktreeResult = await createWorktree(worktreeMachine.id, absolutePath);
+            } else if (!existingSessionId && worktreeSelection === '__new__' && !happyAgentTarget) {
+                if (!creationMachine) {
+                    Modal.alert(t('common.error'), picksWorkspaces
+                        ? 'This computer cannot create a new workspace'
+                        : 'This computer cannot create a new worktree');
+                    return;
+                }
+                const worktreeResult = await createWorktree(creationMachine.id, absolutePath);
                 if (!worktreeResult.success) {
                     Modal.alert(t('common.error'), worktreeResult.error || 'Failed to create worktree');
                     return;
                 }
                 spawnDirectory = worktreeResult.worktreePath;
-            } else if (worktreeSelection !== '__none__') {
+            } else if (worktreeSelection !== '__none__' && worktreeSelection !== '__new__') {
                 // Existing worktree — use its path directly
                 spawnDirectory = worktreeSelection;
             }
@@ -1699,6 +1775,7 @@ function NewSessionScreen() {
                         permissionMode: permissionKey,
                         effort: currentEffort?.key,
                     }),
+                    ...(happyAgentTarget ? { happyAgentTarget } : {}),
                 }
                 : {
                     machineId: machine.id,
@@ -1716,7 +1793,9 @@ function NewSessionScreen() {
                     resumeClaudeSessionId: resumeSession && selectedAgent === 'claude' ? resumeSession.id : undefined,
                     resumeCodexThreadId: resumeSession && selectedAgent === 'codex' ? resumeSession.id : undefined,
                 };
-            let result = await machineSpawnNewSession(spawnOptions);
+            let result = existingSessionId
+                ? { type: 'success' as const, sessionId: existingSessionId }
+                : await machineSpawnNewSession(spawnOptions);
             let pendingResults = 0;
             while (result.type === 'pending' && pendingResults < MAX_RIG_PENDING_RESULTS) {
                 pendingResults += 1;
@@ -1731,50 +1810,67 @@ function NewSessionScreen() {
 
             switch (result.type) {
                 case 'success':
-                    // The idempotency key did its job; the next Start is a new session.
-                    completeSpawnRequest();
-                    await sync.refreshSessions();
-
-                    // Store only per-session overrides. Matching the effective
-                    // default stays null so future code default changes apply.
-                    const permissionOverride = permissionKey === effectiveAgentDefaults.permissionMode
-                        ? null
-                        : permissionKey;
-                    const modelOverride = currentModelKey === effectiveAgentDefaults.modelMode
-                        ? null
-                        : currentModelKey;
-                    const currentEffortKey = currentEffort?.key ?? null;
-                    const effortOverride = currentEffortKey === effectiveAgentDefaults.effortLevel
-                        ? null
-                        : currentEffortKey;
-                    // Mode picks sync via session metadata (#1492). Nothing to
-                    // push when they match the defaults — a fresh session has
-                    // no picks in its metadata yet.
-                    if (!spawnRigCreation) {
-                        const modesPatch: SessionAgentModesPatch = {};
-                        if (permissionOverride !== null) modesPatch.permissionMode = permissionOverride;
-                        if (modelOverride !== null) modesPatch.modelMode = modelOverride;
-                        if (effortOverride !== null) modesPatch.effortLevel = effortOverride;
-                        if (Object.keys(modesPatch).length > 0) {
-                            sessionSetAgentModes(result.sessionId, modesPatch);
-                        }
+                    const createdSessionId = result.sessionId;
+                    const abandonSession = () => {
+                        controller.abort();
+                        if (!ownsCreatedSession) return;
+                        ownsCreatedSession = false;
+                        void (async () => {
+                            const stopped = await machineStopSession(machine.id, createdSessionId);
+                            if (!stopped.success && !(await sessionKill(createdSessionId)).success) {
+                                await sessionArchive(createdSessionId);
+                            }
+                        })().catch(error => console.error('Failed to stop abandoned session:', error));
+                    };
+                    rememberSpawnedSession(clientRequestId, createdSessionId, abandonSession, () => { ownsCreatedSession = false; });
+                    if (controller.signal.aborted) return;
+                    await sync.ensureSessionReady(result.sessionId);
+                    if (controller.signal.aborted) return;
+                    if (!isCurrentTarget()) {
+                        completeSpawnRequest(clientRequestId);
+                        abandonSession();
+                        return;
                     }
 
-                    // Pull live prompt and clear it. We read via getState() so this
-                    // callback doesn't have to subscribe to `input` (which would
-                    // re-render the screen on every keystroke).
-                    const draftState = useNewSessionDraft.getState();
+                    const currentEffortKey = currentEffort?.key ?? null;
+                    // Pin the actual launch selection to this session. A
+                    // later settings/default change must not silently rewrite
+                    // an existing session's permission, model, or effort.
+                    if (!spawnRigCreation) {
+                        sessionSetAgentModes(result.sessionId, {
+                            permissionMode: permissionKey,
+                            modelMode: currentModelKey,
+                            effortLevel: currentEffortKey,
+                        });
+                    }
+
+                    // Send the prompt captured for this attempt, never a newer
+                    // draft the user composed while its session was spawning.
                     const trimmedPrompt = draftState.input.trim();
                     const attachments = draftState.attachments;
-                    draftState.setInput('');
-                    draftState.setAttachments([]);
 
                     // Send initial message if provided
                     if (trimmedPrompt || attachments.length > 0) {
-                        await sync.sendMessage(result.sessionId, trimmedPrompt, { source: 'new_session', attachments });
+                        const accepted = await sync.sendMessage(result.sessionId, trimmedPrompt, {
+                            source: 'new_session', attachments, signal: controller.signal,
+                            isCurrent: isCurrentTarget,
+                            onAccepted: () => completeSpawnRequest(clientRequestId),
+                        });
+                        if (!accepted) {
+                            if (!isCurrentTarget()) {
+                                completeSpawnRequest(clientRequestId);
+                                abandonSession();
+                            }
+                            return;
+                        }
                     }
 
                     setResumeSession(null);
+                    completeSpawnRequest(clientRequestId);
+                    const currentDraft = useNewSessionDraft.getState();
+                    if (currentDraft.input === draftState.input) currentDraft.setInput('');
+                    if (currentDraft.attachments === attachments) currentDraft.setAttachments([]);
+
                     router.back();
                     navigateToSession(result.sessionId);
                     break;
@@ -1787,6 +1883,7 @@ function NewSessionScreen() {
                     if (approved) {
                         // The request is unchanged, so the retry resolves to the
                         // same clientRequestId.
+                        sendingRef.current = null;
                         await handleSend(true);
                     }
                     break;
@@ -1807,9 +1904,10 @@ function NewSessionScreen() {
                 : 'Failed to start session';
             Modal.alert(t('common.error'), errorMessage);
         } finally {
+            if (sendingRef.current === controller) sendingRef.current = null;
             if (isMountedRef.current) setIsSpawning(false);
         }
-    }, [allMachines, canPickWorktree, currentEffort?.key, currentModelKey, currentPermission?.key, effectiveAgentDefaults.effortLevel, effectiveAgentDefaults.modelMode, effectiveAgentDefaults.permissionMode, experiments, navigateToSession, resumeSession, router, selectedAgent, selectedMachineId, selectedPath, worktreeKey]);
+    }, [agentWorkspaces, allMachines, canPickWorktree, currentEffort?.key, currentModelKey, currentPermission?.key, effectiveAgentDefaults.effortLevel, effectiveAgentDefaults.modelMode, effectiveAgentDefaults.permissionMode, navigateToSession, picksWorkspaces, resumeSession, router, selectedAgent, selectedMachineId, selectedPath, selectedProjectId, worktreeKey]);
 
     const canSend = selectedMachineId && selectedMachine && isMachineOnline(selectedMachine) && !isSpawning;
     React.useEffect(() => {
@@ -2068,7 +2166,7 @@ function NewSessionScreen() {
                                         {t('newSession.machineOffline')}
                                     </Text>
                                     <Text style={[styles.offlineHelpText, { color: theme.colors.textSecondary }]}>
-                                        {t('machine.offlineHelp')}
+                                        {offlineHelp}
                                         {'\n'}{t('newSession.switchMachinesHint')}
                                     </Text>
                                 </View>
@@ -2274,7 +2372,7 @@ function NewSessionScreen() {
                                         {t('newSession.machineOffline')}
                                     </Text>
                                     <Text style={[styles.offlineHelpText, { color: theme.colors.textSecondary }]}>
-                                        {t('machine.offlineHelp')}
+                                        {offlineHelp}
                                         {'\n'}{t('newSession.switchMachinesHint')}
                                     </Text>
                                 </View>

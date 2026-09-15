@@ -9,7 +9,7 @@ import { Avatar } from './Avatar';
 import { StatusDot } from './StatusDot';
 import { SessionActionsAnchor, SessionActionsPopover } from './SessionActionsPopover';
 import { SessionShortcutHintBadge } from './ShortcutHints';
-import { useNavigateToSession } from '@/hooks/useNavigateToSession';
+import { useSessionPressHandlers } from '@/hooks/useNavigateToSession';
 import { useSessionActionAlert } from '@/hooks/useSessionQuickActions';
 import { useHappyAction } from '@/hooks/useHappyAction';
 import { HappyError } from '@/utils/errors';
@@ -57,7 +57,7 @@ export const FlatSessionRow = React.memo(({ row, selected, showBorder, archived 
     const { session, projectName, workspaceName } = row;
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const navigateToSession = useNavigateToSession();
+    const sessionPressHandlers = useSessionPressHandlers(session.id);
     const swipeableRef = React.useRef<Swipeable | null>(null);
     const swipeEnabled = Platform.OS !== 'web';
     const [actionsAnchor, setActionsAnchor] = React.useState<SessionActionsAnchor | null>(null);
@@ -69,8 +69,8 @@ export const FlatSessionRow = React.memo(({ row, selected, showBorder, archived 
     // fades.
     const faded = !!archived || session.machineOffline;
 
-    // SessionView clears the real unread state as soon as the destination
-    // mounts. Keep only the row's visual badge around long enough for the
+    // SessionView clears the real unread state when the destination gains
+    // focus. Keep only the row's visual badge around long enough for the
     // navigation transition to cover it, instead of briefly exposing the
     // timestamp underneath. Read semantics remain immediate.
     const [showUnreadDot, setShowUnreadDot] = React.useState(session.hasUnread);
@@ -117,10 +117,6 @@ export const FlatSessionRow = React.memo(({ row, selected, showBorder, archived 
         performArchive();
     }, [performArchive]);
 
-    const handlePress = React.useCallback(() => {
-        navigateToSession(session.id);
-    }, [navigateToSession, session.id]);
-
     const handleContextMenu = React.useCallback((event: any) => {
         event.preventDefault?.();
         event.stopPropagation?.();
@@ -141,18 +137,19 @@ export const FlatSessionRow = React.memo(({ row, selected, showBorder, archived 
     const content = (
         <Pressable
             style={[styles.row, selected && styles.rowSelected]}
-            onPress={handlePress}
+            {...sessionPressHandlers}
             {...menuProps}
         >
             <View style={[styles.avatar, faded && styles.avatarFaded]}>
                 <Avatar
+                    bot={!!session.botId}
                     id={session.avatarId}
                     size={AVATAR_SIZE}
                     monochrome={faded}
                     flavor={session.flavor}
                     clientId={session.clientId}
-                    imageUrl={session.projectAvatarUri}
-                    thumbhash={session.projectAvatarThumbhash}
+                    imageUrl={session.avatarUri}
+                    thumbhash={session.avatarThumbhash}
                     badgeLocation="sessionList"
                 />
             </View>

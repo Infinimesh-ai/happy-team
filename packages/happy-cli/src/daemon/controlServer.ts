@@ -44,6 +44,7 @@ export function startDaemonControlServer({
   reloadIscpPeers,
   getIscpPeerStatuses,
   reopenIscpPeers,
+  getConnectionStatus,
 }: {
   getChildren: () => TrackedSession[];
   stopSession: (sessionId: string) => boolean;
@@ -58,6 +59,7 @@ export function startDaemonControlServer({
   getIscpPeerStatuses?: () => ProfilePeerStatus[];
   /** Controlled, single-flight Session reopen (POST /iscp/reopen). */
   reopenIscpPeers?: (profileId?: string) => { profiles: string[] };
+  getConnectionStatus?: () => { machineId: string; cliVersion: string; serverUrl: string; connected: boolean };
 }): Promise<{ port: number; stop: () => Promise<void> }> {
   return new Promise((resolve) => {
     const app = fastify({
@@ -68,6 +70,8 @@ export function startDaemonControlServer({
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>();
+
+    typed.post('/status', async () => getConnectionStatus?.() ?? { machineId: null, connected: false });
 
     // Session reports itself after creation
     typed.post('/session-started', {

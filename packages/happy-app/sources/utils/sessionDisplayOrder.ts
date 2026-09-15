@@ -138,6 +138,9 @@ export function getSessionShortcutIdsInDisplayOrder(
     }
 
     const sessionIds: string[] = [];
+    for (const item of data) {
+        if (item.type === 'bots') sessionIds.push(...item.sessions.map((session) => session.id));
+    }
     const projectGroups = buildSessionProjectDisplayGroups(data, machines, unknownText);
     projectGroups.forEach((machineGroup) => {
         machineGroup.projects.forEach((item) => {

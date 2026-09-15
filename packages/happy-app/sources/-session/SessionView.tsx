@@ -19,33 +19,32 @@ import { ChatHeaderView } from '@/components/ChatHeaderView';
 import { ChatList } from '@/components/ChatList';
 import { Deferred } from '@/components/Deferred';
 import { EmptyMessages } from '@/components/EmptyMessages';
-import { SessionStatusBar } from '@/components/SessionStatusBar';
 import { Avatar } from '@/components/Avatar';
-import { VoiceAssistantStatusBar } from '@/components/VoiceAssistantStatusBar';
+import { VoiceAssistantStatusBar, VOICE_PILL_TOTAL_HEIGHT } from '@/components/VoiceAssistantStatusBar';
 import { useDraft } from '@/hooks/useDraft';
+import { useSessionVisibility } from '@/hooks/useSessionVisibility';
 import { useImagePicker } from '@/hooks/useImagePicker';
 import { Modal } from '@/modal';
 import { voiceHooks } from '@/realtime/hooks/voiceHooks';
 import { getCurrentVoiceConversationId, getCurrentVoiceSessionDurationSeconds, startRealtimeSession, stopRealtimeSession } from '@/realtime/RealtimeSession';
-import { gitStatusSync } from '@/sync/gitStatusSync';
 import { sessionAbort, sessionCancelCommunication, sessionGoalAction, sessionSetAgentModes, spawnSideChat, sessionKill, sessionArchive } from '@/sync/ops';
-import { storage, useIsDataReady, useLocalSetting, useRealtimeStatus, useSessionGitStatus, useSessionMessages, useSessionPendingCommunications, useSessionUsage, useSetting, useSideChatSessions } from '@/sync/storage';
+import { storage, useIsDataReady, useLocalSetting, useRealtimeStatus, useSessionGitStatus, useSessionMessages, useSessionPendingCommunications, useSessionAvatar, useSessionUsage, useSetting, useSideChatSessions } from '@/sync/storage';
 import { useSession } from '@/sync/storage';
 import { getSessionForkSource } from '@/utils/sessionFork';
 import { useHappyAction } from '@/hooks/useHappyAction';
 import { HappyError } from '@/utils/errors';
 import { Session } from '@/sync/storageTypes';
 import { sync } from '@/sync/sync';
+import { supportsImageAttachmentsForFlavor } from '@/sync/attachmentSupport';
 import { t } from '@/text';
 import { tracking } from '@/track';
 import { getVoiceMessageCount, getVoiceOnboardingPromptLoadCount } from '@/sync/persistence';
 import { isRunningOnMac } from '@/utils/platform';
 import { useDeviceType, useHeaderHeight, useIsLandscape, useIsTablet } from '@/utils/responsive';
-import { resolveStatusBarGitBranch } from '@/utils/sessionStatusBar';
+import { resolveSessionGitPresentation } from '@/utils/sessionGitPresentation';
 import { FilesSidebar, SidebarMode } from '@/components/FilesSidebar';
 import { AllFilesDiffView } from '@/components/AllFilesDiffView';
 import { FileViewPanel } from '@/components/FileViewPanel';
-import { prefetchPierreDiff } from '@/components/diff/PierreDiffView';
 import { GitFileStatus } from '@/sync/gitStatusFiles';
 import { useOverlayNav } from '@/-session/sessionOverlayNav';
 import { formatPathRelativeToHome, getResumeCommandBlock, getSessionAvatarId, getSessionName, useSessionStatus } from '@/utils/sessionUtils';
@@ -54,6 +53,7 @@ import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/versionUtils';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import * as React from 'react';
 import { useMemo } from 'react';
 import { ActivityIndicator, LayoutChangeEvent, Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
@@ -67,6 +67,7 @@ import { MOBILE_GLASS_HEADER_HEIGHT } from '@/components/navigation/headerMetric
 import {
     getRigReasoningSelection,
     isRigMetadata,
+    isRigMetadataV1,
     isRigModelSelectionEnabled,
     isRigPermissionSelectionEnabled,
     isRigReasoningSelectionEnabled,
@@ -82,7 +83,14 @@ import { AnimatedFade } from '@/components/AnimatedOverlay';
 export const SessionView = React.memo((props: { id: string }) => {
     const sessionId = props.id;
     const router = useRouter();
+    const isFocused = useIsFocused();
     const session = useSession(sessionId);
+    const avatar = useSessionAvatar(sessionId);
+    const gitStatus = useSessionGitStatus(sessionId);
+    const headerGit = React.useMemo(
+        () => resolveSessionGitPresentation(session?.metadata, gitStatus),
+        [session?.metadata, gitStatus],
+    );
     const isDataReady = useIsDataReady();
     const { theme } = useUnistyles();
     const safeArea = useSafeAreaInsets();
@@ -311,8 +319,8 @@ export const SessionView = React.memo((props: { id: string }) => {
     // Wire intra-session back / forward into the global SidebarNavigator arrows.
     const canOverlayBack = overlayHistory.cursor > 0;
     const canOverlayForward = overlayHistory.cursor < overlayHistory.stack.length - 1;
-    React.useEffect(() => {
-        useOverlayNav.getState().publish({
+    useFocusEffect(React.useCallback(() => {
+        const controls = {
             canBack: canOverlayBack,
             canForward: canOverlayForward,
             back: () => {
@@ -329,30 +337,27 @@ export const SessionView = React.memo((props: { id: string }) => {
                 ));
                 return true;
             },
-        });
-        return () => useOverlayNav.getState().reset();
-    }, [canOverlayBack, canOverlayForward]);
-
-    // Warm Pierre's lazy web chunks while the user is still reading chat.
-    React.useEffect(() => {
-        prefetchPierreDiff();
-    }, []);
+        };
+        useOverlayNav.getState().publish(controls);
+        return () => {
+            if (useOverlayNav.getState().back === controls.back) {
+                useOverlayNav.getState().reset();
+            }
+        };
+    }, [canOverlayBack, canOverlayForward]));
 
     // Compute header props based on session state
     const headerProps = useMemo(() => {
         if (!isDataReady) {
-            return { title: '', folderName: undefined, isConnected: false };
+            return { title: '', isConnected: false };
         }
         if (!session) {
-            return { title: t('errors.sessionDeleted'), folderName: undefined, isConnected: false };
+            return { title: t('errors.sessionDeleted'), isConnected: false };
         }
         const isConnected = session.presence === 'online';
-        const pathSegments = session.metadata?.path?.split(/[/\\]/).filter(Boolean);
-        const folderName = pathSegments?.[pathSegments.length - 1];
         const sessionName = getSessionName(session);
         return {
             title: sessionName,
-            folderName,
             isConnected,
         };
     }, [session, isDataReady]);
@@ -363,12 +368,15 @@ export const SessionView = React.memo((props: { id: string }) => {
                 hitSlop={10}
             >
                 <Avatar
+                    bot={!!session.metadata?.bot}
                     id={getSessionAvatarId(session)}
                     size={28}
                     monochrome={!headerProps.isConnected}
                     flavor={session.metadata?.flavor}
                     clientId={session.metadata?.client?.id}
                     badgeLocation="sessionHeader"
+                    imageUrl={avatar?.uri}
+                    thumbhash={avatar?.thumbhash}
                 />
             </Pressable>
         )
@@ -405,7 +413,7 @@ export const SessionView = React.memo((props: { id: string }) => {
                     paddingTop: !(isLandscape && deviceType === 'phone' && Platform.OS !== 'web')
                         ? contentRunsUnderHeader
                             ? 0
-                            : safeArea.top + mobileHeaderHeight + (!isTablet && realtimeStatus !== 'disconnected' ? 32 : 0)
+                            : safeArea.top + mobileHeaderHeight + (!isTablet && realtimeStatus !== 'disconnected' ? VOICE_PILL_TOTAL_HEIGHT : 0)
                         : 0,
                 }}
             >
@@ -424,6 +432,7 @@ export const SessionView = React.memo((props: { id: string }) => {
                         key={sessionId}
                         sessionId={sessionId}
                         session={session}
+                        active={isFocused}
                         onHeaderBackdropVisibilityChange={contentRunsUnderHeader
                             ? setHeaderBackdropVisible
                             : undefined}
@@ -442,8 +451,8 @@ export const SessionView = React.memo((props: { id: string }) => {
                 }}>
                     <ChatHeaderView
                         title={headerProps.title}
-                        folderName={headerProps.folderName}
-                        isConnected={headerProps.isConnected}
+                        subtitle={session && isDataReady ? headerGit.subtitle : undefined}
+                        gitChanges={session && isDataReady ? headerGit.changes : null}
                         backdropVisible={headerBackdropVisible}
                         extraPathSegment={fileViewPath ?? undefined}
                         rightSlot={(diffViewOpen || !!fileViewPath) ? headerRightSlot : headerRight}
@@ -618,11 +627,13 @@ const ChatComposer = React.memo(function ChatComposer(props: ChatComposerProps) 
 export function SessionViewLoaded({
     sessionId,
     session,
+    active = true,
     embedded = false,
     onHeaderBackdropVisibilityChange,
 }: {
     sessionId: string;
     session: Session;
+    active?: boolean;
     embedded?: boolean;
     onHeaderBackdropVisibilityChange?: (visible: boolean) => void;
 }) {
@@ -641,9 +652,13 @@ export function SessionViewLoaded({
         && !isLandscape;
     const [bottomDockInset, setBottomDockInset] = React.useState(0);
     const [composerY, setComposerY] = React.useState(0);
+    // Offset of the composer card inside AgentInput — the faded status rows
+    // above it keep their space, so anchoring to the dock top floats the
+    // scroll button over a visually empty band.
+    const [composerCardOffset, setComposerCardOffset] = React.useState(0);
     const [isChatAtBottom, setIsChatAtBottom] = React.useState(true);
     const showBottomDockDetails = !usesFloatingMobileDock || isChatAtBottom;
-    const scrollButtonInset = Math.max(0, bottomDockInset - composerY);
+    const scrollButtonInset = Math.max(0, bottomDockInset - composerY - composerCardOffset);
 
     const handleBottomDockInsetChange = React.useCallback((nextInset: number) => {
         setBottomDockInset((currentInset) => (
@@ -654,6 +669,12 @@ export function SessionViewLoaded({
         const nextY = Math.ceil(event.nativeEvent.layout.y);
         setComposerY((currentY) => (
             Math.abs(currentY - nextY) < 1 ? currentY : nextY
+        ));
+    }, []);
+    const handleComposerCardOffsetChange = React.useCallback((offset: number) => {
+        const nextOffset = Math.ceil(offset);
+        setComposerCardOffset((currentOffset) => (
+            Math.abs(currentOffset - nextOffset) < 1 ? currentOffset : nextOffset
         ));
     }, []);
     const handleChatBottomVisibilityChange = React.useCallback((visible: boolean) => {
@@ -682,7 +703,7 @@ export function SessionViewLoaded({
         : deviceType === 'phone' && Platform.OS !== 'web'
             ? safeArea.top
                 + MOBILE_GLASS_HEADER_HEIGHT
-                + (realtimeStatus !== 'disconnected' ? 32 : 0)
+                + (realtimeStatus !== 'disconnected' ? VOICE_PILL_TOTAL_HEIGHT : 0)
                 + 12
             : undefined;
 
@@ -696,8 +717,8 @@ export function SessionViewLoaded({
     const isRig = isRigMetadata(session.metadata);
     const agentDefaultOverrides = useSetting('agentDefaultOverrides');
     const effectiveAgentDefaults = React.useMemo(() => (
-        resolveAgentDefaultConfig(agentDefaultOverrides, flavor)
-    ), [agentDefaultOverrides, flavor]);
+        resolveAgentDefaultConfig(agentDefaultOverrides, flavor, cliVersion)
+    ), [agentDefaultOverrides, cliVersion, flavor]);
     const availableModels = React.useMemo(() => (
         getAvailableModels(
             flavor,
@@ -746,18 +767,17 @@ export function SessionViewLoaded({
 
     const sessionStatus = useSessionStatus(session);
     const sessionUsage = useSessionUsage(sessionId);
-    const gitStatus = useSessionGitStatus(sessionId);
     const alwaysShowContextSize = useSetting('alwaysShowContextSize');
-    const sessionStatusBarDisplay = useSetting('sessionStatusBarDisplay');
     const experiments = useSetting('experiments');
     const { canResume, resumeSession, resumingSession } = useSessionQuickActions(session);
     const isDisconnected = !sessionStatus.isConnected;
     const resumeCommandBlock = getResumeCommandBlock(session);
 
-    // Image attachment state (expImageUpload feature flag)
-    const expImageUpload = useSetting('expImageUpload');
+    // Attachment availability is capability-driven by the active session.
     const { selectedImages, pickImages, removeImage, clearImages, addImages } = useImagePicker();
-    const canUseAttachments = rigCanUseAttachments(session.metadata);
+    const canUseAttachments = isRigMetadataV1(session.metadata)
+        ? rigCanUseAttachments(session.metadata)
+        : supportsImageAttachmentsForFlavor(session.metadata?.flavor);
     React.useEffect(() => {
         if (!canUseAttachments && selectedImages.length > 0) {
             clearImages();
@@ -769,6 +789,12 @@ export function SessionViewLoaded({
     // clear it without subscribing to it (which would re-render the whole
     // SessionViewLoaded tree on every keystroke).
     const composerHandleRef = React.useRef<ChatComposerHandle | null>(null);
+    const sendingSessionsRef = React.useRef(new Set<string>());
+    const currentSessionIdRef = React.useRef<string | null>(sessionId);
+    React.useEffect(() => {
+        currentSessionIdRef.current = sessionId;
+        return () => { currentSessionIdRef.current = null; };
+    }, [sessionId]);
 
     // Handle dismissing CLI version warning
     const handleDismissCliWarning = React.useCallback(() => {
@@ -815,12 +841,13 @@ export function SessionViewLoaded({
     // handleSend reads the live message via the composer ref, so it doesn't
     // need to re-create on every keystroke.
     const handleSend = React.useCallback(() => {
-        const liveMessage = composerHandleRef.current?.getMessage() ?? '';
-        if (liveMessage.trim() || (expImageUpload && selectedImages.length > 0)) {
-            const attachments = expImageUpload ? selectedImages : undefined;
+        if (sendingSessionsRef.current.has(sessionId)) return;
+        const composer = composerHandleRef.current;
+        const liveMessage = composer?.getMessage() ?? '';
+        if (liveMessage.trim() || selectedImages.length > 0) {
+            const attachments = selectedImages.length > 0 ? selectedImages : undefined;
             const communicationsToDismiss = [...pendingCommunications];
-            composerHandleRef.current?.clearMessage();
-            if (expImageUpload) clearImages();
+            sendingSessionsRef.current.add(sessionId);
 
             void (async () => {
                 try {
@@ -828,11 +855,20 @@ export function SessionViewLoaded({
                     // blocked, then dismiss the forms. This keeps the regular text
                     // available as the user's custom response before the agent is
                     // allowed to continue its turn.
-                    await sync.sendMessage(sessionId, liveMessage, {
+                    const accepted = await sync.sendMessage(sessionId, liveMessage, {
                         source: 'chat',
                         attachments,
                         awaitDelivery: communicationsToDismiss.length > 0,
+                        onAccepted: () => {
+                            if (currentSessionIdRef.current === sessionId) {
+                                if (composerHandleRef.current === composer && composer?.getMessage() === liveMessage) {
+                                    composer.clearMessage();
+                                }
+                                for (const attachment of attachments ?? []) removeImage(attachment.id);
+                            }
+                        },
                     });
+                    if (!accepted) return;
                     const dismissals = await Promise.allSettled(communicationsToDismiss.map(communication => (
                         sessionCancelCommunication(sessionId, communication.id, communication.kind)
                     )));
@@ -843,19 +879,18 @@ export function SessionViewLoaded({
                     }
                 } catch (error) {
                     console.error('Failed to send message while dismissing agent questions:', error);
+                } finally {
+                    sendingSessionsRef.current.delete(sessionId);
                 }
             })();
         }
-    }, [sessionId, expImageUpload, selectedImages, clearImages, pendingCommunications]);
+    }, [sessionId, selectedImages, removeImage, pendingCommunications]);
 
     const handleAbort = React.useCallback(() => {
-        // Mode picks live in synced metadata — clear them there, otherwise the
-        // next inbound metadata update resurrects them (#1492)
-        if (!isRig) {
-            sessionSetAgentModes(sessionId, { permissionMode: null, modelMode: null, effortLevel: null });
-        }
+        // Stop cancels only the active turn. Permission, model, and effort are
+        // session choices and must remain sticky for the next message.
         sessionAbort(sessionId);
-    }, [sessionId, isRig]);
+    }, [sessionId]);
 
     const handleFileViewerPress = React.useCallback(() => {
         router.push(`/session/${sessionId}/files`);
@@ -884,16 +919,6 @@ export function SessionViewLoaded({
             contextWindow: source.contextWindow,
         };
     }, [sessionUsage, session.latestUsage]);
-    const metadataGitBranch = React.useMemo(() => {
-        const gitBranch = (session.metadata as { gitBranch?: unknown } | null)?.gitBranch;
-        return typeof gitBranch === 'string' && gitBranch.trim() ? gitBranch.trim() : null;
-    }, [session.metadata]);
-    const statusBarGitBranch = resolveStatusBarGitBranch(gitStatus?.branch, metadataGitBranch);
-    const statusBarModelLabel = modelMode?.name ?? session.metadata?.currentModelCode ?? session.modelMode ?? null;
-    const statusBarEffortLabel = effortLevel?.name
-        ? effortLevel.name.charAt(0).toUpperCase() + effortLevel.name.slice(1)
-        : null;
-
     const visibleAgentGoal = React.useMemo(() => (
         resolveVisibleAgentGoalStatus(session)
     ), [
@@ -962,39 +987,16 @@ export function SessionViewLoaded({
         }
     }, [realtimeStatus, sessionId]);
 
-    // Memoize mic button state to prevent flashing during chat transitions
+    // Memoize mic button state to prevent flashing during chat transitions.
+    // While a call runs the pill under the header is the only stop control,
+    // so the composer mic disappears instead of doubling as a stop button.
+    const voiceSessionActive = realtimeStatus === 'connected' || realtimeStatus === 'connecting';
     const micButtonState = useMemo(() => ({
-        onMicPress: handleMicrophonePress,
-        isMicActive: realtimeStatus === 'connected' || realtimeStatus === 'connecting'
-    }), [handleMicrophonePress, realtimeStatus]);
+        onMicPress: voiceSessionActive ? undefined : handleMicrophonePress,
+        isMicActive: false,
+    }), [handleMicrophonePress, voiceSessionActive]);
 
-    // Trigger session visibility and initialize git status sync
-    React.useLayoutEffect(() => {
-
-        // Trigger session sync
-        sync.onSessionVisible(sessionId);
-
-        // Mark session as currently being viewed (clears unread). Skipped when
-        // embedded (e.g. the side-chat panel) so a second mounted chat body
-        // doesn't steal "currently viewing" from the primary session.
-        if (!embedded) {
-            storage.getState().setCurrentViewingSession(sessionId);
-        }
-
-        // Initialize git status sync for this session
-        gitStatusSync.getSync(sessionId).invalidate();
-
-        return () => {
-            if (embedded) {
-                return;
-            }
-            // Clear viewing session on unmount
-            const current = storage.getState().currentViewingSessionId;
-            if (current === sessionId) {
-                storage.getState().setCurrentViewingSession(null);
-            }
-        };
-    }, [sessionId, realtimeStatus, embedded]);
+    useSessionVisibility(sessionId, active, embedded, realtimeStatus);
 
     let content = (
         <>
@@ -1002,6 +1004,7 @@ export function SessionViewLoaded({
                 {messages.length > 0 && (
                     <ChatList
                         session={session}
+                        active={active}
                         topContentInset={chatListTopContentInset}
                         bottomContentInset={usesFloatingMobileDock ? bottomDockInset : undefined}
                         scrollButtonInset={usesFloatingMobileDock ? scrollButtonInset : undefined}
@@ -1057,20 +1060,18 @@ export function SessionViewLoaded({
                     || (Platform.OS === 'web' && sessionStatus.state === 'waiting')
                 )}
                 onFileViewerPress={experiments && !isTablet && rigCanBrowseFiles(session.metadata) && rigCanReadFiles(session.metadata) ? handleFileViewerPress : undefined}
-                selectedImages={expImageUpload && canUseAttachments ? selectedImages : undefined}
-                onPickImages={expImageUpload && canUseAttachments ? pickImages : undefined}
-                onRemoveImage={expImageUpload && canUseAttachments ? removeImage : undefined}
-                onAddImages={expImageUpload && canUseAttachments ? addImages : undefined}
+                selectedImages={canUseAttachments ? selectedImages : undefined}
+                onPickImages={canUseAttachments ? pickImages : undefined}
+                onRemoveImage={canUseAttachments ? removeImage : undefined}
+                onAddImages={canUseAttachments ? addImages : undefined}
                 autocompletePrefixes={AGENT_INPUT_AUTOCOMPLETE_PREFIXES}
                 autocompleteSuggestions={handleAutocompleteSuggestions}
                 usageData={usageData}
                 alwaysShowContextSize={alwaysShowContextSize}
                 zenMode={zenMode}
-                showSessionStatusInfoInSettings={false}
                 showStatusDetails={showBottomDockDetails}
-                sessionStatusGitBranch={statusBarGitBranch}
-                sessionStatusModelLabel={statusBarModelLabel}
-                sessionStatusEffortLabel={statusBarEffortLabel}
+                sessionStatusUsageLimits={session.agentState?.usageLimits ?? null}
+                onActionAreaOffsetChange={usesFloatingMobileDock ? handleComposerCardOffsetChange : undefined}
             />
         </View>
     );
@@ -1095,29 +1096,6 @@ export function SessionViewLoaded({
         </AnimatedFade>
     ) : null;
 
-    const showSessionStatusBar = sessionStatusBarDisplay === 'above' || sessionStatusBarDisplay === 'below';
-    const sessionStatusBarPosition = sessionStatusBarDisplay === 'above' ? 'above' : 'below';
-    const sessionStatusBar = showSessionStatusBar ? (
-        <AnimatedFade visible={showBottomDockDetails}>
-            <CenteredInputWidth horizontalPadding={sessionInputHorizontalPadding}>
-                <SessionStatusBar
-                    gitBranch={statusBarGitBranch}
-                    modelLabel={statusBarModelLabel}
-                    modelMode={modelMode}
-                    availableModels={availableModels}
-                    onModelModeChange={isRigModelSelectionEnabled(session.metadata) ? updateModelMode : undefined}
-                    effortLabel={statusBarEffortLabel}
-                    effortLevel={effortLevel}
-                    availableEffortLevels={availableEffortLevels}
-                    onEffortLevelChange={isRigReasoningSelectionEnabled(session.metadata) ? updateEffortLevel : undefined}
-                    contextSize={usageData?.contextSize}
-                    contextWindow={usageData?.contextWindow}
-                    usageLimits={session.agentState?.usageLimits}
-                />
-            </CenteredInputWidth>
-        </AnimatedFade>
-    ) : null;
-
     const input = (
         <>
             {inactiveHint}
@@ -1137,12 +1115,10 @@ export function SessionViewLoaded({
                     <AgentQuestionBanner sessionId={sessionId} />
                 </CenteredInputWidth>
             </AnimatedFade>
-            {sessionStatusBarPosition === 'above' ? sessionStatusBar : null}
             <AnimatedFade visible={showBottomDockDetails}>
                 <RigActivityBar metadata={session.metadata} />
             </AnimatedFade>
             {composer}
-            {sessionStatusBarPosition === 'below' ? sessionStatusBar : null}
         </>
     );
 

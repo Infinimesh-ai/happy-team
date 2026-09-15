@@ -35,7 +35,7 @@ import {
     type ClaudeGoalStatusTranscriptEvent,
 } from '@/claude/claudeGoalStatus';
 import { Session } from './session';
-import { applySandboxPermissionPolicy, resolveInitialClaudePermissionMode, resolveRemoteClaudePermissionMode } from './utils/permissionMode';
+import { applySandboxPermissionPolicy, normalizeRemotePermissionMode, resolveInitialClaudePermissionMode, resolveRemoteClaudePermissionMode } from './utils/permissionMode';
 import { decodeBase64, encodeBase64 } from '@/api/encryption';
 import type { Session as ApiSession } from '@/api/types';
 import { getProjectPath } from './utils/path';
@@ -64,7 +64,9 @@ export interface StartOptions {
 // harness is already configured to do", so the mode is left unset and Claude
 // applies its own settings. Substituting a value here — this used to be
 // 'yolo' — silently overrode every user's Claude config with full access.
-const DEFAULT_CLAUDE_MODEL = 'opus';
+// The model works the same way: no default. This used to be 'opus', which
+// pinned every remote turn to the 200K model even when the user's own Claude
+// config (settings.json, ANTHROPIC_MODEL) said e.g. claude-opus-5[1m] (#1721).
 const DEFAULT_CLAUDE_EFFORT: 'low' | 'medium' | 'high' | 'xhigh' | 'max' = 'medium';
 type ClaudeGoalCommand = NonNullable<ReturnType<typeof parseClaudeGoalActionParams>>;
 type PendingClaudeGoalAction = {
@@ -549,7 +551,9 @@ export async function runClaude(network: SessionNetwork, options: StartOptions =
     // Forward messages to the queue
     // Permission modes: Use the unified 7-mode type, mapping happens at SDK boundary in claudeRemote.ts
     let currentPermissionMode: PermissionMode | undefined = initialPermissionMode;
-    let currentModel: string | undefined = options.model ?? DEFAULT_CLAUDE_MODEL; // Track current model state
+    // Undefined means "no override" and lets Claude resolve the model itself —
+    // same contract as the mid-session reset below (meta.model null → undefined).
+    let currentModel: string | undefined = options.model;
     let currentFallbackModel: string | undefined = undefined; // Track current fallback model
     let currentCustomSystemPrompt: string | undefined = undefined; // Track current custom system prompt
     let currentAppendSystemPrompt: string | undefined = undefined; // Track current append system prompt
@@ -686,7 +690,7 @@ export async function runClaude(network: SessionNetwork, options: StartOptions =
             const previousPermissionMode = currentPermissionMode;
             messagePermissionMode = resolveRemoteClaudePermissionMode(
                 currentPermissionMode,
-                message.meta.permissionMode,
+                normalizeRemotePermissionMode(message.meta.permissionMode),
                 sandboxEnabled,
             );
             currentPermissionMode = messagePermissionMode;

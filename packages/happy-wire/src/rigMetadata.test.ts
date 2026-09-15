@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { MessageMetaSchema } from './messageMeta';
-import { RigMetadataV1Schema } from './rigMetadata';
+import { RigBotSchema, RigMetadataV1Schema } from './rigMetadata';
 
 describe('Rig wire contract', () => {
+  it('validates the bounded additive bot identity', () => {
+    const bot = { id: 'bot-1', name: 'Assistant', username: 'assistant', workspaceId: 'workspace-1', orderKey: '1' };
+    expect(RigBotSchema.parse(bot)).toEqual(bot);
+    expect(RigBotSchema.safeParse({ ...bot, id: '' }).success).toBe(false);
+    expect(RigBotSchema.safeParse({ ...bot, username: 'a'.repeat(65) }).success).toBe(false);
+    expect(RigBotSchema.parse({ ...bot, future: true })).toHaveProperty('future', true);
+  });
+
   it('accepts native Rig message selection codes and provider qualification', () => {
     expect(MessageMetaSchema.parse({
       permissionMode: 'workspace_write',

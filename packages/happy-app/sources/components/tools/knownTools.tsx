@@ -1,7 +1,9 @@
 import { Metadata, TodoItemsSchema } from '@/sync/storageTypes';
 import { ToolCall, Message } from '@/sync/typesMessage';
+import { getPatchChanges } from '@/utils/codexPatchEntry';
 import { resolvePath } from '@/utils/pathUtils';
 import { stringifyToolCommand } from '@/utils/toolCommand';
+import type { ToolSummaryCategory } from '@/utils/toolDisplay';
 import * as z from 'zod';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import React from 'react';
@@ -19,15 +21,57 @@ const ICON_TODO = (size: number = 24, color: string = '#000') => <Ionicons name=
 const ICON_REASONING = (size: number = 24, color: string = '#000') => <Octicons name="light-bulb" size={size} color={color} />;
 const ICON_QUESTION = (size: number = 24, color: string = '#000') => <Ionicons name="help-circle-outline" size={size} color={color} />;
 
-function getPatchFiles(input: any): string[] {
-    if (input?.changes && typeof input.changes === 'object' && !Array.isArray(input.changes)) {
-        return Object.keys(input.changes);
+/**
+ * Icon for tools without a knownTools entry, chosen by what the tool does.
+ * Keeps provider/rig tool names (exec_command, read_file, ...) from falling
+ * back to the generic construct icon.
+ */
+export function getToolCategoryIcon(category: ToolSummaryCategory, size: number, color: string): React.ReactElement | null {
+    switch (category) {
+        case 'terminal': return ICON_TERMINAL(size, color);
+        case 'read': return ICON_READ(size, color);
+        case 'edit': return ICON_EDIT(size, color);
+        case 'search': return ICON_SEARCH(size, color);
+        case 'web': return ICON_WEB(size, color);
+        case 'task': return ICON_TASK(size, color);
+        default: return null;
     }
-    if (input?.fileChanges && typeof input.fileChanges === 'object' && !Array.isArray(input.fileChanges)) {
-        return Object.keys(input.fileChanges);
-    }
-    return [];
 }
+
+function getPatchFiles(input: any): string[] {
+    return Object.keys(getPatchChanges(input) ?? {});
+}
+
+const extractPatchSubtitle = (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+    // Show the first file being modified
+    const files = getPatchFiles(opts.tool.input);
+    if (files.length > 0) {
+        const path = resolvePath(files[0], opts.metadata);
+        const fileName = path.split('/').pop() || path;
+        if (files.length > 1) {
+            return t('tools.desc.modifyingMultipleFiles', {
+                file: fileName,
+                count: files.length - 1
+            });
+        }
+        return fileName;
+    }
+    return null;
+};
+
+const extractPatchDescription = (opts: { metadata: Metadata | null, tool: ToolCall }) => {
+    // Show the number of files being modified
+    const files = getPatchFiles(opts.tool.input);
+    const fileCount = files.length;
+    if (fileCount === 1) {
+        const path = resolvePath(files[0], opts.metadata);
+        const fileName = path.split('/').pop() || path;
+        return t('tools.desc.modifyingFile', { file: fileName });
+    } else if (fileCount > 1) {
+        return t('tools.desc.modifyingFiles', { count: fileCount });
+    }
+    return t('tools.names.applyChanges');
+};
 
 const taskLikeTool = {
     title: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
@@ -716,35 +760,23 @@ export const knownTools = {
                 }).optional()
             }).passthrough()).describe('File changes to apply')
         }).partial().passthrough(),
-        extractSubtitle: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            // Show the first file being modified
-            const files = getPatchFiles(opts.tool.input);
-            if (files.length > 0) {
-                const path = resolvePath(files[0], opts.metadata);
-                const fileName = path.split('/').pop() || path;
-                if (files.length > 1) {
-                    return t('tools.desc.modifyingMultipleFiles', {
-                        file: fileName,
-                        count: files.length - 1
-                    });
-                }
-                return fileName;
-            }
-            return null;
-        },
-        extractDescription: (opts: { metadata: Metadata | null, tool: ToolCall }) => {
-            // Show the number of files being modified
-            const files = getPatchFiles(opts.tool.input);
-            const fileCount = files.length;
-            if (fileCount === 1) {
-                const path = resolvePath(files[0], opts.metadata);
-                const fileName = path.split('/').pop() || path;
-                return t('tools.desc.modifyingFile', { file: fileName });
-            } else if (fileCount > 1) {
-                return t('tools.desc.modifyingFiles', { count: fileCount });
-            }
-            return t('tools.names.applyChanges');
-        }
+        extractSubtitle: extractPatchSubtitle,
+        extractDescription: extractPatchDescription
+    },
+    // Rig sessions forward the model-native apply_patch call with the raw
+    // patch envelope; getPatchChanges parses it into a CodexPatch change map.
+    'apply_patch': {
+        title: t('tools.names.applyChanges'),
+        icon: ICON_EDIT,
+        minimal: false,
+        hideDefaultError: true,
+        isMutable: true,
+        input: z.object({
+            patch: z.string().optional().describe('Patch in the apply_patch envelope format'),
+            input: z.string().optional().describe('Patch in the apply_patch envelope format')
+        }).partial().passthrough(),
+        extractSubtitle: extractPatchSubtitle,
+        extractDescription: extractPatchDescription
     },
     'GeminiBash': {
         title: t('tools.names.terminal'),
@@ -952,6 +984,10 @@ export const knownTools = {
         result: z.object({}).partial().passthrough()
     },
     'ToolSearch': {
+        icon: ICON_SEARCH,
+        hidden: true,
+    },
+    'tool_search': {
         icon: ICON_SEARCH,
         hidden: true,
     }

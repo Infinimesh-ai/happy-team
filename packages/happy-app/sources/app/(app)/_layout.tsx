@@ -3,7 +3,7 @@ import 'react-native-reanimated';
 import * as React from 'react';
 import { Typography } from '@/constants/Typography';
 import { createHeader, createPlainHeader } from '@/components/navigation/Header';
-import { Platform, TouchableOpacity, Text, View } from 'react-native';
+import { Platform, TouchableOpacity, Text, View, Image } from 'react-native';
 import { isRunningOnMac } from '@/utils/platform';
 import { useUnistyles } from 'react-native-unistyles';
 import { t } from '@/text';
@@ -91,6 +91,11 @@ export default function RootLayout() {
                 name="session/[id]/message/[messageId]"
                 options={{
                     headerShown: true,
+                    // Use the shared plain title from the first frame, even
+                    // before the message has loaded. Never swap UIKit chrome
+                    // for a differently measured tool header after hydration.
+                    header: createPlainHeader,
+                    headerTitleAlign: 'center',
                     headerBackTitle: t('common.back'),
                     headerTitle: t('common.message')
                 }}
@@ -138,6 +143,16 @@ export default function RootLayout() {
                 }}
             />
             <Stack.Screen
+                name="session/[id]/changes"
+                options={{
+                    headerShown: true,
+                    header: createPlainHeader,
+                    headerTitle: t('sessionInfo.viewChanges'),
+                    headerTitleAlign: 'center',
+                    headerBackTitle: t('common.back'),
+                }}
+            />
+            <Stack.Screen
                 name="settings/account"
                 options={{
                     headerTitle: t('settings.account'),
@@ -152,13 +167,7 @@ export default function RootLayout() {
             <Stack.Screen
                 name="settings/agents"
                 options={{
-                    headerTitle: 'Agent Defaults',
-                }}
-            />
-            <Stack.Screen
-                name="settings/features"
-                options={{
-                    headerTitle: t('settings.features'),
+                    headerTitle: 'Agents',
                 }}
             />
             <Stack.Screen
@@ -194,7 +203,28 @@ export default function RootLayout() {
                 options={{
                     headerShown: true,
                     header: createPlainHeader,
-                    headerTitle: t('navigation.whatsNew'),
+                    headerTitle: () => (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <Text
+                                numberOfLines={1}
+                                style={[
+                                    {
+                                        fontSize: isDesktop ? 17 : 16,
+                                        fontWeight: '600',
+                                        color: theme.colors.header.tint,
+                                    },
+                                    Typography.default('semiBold'),
+                                ]}
+                            >
+                                {t('navigation.whatsNew')}
+                            </Text>
+                            <Image
+                                source={require('@/changelog/images/mouse-on-the-phone.webp')}
+                                style={{ width: 40, height: 40 }}
+                                resizeMode="contain"
+                            />
+                        </View>
+                    ),
                     headerBackTitle: t('common.back'),
                     headerTransparent: Platform.OS === 'ios',
                     headerStyle: {
@@ -309,6 +339,12 @@ export default function RootLayout() {
                 name="dev/masked-progress"
                 options={{
                     headerTitle: 'Masked Progress',
+                }}
+            />
+            <Stack.Screen
+                name="dev/diff-bench"
+                options={{
+                    headerTitle: 'Diff Benchmark',
                 }}
             />
             <Stack.Screen
