@@ -25,6 +25,14 @@ describe('Rig session RPC capability gates', () => {
         expect(sessionRPC).toHaveBeenCalledWith('rig', 'abort', {});
     });
 
+    it('does not server-archive or delete a bot conversation', async () => {
+        getState.mockReturnValue({ sessions: { bot: { metadata: { ...rigMetadataFixture, bot: { id: 'bot-1' } } } } });
+        const { sessionArchive, sessionDelete } = await import('./ops');
+        await expect(sessionArchive('bot')).resolves.toMatchObject({ success: false, message: expect.stringContaining('machine') });
+        await expect(sessionDelete('bot')).resolves.toMatchObject({ success: false, message: expect.stringContaining('continuous') });
+        expect(sessionRPC).not.toHaveBeenCalled();
+    });
+
     it('does not call RPC methods that disappear after metadata refresh', async () => {
         getState.mockReturnValue({
             sessions: {

@@ -1,4 +1,4 @@
-import type { TranslationStructure } from '../_default';
+import { en, type TranslationStructure } from '../_default';
 
 /**
  * Polish plural helper function
@@ -26,6 +26,13 @@ function plural({ count, one, few, many }: { count: number; one: string; few: st
  * Must match the exact structure of the English translations
  */
 export const pl: TranslationStructure = {
+    voiceStatusBar: {
+        tapToEnd: 'dotknij, aby zakończyć',
+        connecting: 'Łączenie…',
+        error: 'Błąd połączenia',
+        active: 'Asystent głosowy aktywny',
+    },
+
     tabs: {
         // Tab navigation labels
         inbox: 'Skrzynka',
@@ -181,13 +188,6 @@ export const pl: TranslationStructure = {
         },
         chat: 'Czat',
         chatDescription: 'Dostosuj wygląd wiadomości czatu',
-        sessionStatusBar: 'Informacje o stanie sesji',
-        sessionStatusBarDescription: 'Wybierz, gdzie wyświetlać gałąź, model, wysiłek i kontekst',
-        sessionStatusDisplayOptions: {
-            hidden: 'Ukryte',
-            above: 'Nad polem wprowadzania',
-            below: 'Pod polem wprowadzania',
-        },
         usageLimitShowRemaining: 'Pokaż pozostały limit',
         usageLimitShowRemainingDescription: 'Wskaźniki limitu odliczają w dół zamiast w górę',
         userMessageBubbleColor: 'Kolor Twoich wiadomości',
@@ -206,12 +206,33 @@ export const pl: TranslationStructure = {
         compactToolCallsDescription: 'Pokazuj nieinteraktywne wywołania w jednym wierszu; otwórz wiersz, aby zobaczyć szczegóły',
         showLineNumbersInToolViews: 'Pokaż numery linii w widokach narzędzi',
         showLineNumbersInToolViewsDescription: 'Wyświetlaj numery linii w różnicach widoków narzędzi',
-        alwaysShowContextSize: 'Zawsze pokazuj rozmiar kontekstu',
-        alwaysShowContextSizeDescription: 'Wyświetlaj użycie kontekstu nawet gdy nie jest blisko limitu',
+        alwaysShowContextSize: 'Pokazuj zużycie',
+        alwaysShowContextSizeDescription: 'Kontekst i limity planu pod polem wiadomości. Ostrzeżenia przy limicie zawsze widoczne.',
+        input: 'Wprowadzanie',
+        inputDescription: 'Konfiguracja pola wiadomości',
         showHarnessIconInSessionHeader: 'Pokaż ikonę harnessu w nagłówku sesji',
         showHarnessIconInSessionHeaderDescription: 'Wyświetlaj ikonę harnessu w nagłówku sesji',
         showHarnessIconsInSessionList: 'Pokaż ikony harnessów na liście sesji',
         showHarnessIconsInSessionListDescription: 'Wyświetlaj ikony harnessów na awatarach listy sesji',
+        avatars: 'Awatary',
+        avatarsDescription: 'Wybierz wygląd generowanych awatarów sesji',
+        avatarStyle: 'Styl awatarów',
+        avatarStyleOptions: {
+            brutalist: 'Brutalistyczny',
+            pixelated: 'Pikselowy',
+            gradient: 'Gradient',
+        },
+        avatarMonochrome: 'Czarno-białe awatary',
+        avatarMonochromeDescription: 'Wyświetlaj awatary bez koloru',
+    },
+
+    sessionsFilter: {
+        // Filter menu on the home sessions list header
+        title: 'Filtr',
+        groupingTitle: 'Grupowanie',
+        flatList: 'Płaska lista',
+        groupByProject: 'Grupuj według projektu',
+        appearanceSettings: 'Ustawienia wyglądu',
     },
 
     settingsFeatures: {
@@ -231,12 +252,8 @@ export const pl: TranslationStructure = {
         commandPaletteDisabled: 'Szybki dostęp do poleceń wyłączony',
         markdownCopyV2: 'Markdown Copy v2',
         markdownCopyV2Subtitle: 'Długie naciśnięcie otwiera modal kopiowania',
-        hideInactiveSessions: 'Ukryj nieaktywne sesje',
-        hideInactiveSessionsSubtitle: 'Wyświetlaj tylko aktywne czaty na liście',
         groupToolCalls: 'Grupuj wywołania narzędzi',
         groupToolCallsSubtitle: 'Zwijaj kolejne wywołania narzędzi w jeden kontener',
-        imageUpload: 'Przesyłanie obrazów',
-        imageUploadSubtitle: 'Dołączaj obrazy do wiadomości, aby obsługiwani agenci mogli je analizować',
     },
 
     errors: {
@@ -352,7 +369,12 @@ export const pl: TranslationStructure = {
         failedToConnectToServer: 'Nie udało się połączyć z serwerem',
         currentlyUsingCustomServer: 'Aktualnie używany jest niestandardowy serwer',
         customServerUrlLabel: 'URL niestandardowego serwera',
-        advancedFeatureFooter: 'To jest zaawansowana funkcja. Zmieniaj serwer tylko jeśli wiesz, co robisz. Po zmianie serwera będziesz musiał się wylogować i zalogować ponownie.'
+        advancedFeatureFooter: 'To jest zaawansowana funkcja. Zmieniaj serwer tylko jeśli wiesz, co robisz. Po zmianie serwera będziesz musiał się wylogować i zalogować ponownie.',
+        services: 'Usługi',
+        useCustomServerForVoice: 'Użyj niestandardowego serwera dla głosu',
+        customServerVoiceEnabled: 'Dane uwierzytelniające i użycie głosu korzystają z niestandardowego serwera',
+        customServerVoiceDisabled: 'Głos korzysta z Happy Cloud i subskrypcji Happy',
+        customServerVoiceFooter: 'Gdy ta opcja jest wyłączona, uruchomienie głosu łączy się z Happy Cloud i ElevenLabs. Włącz ją tylko wtedy, gdy niestandardowy serwer jest skonfigurowany do obsługi głosu.',
     },
 
     sessionInfo: {
@@ -382,6 +404,8 @@ export const pl: TranslationStructure = {
         quickActions: 'Szybkie akcje',
         viewMachine: 'Zobacz maszynę',
         viewMachineSubtitle: 'Zobacz szczegóły maszyny i sesje',
+        viewChanges: 'Zobacz zmiany',
+        viewChangesSubtitle: 'Różnice we wszystkich niezatwierdzonych plikach',
         resumeSession: 'Resume Session',
         resumeSessionSubtitle: 'Resume this session on the same machine',
         resumeSessionSameMachineOnly: 'This session can only be resumed on the same machine it started on.',
@@ -423,6 +447,7 @@ export const pl: TranslationStructure = {
 
     components: {
         emptyMainScreen: {
+            ...en.components.emptyMainScreen,
             // Used by EmptyMainScreen component
             readyToCode: 'Gotowy do kodowania?',
             installCli: 'Zainstaluj Happy CLI',
@@ -436,14 +461,6 @@ export const pl: TranslationStructure = {
             clearGoal: 'Wyczyść cel',
             stopGoal: 'Zatrzymaj cel',
             editGoal: 'Edytuj cel',
-        },
-        sessionStatusBar: {
-            contextUsage: ({ used, total, percent }: { used: string; total: string; percent: number }) => `Kontekst ${used} z ${total} tokenów, ${percent}%`,
-            limitFiveHour: 'Limit 5-godzinny',
-            limitSevenDay: 'Limit 7-dniowy',
-            limitResets: ({ time }: { time: string }) => `reset ${time}`,
-            limitAsOf: ({ age }: { age: string }) => `sprzed ${age}`,
-            limitRemaining: ({ percent }: { percent: number }) => `pozostało ${percent}%`,
         },
     },
 
@@ -511,7 +528,14 @@ export const pl: TranslationStructure = {
             badgePlan: 'Planowanie',
         },
         context: {
-            remaining: ({ percent }: { percent: number }) => `Pozostało ${percent}%`,
+            detailContext: ({ used, total }: { used: string; total: string }) => `Kontekst ${used} / ${total}`,
+            percentContext: ({ percent }: { percent: number }) => `${percent}% kontekstu`,
+            percentWeek: ({ percent }: { percent: number }) => `${percent}% tygodnia`,
+        },
+        usagePopup: {
+            session: 'Sesja',
+            week: 'Tydzień',
+            resets: ({ time }: { time: string }) => `Reset ${time}`,
         },
         suggestion: {
             fileLabel: 'PLIK',
@@ -559,15 +583,14 @@ export const pl: TranslationStructure = {
     },
 
     toolGroup: {
-        editedFile: 'Edited file',
-        editedFiles: ({ count }: { count: number }) => `${plural({ count, one: 'Edytowano 1 plik', few: `Edytowano ${count} pliki`, many: `Edytowano ${count} plików` })}`,
-        readFiles: ({ count }: { count: number }) => `${plural({ count, one: 'Odczytano 1 plik', few: `Odczytano ${count} pliki`, many: `Odczytano ${count} plików` })}`,
-        ranCommands: ({ count }: { count: number }) => `${plural({ count, one: 'Wykonano 1 polecenie', few: `Wykonano ${count} polecenia`, many: `Wykonano ${count} poleceń` })}`,
-        searched: ({ count }: { count: number }) => `${plural({ count, one: 'Wyszukano 1 raz', few: `Wyszukano ${count} razy`, many: `Wyszukano ${count} razy` })}`,
-        fetchedUrls: ({ count }: { count: number }) => `${plural({ count, one: 'Pobrano 1 URL', few: `Pobrano ${count} URLe`, many: `Pobrano ${count} URLi` })}`,
-        ranTasks: ({ count }: { count: number }) => `${plural({ count, one: 'Wykonano 1 zadanie', few: `Wykonano ${count} zadania`, many: `Wykonano ${count} zadań` })}`,
-        usedTools: ({ count }: { count: number }) => `${plural({ count, one: 'Użyto 1 narzędzie', few: `Użyto ${count} narzędzia`, many: `Użyto ${count} narzędzi` })}`,
+        ran: 'Wykonano',
+        edited: 'Edytowano',
+        read: 'Odczytano',
+        searched: 'Wyszukano',
+        fetched: 'Pobrano',
+        ranTask: 'Wykonano zadanie',
         workedFor: ({ duration }: { duration: string }) => `Worked ${duration}`,
+        hide: 'Ukryj',
     },
 
     tools: {
@@ -674,6 +697,16 @@ export const pl: TranslationStructure = {
         fileConflictDescription: 'Ten plik został zmodyfikowany na urządzeniu podczas edycji. Załaduj ponownie aby zobaczyć najnowszą wersję.',
         reload: 'Załaduj ponownie',
         overwrite: 'Nadpisz',
+    },
+    diff: {
+        showMoreLines: ({ count }: { count: number }) => `Pokaż jeszcze ${count} wierszy`,
+        tapToExpand: ({ count }: { count: number }) => `${count} zmienionych wierszy — dotknij, aby rozwinąć`,
+        ignoreWhitespace: 'Ignoruj białe znaki',
+        imageBefore: 'Przed',
+        imageAfter: 'Po',
+        unchangedLines: ({ count }: { count: number }) => `${count} bez zmian`,
+        noChanges: 'Brak zmian',
+        binaryFile: 'Plik binarny nie jest wyświetlany',
     },
     sideChat: {
         panelTitle: 'Czat boczny',
@@ -1116,6 +1149,9 @@ export const pl: TranslationStructure = {
         unknownEvent: 'Nieznane zdarzenie',
         usageLimitUntil: ({ time }: { time: string }) => `Osiągnięto limit użycia do ${time}`,
         sentAsGoal: 'Sent as goal',
+        sendsAfterThisTurn: 'Sends after this turn',
+        sending: 'Sending…',
+        sendFailed: ({ reason }: { reason: string }) => `Nie wysłano: ${reason}`,
         unknownTime: 'nieznany czas',
     },
 

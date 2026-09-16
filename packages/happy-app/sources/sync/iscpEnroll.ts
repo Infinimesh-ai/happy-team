@@ -26,6 +26,9 @@ import {
     utf8Encode,
     verifyGrant,
     verifyPairingTicket,
+    verifyPairingTicketV3,
+    PAIRING_TICKET_V3_TYPE,
+    bindGrantRoles,
     verifyRelayDescriptor,
     verifyTrustRootDescriptor,
     type CryptoProvider,
@@ -98,7 +101,15 @@ export async function enrollIscpDevice(opts: IscpEnrollOptions): Promise<IscpEnr
         if (!ticketKey) {
             throw new Error('pairing ticket is not signed by an active trust root key');
         }
-        verifyPairingTicket(provider, ticket, ticketKey.public);
+        if (ticket.type === PAIRING_TICKET_V3_TYPE) {
+            verifyPairingTicketV3(provider, ticket, ticketKey.public);
+            if (payload.expectedAudiencePhoneId !== undefined && payload.expectedAudiencePhoneId !== ticket.grant_audience) {
+                throw new Error('pairing ticket grant audience does not match the wrapper expected phone');
+            }
+            bindGrantRoles(provider, ticket, device.identity);
+        } else {
+            verifyPairingTicket(provider, ticket, ticketKey.public);
+        }
 
         const registration = await relayHttp.registerWithSignedTicket(device, ticket, {
             displayName: payload.displayName,
@@ -114,7 +125,9 @@ export async function enrollIscpDevice(opts: IscpEnrollOptions): Promise<IscpEnr
         // Verify the grant before it is handed to the confirm step.
         grant = registration.grant;
         verifyGrant(provider, grant, grantSigningKey(trustDescriptor, grant.signature.kid), {
-            audience: payload.expectedAudiencePhoneId ?? grant.audience,
+            audience: ticket.type === PAIRING_TICKET_V3_TYPE
+                ? ticket.grant_audience
+                : payload.expectedAudiencePhoneId ?? grant.audience,
             subjectDeviceId: officialIdentity.device_id,
             confirmationThumbprint: officialIdentity.public_key.kid,
             permission: grant.permissions[0] ?? 'text',

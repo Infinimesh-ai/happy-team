@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
     collectMachineChoices,
     findMachineChoice,
+    listMachineChoiceAvailableAgents,
     machineChoiceAgentAvailable,
-    machineChoiceAgentVisible,
     resolveAgentMachine,
     resolveChoiceAgent,
-    resolveNewSessionAgent,
+    resolveWorktreeCreationMachine,
 } from './machineChoices';
 import type { Machine } from './storageTypes';
 
@@ -137,17 +137,47 @@ describe('what a computer can actually run', () => {
         expect(machineChoiceAgentAvailable(choice, 'rig')).toBe(false);
     });
 
-    it('only shows Antigravity and Happy Agent when available on the machine', () => {
+    it('lists only harnesses available on the machine', () => {
         const absent = collectMachineChoices([cli()])[0];
+        const paired = collectMachineChoices([cli(), rig()])[0];
         const installed = collectMachineChoices([machine('agy-machine', {
             host: 'laptop.local',
             cliAvailability: { claude: true, agy: true },
         })])[0];
 
-        expect(machineChoiceAgentVisible(absent, 'agy')).toBe(false);
-        expect(machineChoiceAgentVisible(installed, 'agy')).toBe(true);
-        expect(machineChoiceAgentVisible(absent, 'claude')).toBe(true);
-        expect(machineChoiceAgentVisible(absent, 'rig')).toBe(false);
+        expect(listMachineChoiceAvailableAgents(absent)).toEqual(['claude', 'codex']);
+        expect(listMachineChoiceAvailableAgents(installed)).toEqual(['claude', 'agy']);
+        expect(listMachineChoiceAvailableAgents(paired)).toEqual(['claude', 'codex', 'rig']);
+    });
+
+    it('omits Codex when its CLI is not installed', () => {
+        const choice = collectMachineChoices([machine('no-codex', {
+            host: 'laptop.local',
+            cliAvailability: {
+                claude: true,
+                codex: false,
+                agy: false,
+                gemini: false,
+                openclaw: false,
+            },
+        })])[0];
+
+        expect(listMachineChoiceAvailableAgents(choice)).toEqual(['claude']);
+    });
+
+    it('returns an empty list when no harness is set up', () => {
+        const choice = collectMachineChoices([machine('no-harnesses', {
+            host: 'laptop.local',
+            cliAvailability: {
+                claude: false,
+                codex: false,
+                agy: false,
+                gemini: false,
+                openclaw: false,
+            },
+        })])[0];
+
+        expect(listMachineChoiceAvailableAgents(choice)).toEqual([]);
     });
 
     it('keeps a stale draft from starting an agent this computer cannot run', () => {
@@ -156,17 +186,6 @@ describe('what a computer can actually run', () => {
         const cliOnly = collectMachineChoices([cli()])[0];
         expect(resolveChoiceAgent(cliOnly, 'rig')).toBe('claude');
         expect(resolveChoiceAgent(cliOnly, 'gemini')).toBe('claude');
-    });
-
-    it('offers Happy for new sessions only when experiments are enabled', () => {
-        const paired = collectMachineChoices([cli(), rig()])[0];
-        expect(resolveNewSessionAgent(paired, 'rig', true)).toBe('rig');
-        expect(resolveNewSessionAgent(paired, 'rig', false)).toBe('claude');
-    });
-
-    it('never resolves a new session to Happy from a stale draft when experiments are off', () => {
-        const rigOnly = collectMachineChoices([rig(RIG, 'missing-sibling')])[0];
-        expect(resolveNewSessionAgent(rigOnly, 'rig', false)).toBe('claude');
     });
 
     it('sends each agent to the daemon that runs it', () => {
@@ -178,6 +197,35 @@ describe('what a computer can actually run', () => {
     it('reports no daemon rather than handing the request to the wrong one', () => {
         const rigOnly = collectMachineChoices([rig(RIG, 'missing-sibling')])[0];
         expect(resolveAgentMachine(rigOnly, 'claude')).toBeNull();
+    });
+});
+
+describe('choosing where to create a worktree', () => {
+    it('uses Happy CLI for a Happy Agent workspace when the pair is online', () => {
+        const choice = collectMachineChoices([cli(), rig()])[0];
+
+        expect(resolveWorktreeCreationMachine(choice, 'rig', false)?.id).toBe(CLI);
+    });
+
+    it('uses Happy Agent directly when it supports worktrees and has no CLI pair', () => {
+        const choice = collectMachineChoices([rig(RIG, 'missing-sibling')])[0];
+
+        expect(resolveWorktreeCreationMachine(choice, 'rig', true)?.id).toBe(RIG);
+    });
+
+    it('does not bypass another harness worktree limitation', () => {
+        const choice = collectMachineChoices([cli(), rig()])[0];
+
+        expect(resolveWorktreeCreationMachine(choice, 'openclaw', false)).toBeNull();
+    });
+
+    it('does not offer an offline CLI as Happy Agent worktree support', () => {
+        const choice = collectMachineChoices([
+            cli(CLI, { active: false }),
+            rig(RIG, CLI, { active: true }),
+        ])[0];
+
+        expect(resolveWorktreeCreationMachine(choice, 'rig', false)).toBeNull();
     });
 });
 

@@ -12,19 +12,22 @@ import { BashViewFull } from './BashViewFull';
 import { EditViewFull } from './EditViewFull';
 import { MultiEditViewFull } from './MultiEditViewFull';
 import { CodexBashView } from './CodexBashView';
-import { CodexPatchView } from './CodexPatchView';
-import { CodexDiffView } from './CodexDiffView';
+import { CodexPatchView, CodexPatchViewFull } from './CodexPatchView';
+import { CodexDiffView, CodexDiffViewFull } from './CodexDiffView';
 import { AskUserQuestionView } from './AskUserQuestionView';
 import { RequestUserInputView } from './RequestUserInputView';
 import { GeminiEditView } from './GeminiEditView';
 import { GeminiExecuteView } from './GeminiExecuteView';
 import { FileView } from './FileView';
+import { isTerminalToolName } from '@/utils/toolDisplay';
 
 export type ToolViewProps = {
     tool: ToolCall;
     metadata: Metadata | null;
     messages: Message[];
     sessionId?: string;
+    messageId?: string;
+    focusFile?: string;
     permissionFooter?: React.ReactNode;
 }
 
@@ -39,6 +42,8 @@ export const toolViewRegistry: Record<string, ToolViewComponent> = {
     CodexPatch: CodexPatchView,
     CodexDiff: CodexDiffView,
     Write: WriteView,
+    write: WriteView,
+    search_replace: EditView,
     TodoWrite: TodoView,
     ExitPlanMode: ExitPlanToolView,
     exit_plan_mode: ExitPlanToolView,
@@ -50,14 +55,29 @@ export const toolViewRegistry: Record<string, ToolViewComponent> = {
     // Gemini tools (lowercase)
     edit: GeminiEditView,
     execute: GeminiExecuteView,
+    // Gemini emits the same payloads as Codex — `unified_diff` for diffs and an
+    // add/modify/delete change map for patches — so the Codex views handle both.
+    GeminiDiff: CodexDiffView,
+    GeminiPatch: CodexPatchView,
+    // Rig sessions forward the model-native tool name with the raw envelope,
+    // which getPatchChanges parses into the same change map.
+    apply_patch: CodexPatchView,
     // File attachment events
     file: FileView,
 };
 
 export const toolFullViewRegistry: Record<string, ToolViewComponent> = {
     Bash: BashViewFull,
-    CodexBash: CodexBashView,
+    CodexBash: BashViewFull,
+    CodexPatch: CodexPatchViewFull,
+    CodexDiff: CodexDiffViewFull,
+    GeminiPatch: CodexPatchViewFull,
+    GeminiDiff: CodexDiffViewFull,
+    apply_patch: CodexPatchViewFull,
     Edit: EditViewFull,
+    search_replace: EditViewFull,
+    Write: WriteView,
+    write: WriteView,
     MultiEdit: MultiEditViewFull,
     Task: TaskView,
     Agent: TaskView,
@@ -70,7 +90,7 @@ export function getToolViewComponent(toolName: string): ToolViewComponent | null
 
 // Helper function to get the full view component for a tool
 export function getToolFullViewComponent(toolName: string): ToolViewComponent | null {
-    return toolFullViewRegistry[toolName] || null;
+    return toolFullViewRegistry[toolName] || (isTerminalToolName(toolName) ? BashViewFull : null);
 }
 
 // Export individual components

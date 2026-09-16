@@ -19,9 +19,19 @@ const ProfilePeerStatusSchema = z.object({
   deviceId: z.string(),
   generation: z.number(),
   connectionState: z.string(),
-  session: z.enum(['connecting', 'ready', 'authorization_expired', 'failed']),
+  session: z.enum(['connecting', 'ready', 'peer_stale', 'reopening', 'authorization_expired', 'failed']),
   sessionDetail: z.string().optional(),
   peerDeviceId: z.string(),
+  sessionId: z.string().optional(),
+  sessionRole: z.enum(['initiator', 'responder']).optional(),
+  sessionAttempt: z.number(),
+  sessionReopenCount: z.number(),
+  sessionReopenCoalesceCount: z.number(),
+  helloAttemptCount: z.number(),
+  helloSupersededCount: z.number(),
+  helloCoalescedCount: z.number(),
+  pendingCount: z.number(),
+  sessionLastVerifiedAt: z.number().optional(),
 });
 
 export function startDaemonControlServer({
@@ -32,7 +42,9 @@ export function startDaemonControlServer({
   onHappySessionWebhook,
   iscp,
   reloadIscpPeers,
-  getIscpPeerStatuses
+  getIscpPeerStatuses,
+  reopenIscpPeers,
+  getConnectionStatus,
 }: {
   getChildren: () => TrackedSession[];
   stopSession: (sessionId: string) => boolean;
@@ -45,6 +57,9 @@ export function startDaemonControlServer({
   reloadIscpPeers?: () => Promise<{ profiles: string[] }>;
   /** Per-profile transport + session diagnostics (GET /iscp/peer-status). */
   getIscpPeerStatuses?: () => ProfilePeerStatus[];
+  /** Controlled, single-flight Session reopen (POST /iscp/reopen). */
+  reopenIscpPeers?: (profileId?: string) => { profiles: string[] };
+  getConnectionStatus?: () => { machineId: string; cliVersion: string; serverUrl: string; connected: boolean };
 }): Promise<{ port: number; stop: () => Promise<void> }> {
   return new Promise((resolve) => {
     const app = fastify({
@@ -55,6 +70,8 @@ export function startDaemonControlServer({
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
     const typed = app.withTypeProvider<ZodTypeProvider>();
+
+    typed.post('/status', async () => getConnectionStatus?.() ?? { machineId: null, connected: false });
 
     // Session reports itself after creation
     typed.post('/session-started', {
@@ -322,6 +339,27 @@ export function startDaemonControlServer({
         return { error: 'ISCP is not enabled on this daemon' };
       }
       return { profiles: getIscpPeerStatuses() };
+    });
+
+    // Session-only recovery trigger. Unlike /iscp/reload this preserves the
+    // peer runtime, device/key, Grant and Relay credentials; ready peers
+    // coalesce concurrent triggers in their Session supervisor.
+    typed.post('/iscp/reopen', {
+      schema: {
+        body: z.object({ profileId: z.string().optional() }),
+        response: {
+          200: z.object({ profiles: z.array(z.string()) }),
+          503: z.object({ error: z.string() })
+        }
+      }
+    }, async (request, reply) => {
+      if (!reopenIscpPeers) {
+        reply.code(503);
+        return { error: 'ISCP is not enabled on this daemon' };
+      }
+      const result = reopenIscpPeers(request.body.profileId);
+      logger.debug(`[CONTROL SERVER] ISCP Session reopen requested (profiles: ${result.profiles.join(', ') || 'none'})`);
+      return result;
     });
 
     // Stop daemon

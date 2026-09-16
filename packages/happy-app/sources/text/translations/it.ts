@@ -1,4 +1,4 @@
-import type { TranslationStructure } from '../_default';
+import { en, type TranslationStructure } from '../_default';
 
 /**
  * Italian plural helper function
@@ -15,6 +15,13 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * Must match the exact structure of the English translations
  */
 export const it: TranslationStructure = {
+    voiceStatusBar: {
+        tapToEnd: 'tocca per terminare',
+        connecting: 'Connessione…',
+        error: 'Errore di connessione',
+        active: 'Assistente vocale attivo',
+    },
+
     tabs: {
         // Tab navigation labels
         inbox: 'Posta',
@@ -162,13 +169,6 @@ export const it: TranslationStructure = {
         },
         chat: 'Chat',
         chatDescription: 'Personalizza l\'aspetto dei messaggi della chat',
-        sessionStatusBar: 'Informazioni sullo stato della sessione',
-        sessionStatusBarDescription: 'Scegli dove mostrare branch, modello, impegno e contesto',
-        sessionStatusDisplayOptions: {
-            hidden: 'Nascosto',
-            above: 'Sopra il compositore',
-            below: 'Sotto il compositore',
-        },
         usageLimitShowRemaining: 'Mostra la quota rimanente',
         usageLimitShowRemainingDescription: 'Gli indicatori di limite contano alla rovescia invece che in avanti',
         userMessageBubbleColor: 'Colore dei tuoi messaggi',
@@ -187,12 +187,33 @@ export const it: TranslationStructure = {
         compactToolCallsDescription: 'Mostra le chiamate non interattive su una riga; apri una riga per i dettagli',
         showLineNumbersInToolViews: 'Mostra numeri di riga nelle viste strumenti',
         showLineNumbersInToolViewsDescription: 'Mostra i numeri di riga nei diff delle viste strumenti',
-        alwaysShowContextSize: 'Mostra sempre dimensione contesto',
-        alwaysShowContextSizeDescription: 'Mostra l\'uso del contesto anche quando non è vicino al limite',
+        alwaysShowContextSize: 'Mostra utilizzo',
+        alwaysShowContextSizeDescription: 'Contesto e limiti del piano sotto il campo messaggio. Gli avvisi vicino al limite restano visibili.',
+        input: 'Input',
+        inputDescription: 'Configura il campo messaggio',
         showHarnessIconInSessionHeader: 'Mostra l\'icona harness nell\'intestazione della sessione',
         showHarnessIconInSessionHeaderDescription: 'Mostra l\'icona harness nell\'intestazione della sessione',
         showHarnessIconsInSessionList: 'Mostra le icone harness nell\'elenco delle sessioni',
         showHarnessIconsInSessionListDescription: 'Mostra le icone harness negli avatar dell\'elenco delle sessioni',
+        avatars: 'Avatar',
+        avatarsDescription: 'Scegli l\'aspetto degli avatar di sessione generati',
+        avatarStyle: 'Stile avatar',
+        avatarStyleOptions: {
+            brutalist: 'Brutalista',
+            pixelated: 'Pixelato',
+            gradient: 'Gradiente',
+        },
+        avatarMonochrome: 'Avatar in bianco e nero',
+        avatarMonochromeDescription: 'Mostra gli avatar senza colore',
+    },
+
+    sessionsFilter: {
+        // Filter menu on the home sessions list header
+        title: 'Filtro',
+        groupingTitle: 'Raggruppamento',
+        flatList: 'Elenco semplice',
+        groupByProject: 'Raggruppa per progetto',
+        appearanceSettings: 'Impostazioni aspetto',
     },
 
     settingsFeatures: {
@@ -212,12 +233,8 @@ export const it: TranslationStructure = {
         commandPaletteDisabled: 'Accesso rapido ai comandi disabilitato',
         markdownCopyV2: 'Markdown Copy v2',
         markdownCopyV2Subtitle: 'Pressione lunga apre la finestra di copia',
-        hideInactiveSessions: 'Nascondi sessioni inattive',
-        hideInactiveSessionsSubtitle: 'Mostra solo le chat attive nella tua lista',
         groupToolCalls: 'Raggruppa chiamate agli strumenti',
         groupToolCallsSubtitle: 'Comprimi le chiamate consecutive agli strumenti in un unico contenitore',
-        imageUpload: 'Caricamento immagini',
-        imageUploadSubtitle: 'Allega immagini ai messaggi per farle analizzare dagli agenti supportati',
     },
 
     errors: {
@@ -333,7 +350,12 @@ export const it: TranslationStructure = {
         failedToConnectToServer: 'Impossibile connettersi al server',
         currentlyUsingCustomServer: 'Attualmente si usa un server personalizzato',
         customServerUrlLabel: 'URL server personalizzato',
-        advancedFeatureFooter: 'Questa è una funzionalità avanzata. Cambia il server solo se sai cosa stai facendo. Dovrai disconnetterti e accedere di nuovo dopo aver cambiato server.'
+        advancedFeatureFooter: 'Questa è una funzionalità avanzata. Cambia il server solo se sai cosa stai facendo. Dovrai disconnetterti e accedere di nuovo dopo aver cambiato server.',
+        services: 'Servizi',
+        useCustomServerForVoice: 'Usa il server personalizzato per la voce',
+        customServerVoiceEnabled: 'Le credenziali e l’utilizzo vocale usano il server personalizzato',
+        customServerVoiceDisabled: 'La voce usa Happy Cloud e il tuo abbonamento Happy',
+        customServerVoiceFooter: 'Quando è disattivato, l’avvio della voce contatta Happy Cloud ed ElevenLabs. Attivalo solo se il server personalizzato è configurato per la voce.',
     },
 
     sessionInfo: {
@@ -363,6 +385,8 @@ export const it: TranslationStructure = {
         quickActions: 'Azioni rapide',
         viewMachine: 'Visualizza macchina',
         viewMachineSubtitle: 'Visualizza dettagli e sessioni della macchina',
+        viewChanges: 'Vedi modifiche',
+        viewChangesSubtitle: 'Differenze di tutti i file non committati',
         resumeSession: 'Resume Session',
         resumeSessionSubtitle: 'Resume this session on the same machine',
         resumeSessionSameMachineOnly: 'This session can only be resumed on the same machine it started on.',
@@ -405,6 +429,7 @@ export const it: TranslationStructure = {
 
     components: {
         emptyMainScreen: {
+            ...en.components.emptyMainScreen,
             // Used by EmptyMainScreen component
             readyToCode: 'Pronto a programmare?',
             installCli: 'Installa la CLI Happy',
@@ -418,14 +443,6 @@ export const it: TranslationStructure = {
             clearGoal: 'Cancella obiettivo',
             stopGoal: 'Ferma obiettivo',
             editGoal: 'Modifica obiettivo',
-        },
-        sessionStatusBar: {
-            contextUsage: ({ used, total, percent }: { used: string; total: string; percent: number }) => `Contesto ${used} di ${total} token, ${percent}%`,
-            limitFiveHour: 'Limite di 5 ore',
-            limitSevenDay: 'Limite di 7 giorni',
-            limitResets: ({ time }: { time: string }) => `si azzera ${time}`,
-            limitAsOf: ({ age }: { age: string }) => `${age} fa`,
-            limitRemaining: ({ percent }: { percent: number }) => `${percent}% rimanente`,
         },
     },
 
@@ -493,7 +510,14 @@ export const it: TranslationStructure = {
             badgePlan: 'Pianificazione',
         },
         context: {
-            remaining: ({ percent }: { percent: number }) => `${percent}% restante`,
+            detailContext: ({ used, total }: { used: string; total: string }) => `${used} / ${total} di contesto`,
+            percentContext: ({ percent }: { percent: number }) => `${percent}% contesto`,
+            percentWeek: ({ percent }: { percent: number }) => `${percent}% settimana`,
+        },
+        usagePopup: {
+            session: 'Sessione',
+            week: 'Settimana',
+            resets: ({ time }: { time: string }) => `Si azzera ${time}`,
         },
         suggestion: {
             fileLabel: 'FILE',
@@ -541,15 +565,14 @@ export const it: TranslationStructure = {
     },
 
     toolGroup: {
-        editedFile: 'Edited file',
-        editedFiles: ({ count }: { count: number }) => count === 1 ? 'Modificato 1 file' : `Modificati ${count} file`,
-        readFiles: ({ count }: { count: number }) => count === 1 ? 'Letto 1 file' : `Letti ${count} file`,
-        ranCommands: ({ count }: { count: number }) => count === 1 ? 'Eseguito 1 comando' : `Eseguiti ${count} comandi`,
-        searched: ({ count }: { count: number }) => count === 1 ? 'Cercato 1 volta' : `Cercato ${count} volte`,
-        fetchedUrls: ({ count }: { count: number }) => count === 1 ? 'Recuperato 1 URL' : `Recuperati ${count} URL`,
-        ranTasks: ({ count }: { count: number }) => count === 1 ? 'Eseguito 1 task' : `Eseguiti ${count} task`,
-        usedTools: ({ count }: { count: number }) => count === 1 ? 'Usato 1 strumento' : `Usati ${count} strumenti`,
+        ran: 'Eseguito',
+        edited: 'Modificato',
+        read: 'Letto',
+        searched: 'Ricerca',
+        fetched: 'Recuperato',
+        ranTask: 'Task eseguito',
         workedFor: ({ duration }: { duration: string }) => `Worked ${duration}`,
+        hide: 'Nascondi',
     },
 
     tools: {
@@ -656,6 +679,16 @@ export const it: TranslationStructure = {
         fileConflictDescription: 'Questo file è stato modificato sul dispositivo mentre lo stavi modificando. Ricarica per vedere l\'ultima versione.',
         reload: 'Ricarica',
         overwrite: 'Sovrascrivi',
+    },
+    diff: {
+        showMoreLines: ({ count }: { count: number }) => `Mostra altre ${count} righe`,
+        tapToExpand: ({ count }: { count: number }) => `${count} righe modificate — tocca per espandere`,
+        ignoreWhitespace: 'Ignora gli spazi',
+        imageBefore: 'Prima',
+        imageAfter: 'Dopo',
+        unchangedLines: ({ count }: { count: number }) => `${count} invariate`,
+        noChanges: 'Nessuna modifica',
+        binaryFile: 'File binario non visualizzato',
     },
     sideChat: {
         panelTitle: 'Chat laterale',
@@ -1098,6 +1131,9 @@ export const it: TranslationStructure = {
         unknownEvent: 'Evento sconosciuto',
         usageLimitUntil: ({ time }: { time: string }) => `Limite di utilizzo raggiunto fino a ${time}`,
         sentAsGoal: 'Sent as goal',
+        sendsAfterThisTurn: 'Sends after this turn',
+        sending: 'Sending…',
+        sendFailed: ({ reason }: { reason: string }) => `Non inviato: ${reason}`,
         unknownTime: 'ora sconosciuta',
     },
 

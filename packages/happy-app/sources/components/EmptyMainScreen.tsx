@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, Platform, Pressable } from 'react-native';
+import { View, Text, Platform, Pressable, Linking, ScrollView } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/RoundButton';
@@ -7,6 +7,10 @@ import { useConnectTerminal } from '@/hooks/useConnectTerminal';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useAllMachines } from '@/sync/storage';
+import { collectMachineChoices } from '@/sync/machineChoices';
+import { useOfflineMachineTroubleshooting } from '@/hooks/useOfflineMachineTroubleshooting';
+import { useRouter } from 'expo-router';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -21,6 +25,26 @@ const stylesheet = StyleSheet.create((theme) => ({
         fontSize: 24,
         color: theme.colors.text,
         ...Typography.default('semiBold'),
+    },
+    stateIcon: {
+        marginBottom: 20,
+    },
+    stateTitle: {
+        marginBottom: 8,
+        paddingHorizontal: 24,
+        textAlign: 'center',
+        fontSize: 24,
+        color: theme.colors.text,
+        ...Typography.default('semiBold'),
+    },
+    stateDescription: {
+        maxWidth: 360,
+        marginBottom: 24,
+        paddingHorizontal: 24,
+        textAlign: 'center',
+        fontSize: 16,
+        color: theme.colors.textSecondary,
+        ...Typography.default(),
     },
     terminalBlock: {
         backgroundColor: Platform.select({ web: theme.colors.surfaceHighest, default: theme.colors.surfaceHigh }),
@@ -100,12 +124,52 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.textSecondary,
         ...Typography.default('semiBold'),
     },
+    secondaryAction: {
+        minHeight: 40,
+        marginTop: 4,
+        paddingHorizontal: 14,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderRadius: 20,
+    },
+    secondaryActionPressed: {
+        backgroundColor: theme.colors.surfacePressedOverlay,
+    },
+    secondaryActionText: {
+        fontSize: 15,
+        color: theme.colors.textSecondary,
+        ...Typography.default('semiBold'),
+    },
 }));
 
-export function EmptyMainScreen() {
+export function EmptyMainScreen({
+    hasArchivedSessions = false,
+    onShowArchived,
+}: {
+    hasArchivedSessions?: boolean;
+    onShowArchived?: () => void;
+}) {
     const { connectTerminal, connectWithUrl, isLoading } = useConnectTerminal();
     const { theme } = useUnistyles();
     const styles = stylesheet;
+    const router = useRouter();
+    const [showManualSetup, setShowManualSetup] = React.useState(false);
+    const machines = useAllMachines({ includeOffline: true });
+    const machineChoices = React.useMemo(() => collectMachineChoices(machines), [machines]);
+    const hasOnlineMachines = machineChoices.some((machine) => machine.online);
+    const troubleshoot = useOfflineMachineTroubleshooting(machineChoices);
+    const showArchivedAction = hasArchivedSessions && onShowArchived ? (
+        <Pressable
+            onPress={onShowArchived}
+            accessibilityRole="button"
+            style={({ pressed }) => [
+                styles.secondaryAction,
+                pressed && styles.secondaryActionPressed,
+            ]}
+        >
+            <Text style={styles.secondaryActionText}>{t('sidebar.showArchived')}</Text>
+        </Pressable>
+    ) : null;
     const enterUrlManually = React.useCallback(async () => {
         const url = await Modal.prompt(
             t('modals.authenticateTerminal'),
@@ -122,23 +186,68 @@ export function EmptyMainScreen() {
         }
     }, [connectWithUrl]);
 
+    if (machineChoices.length > 0) {
+        if (hasOnlineMachines) {
+            return (
+                <View style={styles.container}>
+                    <Ionicons name="terminal-outline" size={56} color={theme.colors.textSecondary} style={styles.stateIcon} />
+                    <Text style={styles.stateTitle}>No sessions yet</Text>
+                    <Text style={styles.stateDescription}>Start one on a connected machine.</Text>
+                    <RoundButton title="Start New Session" size="large" onPress={() => router.navigate('/new')} />
+                    {showArchivedAction}
+                </View>
+            );
+        }
+
+        const title = machineChoices.length === 1
+            ? `${machineChoices[0].name} is unreachable`
+            : 'No machines are reachable';
+        return (
+            <View style={styles.container}>
+                <Ionicons name="cloud-offline-outline" size={56} color={theme.colors.textSecondary} style={styles.stateIcon} />
+                <Text style={styles.stateTitle}>{title}</Text>
+                <Text style={styles.stateDescription}>Bring a machine online to start a session.</Text>
+                <RoundButton title="Troubleshoot" size="large" onPress={troubleshoot} />
+                {showArchivedAction}
+            </View>
+        );
+    }
+
     return (
-        <View style={styles.container}>
-            {/* Terminal-style code block */}
-            <Text style={styles.title}>{t('components.emptyMainScreen.readyToCode')}</Text>
-            <View style={styles.terminalBlock}>
+        <ScrollView contentContainerStyle={[styles.container, { flexGrow: 1, flex: undefined, paddingVertical: 24 }]}>
+            <Text style={styles.title}>{t('components.emptyMainScreen.connectComputer')}</Text>
+            <Text style={styles.stateDescription}>
+                {t('components.emptyMainScreen.desktopSetupInstructions')}
+                {'\n\n'}{t('components.emptyMainScreen.harnessDescription')}
+            </Text>
+            <RoundButton
+                title={t('components.emptyMainScreen.getDesktop')}
+                action={async () => { await Linking.openURL('https://happy.engineering'); }}
+            />
+            <Pressable
+                onPress={() => setShowManualSetup(value => !value)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: showManualSetup }}
+                style={styles.secondaryAction}
+            >
+                <Text style={styles.secondaryActionText}>{t('components.emptyMainScreen.terminalAlternative')}</Text>
+            </Pressable>
+            {showManualSetup && <View style={styles.terminalBlock}>
                 <Text style={[styles.terminalText, styles.terminalTextFirst]}>
                     $ npm i -g happy
                 </Text>
-                <Text style={styles.terminalText}>
-                    $ happy
+                <Text style={[styles.terminalText, styles.terminalTextFirst]}>
+                    $ happy claude
                 </Text>
-            </View>
+                <Text style={styles.terminalText}>
+                    $ happy codex
+                </Text>
+            </View>}
 
 
             {Platform.OS !== 'web' && (
                 <>
-                    <View style={styles.stepsContainer}>
+                    {showManualSetup && <View style={styles.stepsContainer}>
                         <View style={styles.stepRow}>
                             <View style={styles.stepNumber}>
                                 <Text style={styles.stepNumberText}>1</Text>
@@ -163,7 +272,7 @@ export function EmptyMainScreen() {
                                 {t('components.emptyMainScreen.scanQrCode')}
                             </Text>
                         </View>
-                    </View>
+                    </View>}
                     <View style={styles.buttonsContainer}>
                         <View style={styles.buttonWrapper}>
                             <RoundButton
@@ -190,6 +299,7 @@ export function EmptyMainScreen() {
                     </View>
                 </>
             )}
-        </View>
+            {showArchivedAction}
+        </ScrollView>
     );
 }

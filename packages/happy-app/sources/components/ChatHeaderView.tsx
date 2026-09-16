@@ -9,6 +9,8 @@ import { layout } from '@/components/layout';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { MobileGlassSurface } from './MobileGlass';
 import { BubblePressable } from './BubblePressable';
+import { GitLineChanges } from './GitLineChanges';
+import type { VisibleRigGitLineChanges } from '@/utils/rigGitLineChanges';
 import {
     MOBILE_GLASS_CONTROL_RADIUS,
     MOBILE_GLASS_CONTROL_SIZE,
@@ -23,8 +25,9 @@ import {
 
 interface ChatHeaderViewProps {
     title: string;
-    /** Project folder name (last path segment) */
-    folderName?: string;
+    /** Workspace name when available, otherwise the git branch. */
+    subtitle?: string;
+    gitChanges?: VisibleRigGitLineChanges | null;
     /** Extra path segment appended to the title with a separator (used for the file-view overlay). */
     extraPathSegment?: string;
     /** Optional content rendered at the right edge of the header (used by file-view / diff overlays). */
@@ -33,7 +36,6 @@ interface ChatHeaderViewProps {
     onBackPress?: () => void;
     backgroundColor?: string;
     tintColor?: string;
-    isConnected?: boolean;
     backdropVisible?: boolean;
 }
 
@@ -42,12 +44,12 @@ interface ChatHeaderViewProps {
 // the controls into content.
 export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
     title,
-    folderName,
+    subtitle,
+    gitChanges = null,
     extraPathSegment,
     rightSlot,
     onTitlePress,
     onBackPress,
-    isConnected = true,
     backdropVisible = false,
 }) => {
     const { theme } = useUnistyles();
@@ -58,8 +60,7 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
     const hasExtra = !!extraPathSegment;
     const glassEnabled = !isTablet && Platform.OS === 'ios' && !isRunningOnMac();
     const contentHeight = glassEnabled ? Math.max(headerHeight, MOBILE_GLASS_HEADER_HEIGHT) : headerHeight;
-    const showFolderSubtitle = !!folderName && folderName !== title;
-    const folderNameColor = glassEnabled
+    const subtitleColor = glassEnabled
         ? theme.dark ? 'rgba(255, 255, 255, 0.78)' : 'rgba(24, 23, 28, 0.72)'
         : theme.colors.textSecondary;
     // The right control's width follows whatever it is carrying, so it is
@@ -90,79 +91,6 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
         }).start();
     }, [backdropStrength, backdropVisible, glassEnabled]);
 
-    if (Platform.OS === 'web') {
-        return (
-            <View style={[styles.container, { paddingTop: insets.top, backgroundColor: theme.colors.header.background }]}>
-                <View style={styles.contentWrapper}>
-                    <View style={[styles.webContent, { height: headerHeight }]}>
-                        {showBackButton && (
-                            <Pressable onPress={onBackPress} hitSlop={15} style={styles.webBackButton}>
-                                <Ionicons
-                                    name="arrow-back"
-                                    size={24}
-                                    color={theme.colors.header.tint}
-                                />
-                            </Pressable>
-                        )}
-                        <Pressable
-                            style={styles.titleContainer}
-                            onPress={onTitlePress}
-                            disabled={!onTitlePress}
-                        >
-                            {folderName ? (
-                                <View style={styles.webTitleRow}>
-                                    <Text
-                                        numberOfLines={1}
-                                        style={[styles.webFolderName, { color: theme.colors.textSecondary, ...Typography.default() }]}
-                                    >
-                                        {folderName}
-                                    </Text>
-                                    {title && title !== folderName && (
-                                        <>
-                                            <Text style={[styles.webSeparator, { color: theme.colors.textSecondary, ...Typography.default() }]}>/</Text>
-                                            <Text
-                                                numberOfLines={1}
-                                                ellipsizeMode="tail"
-                                                style={[
-                                                    styles.webTitle,
-                                                    hasExtra && styles.webTitleWithExtra,
-                                                    { color: theme.colors.header.tint, ...Typography.default() },
-                                                ]}
-                                            >
-                                                {title}
-                                            </Text>
-                                        </>
-                                    )}
-                                    {hasExtra && (
-                                        <>
-                                            <Text style={[styles.webSeparator, { color: theme.colors.textSecondary, ...Typography.default() }]}>/</Text>
-                                            <Text
-                                                numberOfLines={1}
-                                                ellipsizeMode="middle"
-                                                style={[styles.webExtraPath, { color: theme.colors.header.tint, ...Typography.mono() }]}
-                                            >
-                                                {extraPathSegment}
-                                            </Text>
-                                        </>
-                                    )}
-                                </View>
-                            ) : (
-                                <Text
-                                    numberOfLines={1}
-                                    ellipsizeMode="tail"
-                                    style={[styles.webTitle, { color: theme.colors.header.tint, ...Typography.default() }]}
-                                >
-                                    {title}
-                                </Text>
-                            )}
-                        </Pressable>
-                        {rightSlot ? <View style={styles.webRightSlot}>{rightSlot}</View> : null}
-                    </View>
-                </View>
-            </View>
-        );
-    }
-
     const titleBody = (
         <>
             <Text
@@ -170,28 +98,30 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
                 ellipsizeMode="tail"
                 style={[
                     styles.title,
+                    Platform.OS === 'web' && styles.webTitle,
                     glassEnabled && styles.mobileTitleText,
                     { color: theme.colors.header.tint, ...Typography.default('semiBold') },
                 ]}
             >
-                {title || folderName}
+                {title || subtitle}
             </Text>
-            {(showFolderSubtitle || hasExtra) && (
+            {(subtitle || gitChanges || hasExtra) && (
                 <View style={[styles.subtitleRow, glassEnabled && styles.mobileSubtitleRow]}>
-                    {showFolderSubtitle && (
+                    {!!subtitle && (
                         <Text
                             numberOfLines={1}
                             ellipsizeMode="tail"
                             style={[
-                                styles.folderName,
-                                glassEnabled && styles.mobileFolderName,
-                                { color: folderNameColor, ...Typography.default() },
+                                styles.subtitle,
+                                glassEnabled && styles.mobileSubtitle,
+                                { color: subtitleColor, ...Typography.default() },
                             ]}
                         >
-                            {folderName}
+                            {subtitle}
                         </Text>
                     )}
-                    {showFolderSubtitle && hasExtra && (
+                    <GitLineChanges changes={gitChanges} />
+                    {(subtitle || gitChanges) && hasExtra && (
                         <Text style={[styles.separator, { color: theme.colors.textSecondary, ...Typography.default() }]}>•</Text>
                     )}
                     {hasExtra && (
@@ -211,6 +141,26 @@ export const ChatHeaderView: React.FC<ChatHeaderViewProps> = ({
             )}
         </>
     );
+
+    if (Platform.OS === 'web') {
+        return (
+            <View style={[styles.container, { paddingTop: insets.top, backgroundColor: theme.colors.header.background }]}>
+                <View style={styles.contentWrapper}>
+                    <View style={[styles.webContent, { height: headerHeight }]}>
+                        {showBackButton && (
+                            <Pressable onPress={onBackPress} hitSlop={15} style={styles.webBackButton}>
+                                <Ionicons name="arrow-back" size={24} color={theme.colors.header.tint} />
+                            </Pressable>
+                        )}
+                        <Pressable style={styles.titleContainer} onPress={onTitlePress} disabled={!onTitlePress}>
+                            {titleBody}
+                        </Pressable>
+                        {rightSlot ? <View style={styles.webRightSlot}>{rightSlot}</View> : null}
+                    </View>
+                </View>
+            </View>
+        );
+    }
 
     // Built the way the back button is: a wrapper that owns the size, and the
     // glass inside it owning the material. maxWidth is what makes the capsule
@@ -420,7 +370,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     // Two lines have to sit inside a 44pt capsule, so they are drawn a little
     // closer than they were when they floated free.
-    mobileFolderName: {
+    mobileSubtitle: {
         lineHeight: 14,
     },
     // The capsule is sized by its content, and a row whose width comes from its
@@ -430,33 +380,8 @@ const styles = StyleSheet.create((theme) => ({
         flex: 0,
         lineHeight: 14,
     },
-    webTitleRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-        width: '100%',
-    },
-    webFolderName: {
-        fontSize: 14,
-        flexShrink: 0,
-    },
-    webSeparator: {
-        fontSize: 14,
-        flexShrink: 0,
-    },
     webTitle: {
         fontSize: 14,
-        fontWeight: '600',
-        flexShrink: 1,
-    },
-    webTitleWithExtra: {
-        flexShrink: 0.5,
-    },
-    webExtraPath: {
-        flex: 1,
-        minWidth: 0,
-        fontSize: 13,
-        flexShrink: 1,
     },
     webRightSlot: {
         flexDirection: 'row',
@@ -474,8 +399,9 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: 4,
         width: '100%',
+        minWidth: 0,
     },
-    folderName: {
+    subtitle: {
         fontSize: 12,
         lineHeight: 16,
         flexShrink: 1,

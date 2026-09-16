@@ -9,10 +9,11 @@ import { DEFAULT_USER_MESSAGE_BUBBLE_COLOR } from '../utils/userMessageBubbleCol
 // Current schema version for backward compatibility
 export const SUPPORTED_SCHEMA_VERSION = 2;
 
-// Where (and whether) the branch/model/effort/context status bar renders
-// around the composer.
-export const SESSION_STATUS_BAR_DISPLAY_MODES = ['hidden', 'above', 'below'] as const;
-export type SessionStatusBarDisplay = typeof SESSION_STATUS_BAR_DISPLAY_MODES[number];
+
+// How the home session list lays out: one activity-sorted flat list, or the
+// project-card hierarchy grouped by machine and repository.
+export const SESSION_LIST_GROUPING_MODES = ['flat', 'project'] as const;
+export type SessionListGrouping = typeof SESSION_LIST_GROUPING_MODES[number];
 
 export const SettingsSchema = z.object({
     // Schema version for compatibility detection
@@ -26,16 +27,19 @@ export const SettingsSchema = z.object({
     wrapLinesInDiffs: z.boolean().describe('Legacy diff line-wrapping preference (no longer used)'),
     diffStyle: z.enum(['unified', 'split']).describe('Diff view style (split is web-only)'),
     analyticsOptOut: z.boolean().describe('Whether to opt out of anonymous analytics'),
-    experiments: z.boolean().describe('Whether to enable experimental features'),
+    experiments: z.boolean().describe('Enable current experiments: the Rig session file browser and the Usage settings page'),
     alwaysShowContextSize: z.boolean().describe('Always show context size in agent input'),
     agentInputEnterToSend: z.boolean().describe('Whether pressing Enter submits/sends in the agent input (web)'),
-    avatarStyle: z.string().describe('Legacy avatar display style (no longer used)'),
+    // Kept as a free string for cross-version sync; normalized on read by
+    // normalizeAvatarStyle so unknown values fall back to brutalist.
+    avatarStyle: z.string().describe('Generated avatar style: brutalist, pixelated, or gradient'),
+    avatarMonochrome: z.boolean().describe('Render generated avatars in black and white'),
+    sessionListGrouping: z.enum(SESSION_LIST_GROUPING_MODES).describe('Home session list layout: flat activity list or grouped by project'),
     // Keep the legacy key for synced settings compatibility. It controls the
     // harness badges in the session list.
     showFlavorIcons: z.boolean().describe('Whether to show harness icons in the session list'),
     showHarnessIconInSessionHeader: z.boolean().describe('Whether to show the harness icon in the session header'),
     userMessageBubbleColor: z.string().describe('User message bubble color preset'),
-    sessionStatusBarDisplay: z.enum(SESSION_STATUS_BAR_DISPLAY_MODES).describe('Whether/where to show the branch, model, effort, and context status bar'),
     usageLimitShowRemaining: z.boolean().describe('Show plan rate limits as quota remaining instead of quota used'),
 
     // Drives the archive-visibility toggle: it hides archived sessions, not
@@ -50,7 +54,6 @@ export const SettingsSchema = z.object({
     fileDiffsSidebar: z.boolean().describe('Show the file diffs sidebar next to the chat on desktop'),
     groupToolCalls: z.boolean().describe('Collapse consecutive tool calls into grouped containers in chat'),
     compactToolCalls: z.boolean().describe('Render non-interactive tool calls as compact one-line rows'),
-    expImageUpload: z.boolean().describe('Enable experimental image upload in chat'),
     reviewPromptAnswered: z.boolean().describe('Whether the review prompt has been answered'),
     reviewPromptLikedApp: z.boolean().nullish().describe('Whether user liked the app when asked'),
     voiceAssistantLanguage: z.string().nullable().describe('Preferred language for voice assistant (null for auto-detect)'),
@@ -115,21 +118,20 @@ export const settingsDefaults: Settings = {
     alwaysShowContextSize: false,
     agentInputEnterToSend: true,
     avatarStyle: 'brutalist',
+    avatarMonochrome: false,
+    sessionListGrouping: 'flat',
     showFlavorIcons: false,
     showHarnessIconInSessionHeader: true,
     userMessageBubbleColor: DEFAULT_USER_MESSAGE_BUBBLE_COLOR,
-    // Hidden everywhere by default — the context usage indicator is still too
-    // raw to roll out; users can opt back in from appearance settings.
-    sessionStatusBarDisplay: 'hidden',
     usageLimitShowRemaining: false,
 
-    hideInactiveSessions: false,
+    hideInactiveSessions: true,
     sortSessionsByActivity: true,
     expResumeSession: true,
     fileDiffsSidebar: false,
     groupToolCalls: false,
-    compactToolCalls: true,
-    expImageUpload: false,
+    // Full tool views by default: edit diffs render inline in the chat.
+    compactToolCalls: false,
     reviewPromptAnswered: false,
     reviewPromptLikedApp: null,
     voiceAssistantLanguage: null,

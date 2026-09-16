@@ -2,11 +2,14 @@ import os from 'node:os';
 import { randomUUID } from 'node:crypto';
 
 import { ApiClient } from '@/api/api';
+import { ApiSessionClient } from '@/api/apiSession';
 import { logger } from '@/ui/logger';
 import { loop } from '@/claude/loop';
 import { AgentGoalStatus, AgentState, Metadata } from '@/api/types';
 import packageJson from '../../package.json';
-import { Credentials, readSettings } from '@/persistence';
+import { readSettings } from '@/persistence';
+import type { SessionNetwork } from '@/iscp/networkStartup';
+import { createIscpOnlySession } from '@/iscp/iscpOnlySession';
 import { EnhancedMode, PermissionMode } from './loop';
 import { MessageQueue2 } from '@/utils/MessageQueue2';
 import { hashObject } from '@/utils/deterministicJson';
@@ -32,7 +35,7 @@ import {
     type ClaudeGoalStatusTranscriptEvent,
 } from '@/claude/claudeGoalStatus';
 import { Session } from './session';
-import { applySandboxPermissionPolicy, resolveInitialClaudePermissionMode, resolveRemoteClaudePermissionMode } from './utils/permissionMode';
+import { applySandboxPermissionPolicy, normalizeRemotePermissionMode, resolveInitialClaudePermissionMode, resolveRemoteClaudePermissionMode } from './utils/permissionMode';
 import { decodeBase64, encodeBase64 } from '@/api/encryption';
 import type { Session as ApiSession } from '@/api/types';
 import { getProjectPath } from './utils/path';
@@ -62,7 +65,9 @@ export interface StartOptions {
 // harness is already configured to do", so the mode is left unset and Claude
 // applies its own settings. Substituting a value here — this used to be
 // 'yolo' — silently overrode every user's Claude config with full access.
-const DEFAULT_CLAUDE_MODEL = 'opus';
+// The model works the same way: no default. This used to be 'opus', which
+// pinned every remote turn to the 200K model even when the user's own Claude
+// config (settings.json, ANTHROPIC_MODEL) said e.g. claude-opus-5[1m] (#1721).
 const DEFAULT_CLAUDE_EFFORT: 'low' | 'medium' | 'high' | 'xhigh' | 'max' = 'medium';
 type ClaudeGoalCommand = NonNullable<ReturnType<typeof parseClaudeGoalActionParams>>;
 type PendingClaudeGoalAction = {
@@ -72,7 +77,7 @@ type PendingClaudeGoalAction = {
     timeout: ReturnType<typeof setTimeout>;
 };
 
-export async function runClaude(credentials: Credentials, options: StartOptions = {}): Promise<void> {
+export async function runClaude(network: SessionNetwork, options: StartOptions = {}): Promise<void> {
     logger.debug(`[CLAUDE] ===== CLAUDE MODE STARTING =====`);
     logger.debug(`[CLAUDE] This is the Claude agent, NOT Gemini`);
     
@@ -91,8 +96,11 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // Set backend for offline warnings (before any API calls)
     connectionState.setBackend('Claude');
 
-    // Create session service
-    const api = await ApiClient.create(credentials);
+    // Create session service. ISCP-only sessions (OPS 2026-08-26 §4.1) have
+    // no legacy credentials and never construct a Happy Server client.
+    const api: ApiClient | null = network.mode === 'legacy'
+        ? await ApiClient.create(network.credentials)
+        : null;
 
     // Create a new session
     let state: AgentState = {};
@@ -121,16 +129,18 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
         sandboxEnabled ||
         Boolean(options.claudeArgs?.includes('--dangerously-skip-permissions'));
     if (!machineId) {
-        console.error(`[START] No machine ID found in settings, which is unexpected since authAndSetupMachineIfNeeded should have created it. Please report this issue on https://github.com/slopus/happy-cli/issues`);
+        console.error(`[START] No machine ID found in settings, which is unexpected since network startup resolution should have created it. Please report this issue on https://github.com/slopus/happy-cli/issues`);
         process.exit(1);
     }
     logger.debug(`Using machineId: ${machineId}`);
 
-    // Create machine if it doesn't exist
-    await api.getOrCreateMachine({
-        machineId,
-        metadata: initialMachineMetadata
-    });
+    // Create machine if it doesn't exist (legacy server directory only)
+    if (api) {
+        await api.getOrCreateMachine({
+            machineId,
+            metadata: initialMachineMetadata
+        });
+    }
 
     // Lineage from the daemon's spawn RPC (set by app-side fork / duplicate).
     const forkedFromSessionId = process.env.HAPPY_FORKED_FROM_SESSION_ID;
@@ -182,13 +192,22 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             agentState: state,
             agentStateVersion: parseInt(reconnectAgentStateVersion || '0', 10),
         };
-    } else {
+    } else if (api) {
         response = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
+    } else {
+        // ISCP-only: the session identity is minted locally — the daemon event
+        // log and RPC registry treat ids as opaque, and there is no server row.
+        response = createIscpOnlySession(metadata, state);
+        logger.debug(`[START] Minted ISCP-only session ${response.id}`);
     }
 
     // Handle server unreachable case - run Claude locally with hot reconnection
     // Note: connectionState.notifyOffline() was already called by api.ts with error details
     if (!response) {
+        if (!api) {
+            // Unreachable: ISCP-only identities are minted locally above.
+            throw new Error('ISCP-only session identity missing');
+        }
         let offlineSessionId: string | null = null;
 
         const reconnection = startOfflineReconnection({
@@ -288,8 +307,9 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // SDK metadata (tools, slash commands) is now extracted from the
     // system.init message in claudeRemote.ts via onSDKMetadata callback
 
-    // Create realtime session
-    const session = api.sessionSyncClient(response);
+    // Create realtime session (ISCP-only: no Happy Server socket/outbox —
+    // history goes to the daemon event log, RPC over the localhost bridge)
+    const session = api ? api.sessionSyncClient(response) : new ApiSessionClient(null, response);
 
     // On reconnect, un-archive the session and skip replaying old messages.
     if (reconnectSessionId) {
@@ -541,7 +561,9 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
     // Forward messages to the queue
     // Permission modes: Use the unified 7-mode type, mapping happens at SDK boundary in claudeRemote.ts
     let currentPermissionMode: PermissionMode | undefined = initialPermissionMode;
-    let currentModel: string | undefined = options.model ?? DEFAULT_CLAUDE_MODEL; // Track current model state
+    // Undefined means "no override" and lets Claude resolve the model itself —
+    // same contract as the mid-session reset below (meta.model null → undefined).
+    let currentModel: string | undefined = options.model;
     let currentFallbackModel: string | undefined = undefined; // Track current fallback model
     let currentCustomSystemPrompt: string | undefined = undefined; // Track current custom system prompt
     let currentAppendSystemPrompt: string | undefined = undefined; // Track current append system prompt
@@ -684,7 +706,7 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
             const previousPermissionMode = currentPermissionMode;
             messagePermissionMode = resolveRemoteClaudePermissionMode(
                 currentPermissionMode,
-                message.meta.permissionMode,
+                normalizeRemotePermissionMode(message.meta.permissionMode),
                 sandboxEnabled,
             );
             currentPermissionMode = messagePermissionMode;
@@ -896,10 +918,12 @@ export async function runClaude(credentials: Credentials, options: StartOptions 
                 // archive metadata — so this is safe in the archive=false
                 // case too, and matches the "session goes inactive but
                 // stays resumable" semantics we want for Ctrl-C.
-                try {
-                    await api.deactivateSession(session.sessionId);
-                } catch (err) {
-                    logger.debug('[START] deactivateSession during cleanup failed:', err);
+                if (api) {
+                    try {
+                        await api.deactivateSession(session.sessionId);
+                    } catch (err) {
+                        logger.debug('[START] deactivateSession during cleanup failed:', err);
+                    }
                 }
 
                 await session.flush();

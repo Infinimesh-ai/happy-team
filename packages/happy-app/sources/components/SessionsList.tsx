@@ -2,7 +2,7 @@ import React from 'react';
 import { View, Pressable, FlatList, NativeScrollEvent, NativeSyntheticEvent, Platform } from 'react-native';
 import { Text } from '@/components/StyledText';
 import { usePathname, useRouter } from 'expo-router';
-import { SessionListViewItem, SessionRowData, useAllMachines, useSettingMutable } from '@/sync/storage';
+import { SessionListViewItem, SessionRowData, useAllMachines, useSetting, useSettingMutable } from '@/sync/storage';
 import { Ionicons } from '@expo/vector-icons';
 import { type SessionState, formatLastSeen, vibingMessages } from '@/utils/sessionUtils';
 import { Avatar } from './Avatar';
@@ -20,7 +20,7 @@ import { getHarnessName } from '@/utils/harnessCatalog';
 import { requestReview } from '@/utils/requestReview';
 import { UpdateBanner } from './UpdateBanner';
 import { layout } from './layout';
-import { useNavigateToSession } from '@/hooks/useNavigateToSession';
+import { useSessionPressHandlers } from '@/hooks/useNavigateToSession';
 import { SessionActionsAnchor, SessionActionsPopover } from './SessionActionsPopover';
 import { useSessionActionAlert } from '@/hooks/useSessionQuickActions';
 import { t } from '@/text';
@@ -327,10 +327,10 @@ export function SessionsList({
     // Stored under its original `hideInactiveSessions` key — synced settings
     // have no rename migration — but it hides archived sessions only.
     const [hideArchivedSessions, setHideArchivedSessions] = useSettingMutable('hideInactiveSessions');
-    // The home screen has one canonical, activity-sorted chat list. Keep the
-    // legacy project-card implementation below for now while the old synced
-    // setting ages out, but do not expose a layout fork to users.
-    const flatSessionList = true;
+    // The activity-sorted chat list is the default; the project-card hierarchy
+    // is offered back through the home filter menu for people who organized
+    // around it.
+    const flatSessionList = useSetting('sessionListGrouping') !== 'project';
     const machines = useAllMachines();
     const pathname = usePathname();
     const isTablet = useIsTablet();
@@ -417,7 +417,7 @@ export function SessionsList({
         const legacyItems = groupedRows.filter((item) => (
             item.type !== 'project' && item.type !== 'projects-header'
         ));
-        return [...hierarchy, ...legacyItems, ...archiveToggle, ...archivedRows];
+        return [...legacyItems, ...hierarchy, ...archiveToggle, ...archivedRows];
     }, [flatSessionList, hasArchivedSessions, hideArchivedSessions, machines, sourceData]);
 
     // Early return if no data yet
@@ -429,6 +429,7 @@ export function SessionsList({
 
     const keyExtractor = React.useCallback((item: SessionListDisplayItem, index: number) => {
         switch (item.type) {
+            case 'bots': return 'bots';
             case 'machine-header': return `machine-header-${JSON.stringify(item.machineId)}`;
             case 'archive-toggle': return 'archive-toggle';
             case 'flat-session': return `flat-session-${item.row.session.id}`;
@@ -443,6 +444,22 @@ export function SessionsList({
 
     const renderItem = React.useCallback(({ item, index }: { item: SessionListDisplayItem, index: number }) => {
         switch (item.type) {
+            case 'bots':
+                return (
+                    <View>
+                        <View style={styles.headerSection}>
+                            <Text style={styles.headerText}>Bots</Text>
+                        </View>
+                        {item.sessions.map((session, botIndex) => (
+                            <FlatSessionRow
+                                key={session.id}
+                                row={toFlatSessionRow(session)}
+                                selected={session.id === selectedSessionId}
+                                showBorder={botIndex < item.sessions.length - 1}
+                            />
+                        ))}
+                    </View>
+                );
             case 'machine-header':
                 return (
                     <MachineHeader
@@ -610,7 +627,7 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }
     isSingle?: boolean;
 }) => {
     const styles = stylesheet;
-    const navigateToSession = useNavigateToSession();
+    const sessionPressHandlers = useSessionPressHandlers(session.id);
     const [actionsAnchor, setActionsAnchor] = React.useState<SessionActionsAnchor | null>(null);
     const baseStatus = STATUS_CONFIG[session.state];
     const needsUserAction = session.state === 'permission_required' || session.state === 'input_required';
@@ -634,10 +651,6 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }
                     : session.state === 'disconnected'
                         ? t('status.lastSeen', { time: formatLastSeen(session.activeAt!, false) })
                         : t('status.online');
-
-    const handlePress = React.useCallback(() => {
-        navigateToSession(session.id);
-    }, [navigateToSession, session.id]);
 
     const handleContextMenu = React.useCallback((event: any) => {
         event.preventDefault?.();
@@ -671,11 +684,11 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }
                     isFirst ? styles.sessionItemFirst :
                         isLast ? styles.sessionItemLast : {}
             ]}
-            onPress={handlePress}
+            {...sessionPressHandlers}
             {...menuProps}
         >
             <View style={styles.avatarContainer}>
-                <Avatar id={session.avatarId} size={48} monochrome={!status.isConnected} flavor={session.flavor} clientId={session.clientId} imageUrl={session.projectAvatarUri} thumbhash={session.projectAvatarThumbhash} badgeLocation="sessionList" />
+                <Avatar bot={!!session.botId} id={session.avatarId} size={48} monochrome={!status.isConnected} flavor={session.flavor} clientId={session.clientId} imageUrl={session.avatarUri} thumbhash={session.avatarThumbhash} badgeLocation="sessionList" />
                 {session.hasDraft && (
                     <View style={styles.draftIconContainer}>
                         <Ionicons
@@ -715,7 +728,7 @@ const SessionItem = React.memo(({ session, selected, isFirst, isLast, isSingle }
                     </View>
                 ) : (
                     <Text style={styles.sessionSubtitle} numberOfLines={1}>
-                        {session.subtitle}
+                        {session.botId ? toFlatSessionRow(session).projectName : session.subtitle}
                     </Text>
                 )}
 

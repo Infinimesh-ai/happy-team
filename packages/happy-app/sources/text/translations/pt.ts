@@ -1,4 +1,4 @@
-import type { TranslationStructure } from '../_default';
+import { en, type TranslationStructure } from '../_default';
 
 /**
  * Portuguese plural helper function
@@ -15,6 +15,13 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * Must match the exact structure of the English translations
  */
 export const pt: TranslationStructure = {
+    voiceStatusBar: {
+        tapToEnd: 'toque para encerrar',
+        connecting: 'Conectando…',
+        error: 'Erro de conexão',
+        active: 'Assistente de voz ativo',
+    },
+
     tabs: {
         // Tab navigation labels
         inbox: 'Caixa de entrada',
@@ -163,13 +170,6 @@ export const pt: TranslationStructure = {
         },
         chat: 'Chat',
         chatDescription: 'Personalize a aparência das mensagens do chat',
-        sessionStatusBar: 'Informações de status da sessão',
-        sessionStatusBarDescription: 'Escolha onde a branch, o modelo, o esforço e o contexto aparecem',
-        sessionStatusDisplayOptions: {
-            hidden: 'Oculto',
-            above: 'Acima do compositor',
-            below: 'Abaixo do compositor',
-        },
         usageLimitShowRemaining: 'Mostrar cota restante',
         usageLimitShowRemainingDescription: 'Os indicadores de limite contam para baixo em vez de para cima',
         userMessageBubbleColor: 'Cor das suas mensagens',
@@ -188,12 +188,33 @@ export const pt: TranslationStructure = {
         compactToolCallsDescription: 'Mostre chamadas não interativas em uma linha; abra a linha para ver detalhes',
         showLineNumbersInToolViews: 'Mostrar números de linha nas visualizações de ferramentas',
         showLineNumbersInToolViewsDescription: 'Exibir números de linha nos diffs das visualizações de ferramentas',
-        alwaysShowContextSize: 'Sempre mostrar tamanho do contexto',
-        alwaysShowContextSizeDescription: 'Exibir uso do contexto mesmo quando não estiver próximo do limite',
+        alwaysShowContextSize: 'Mostrar uso',
+        alwaysShowContextSizeDescription: 'Contexto e limites do plano abaixo do campo. Avisos perto do limite sempre aparecem.',
+        input: 'Entrada',
+        inputDescription: 'Configure o campo de mensagem',
         showHarnessIconInSessionHeader: 'Mostrar ícone do harness no cabeçalho da sessão',
         showHarnessIconInSessionHeaderDescription: 'Exibir o ícone do harness no cabeçalho da sessão',
         showHarnessIconsInSessionList: 'Mostrar ícones de harness na lista de sessões',
         showHarnessIconsInSessionListDescription: 'Exibir ícones de harness nos avatares da lista de sessões',
+        avatars: 'Avatares',
+        avatarsDescription: 'Escolha a aparência dos avatares de sessão gerados',
+        avatarStyle: 'Estilo do avatar',
+        avatarStyleOptions: {
+            brutalist: 'Brutalista',
+            pixelated: 'Pixelado',
+            gradient: 'Degradê',
+        },
+        avatarMonochrome: 'Avatares em preto e branco',
+        avatarMonochromeDescription: 'Exibir avatares sem cor',
+    },
+
+    sessionsFilter: {
+        // Filter menu on the home sessions list header
+        title: 'Filtro',
+        groupingTitle: 'Agrupamento',
+        flatList: 'Lista simples',
+        groupByProject: 'Agrupar por projeto',
+        appearanceSettings: 'Configurações de aparência',
     },
 
     settingsFeatures: {
@@ -213,12 +234,8 @@ export const pt: TranslationStructure = {
         commandPaletteDisabled: 'Acesso rápido a comandos desativado',
         markdownCopyV2: 'Markdown Copy v2',
         markdownCopyV2Subtitle: 'Pressione e segure para abrir modal de cópia',
-        hideInactiveSessions: 'Ocultar sessões inativas',
-        hideInactiveSessionsSubtitle: 'Mostre apenas os chats ativos na sua lista',
         groupToolCalls: 'Agrupar chamadas de ferramentas',
         groupToolCallsSubtitle: 'Recolher chamadas consecutivas de ferramentas em um único contêiner',
-        imageUpload: 'Upload de imagens',
-        imageUploadSubtitle: 'Anexe imagens às mensagens para que agentes compatíveis as analisem',
     },
 
     errors: {
@@ -334,7 +351,12 @@ export const pt: TranslationStructure = {
         failedToConnectToServer: 'Falha ao conectar com o servidor',
         currentlyUsingCustomServer: 'Atualmente usando servidor personalizado',
         customServerUrlLabel: 'URL do servidor personalizado',
-        advancedFeatureFooter: 'Este é um recurso avançado. Altere o servidor apenas se souber o que está fazendo. Você precisará sair e entrar novamente após alterar servidores.'
+        advancedFeatureFooter: 'Este é um recurso avançado. Altere o servidor apenas se souber o que está fazendo. Você precisará sair e entrar novamente após alterar servidores.',
+        services: 'Serviços',
+        useCustomServerForVoice: 'Usar servidor personalizado para voz',
+        customServerVoiceEnabled: 'As credenciais e o uso de voz utilizam seu servidor personalizado',
+        customServerVoiceDisabled: 'A voz utiliza a Happy Cloud e sua assinatura Happy',
+        customServerVoiceFooter: 'Quando desativado, iniciar a voz contata a Happy Cloud e a ElevenLabs. Ative somente se seu servidor personalizado estiver configurado para voz.',
     },
 
     sessionInfo: {
@@ -364,6 +386,8 @@ export const pt: TranslationStructure = {
         quickActions: 'Ações rápidas',
         viewMachine: 'Ver máquina',
         viewMachineSubtitle: 'Ver detalhes da máquina e sessões',
+        viewChanges: 'Ver alterações',
+        viewChangesSubtitle: 'Diferenças de todos os arquivos não commitados',
         resumeSession: 'Resume Session',
         resumeSessionSubtitle: 'Resume this session on the same machine',
         resumeSessionSameMachineOnly: 'This session can only be resumed on the same machine it started on.',
@@ -406,6 +430,7 @@ export const pt: TranslationStructure = {
 
     components: {
         emptyMainScreen: {
+            ...en.components.emptyMainScreen,
             // Used by EmptyMainScreen component
             readyToCode: 'Pronto para programar?',
             installCli: 'Instale o Happy CLI',
@@ -419,14 +444,6 @@ export const pt: TranslationStructure = {
             clearGoal: 'Limpar objetivo',
             stopGoal: 'Parar objetivo',
             editGoal: 'Editar objetivo',
-        },
-        sessionStatusBar: {
-            contextUsage: ({ used, total, percent }: { used: string; total: string; percent: number }) => `Contexto ${used} de ${total} tokens, ${percent}%`,
-            limitFiveHour: 'Limite de 5 horas',
-            limitSevenDay: 'Limite de 7 dias',
-            limitResets: ({ time }: { time: string }) => `redefine ${time}`,
-            limitAsOf: ({ age }: { age: string }) => `há ${age}`,
-            limitRemaining: ({ percent }: { percent: number }) => `${percent}% restante`,
         },
     },
 
@@ -494,7 +511,14 @@ export const pt: TranslationStructure = {
             badgePlan: 'Planejamento',
         },
         context: {
-            remaining: ({ percent }: { percent: number }) => `${percent}% restante`,
+            detailContext: ({ used, total }: { used: string; total: string }) => `${used} / ${total} de contexto`,
+            percentContext: ({ percent }: { percent: number }) => `${percent}% contexto`,
+            percentWeek: ({ percent }: { percent: number }) => `${percent}% semana`,
+        },
+        usagePopup: {
+            session: 'Sessão',
+            week: 'Semana',
+            resets: ({ time }: { time: string }) => `Redefine ${time}`,
         },
         suggestion: {
             fileLabel: 'ARQUIVO',
@@ -542,15 +566,14 @@ export const pt: TranslationStructure = {
     },
 
     toolGroup: {
-        editedFile: 'Edited file',
-        editedFiles: ({ count }: { count: number }) => count === 1 ? 'Editou 1 arquivo' : `Editou ${count} arquivos`,
-        readFiles: ({ count }: { count: number }) => count === 1 ? 'Leu 1 arquivo' : `Leu ${count} arquivos`,
-        ranCommands: ({ count }: { count: number }) => count === 1 ? 'Executou 1 comando' : `Executou ${count} comandos`,
-        searched: ({ count }: { count: number }) => count === 1 ? 'Pesquisou 1 vez' : `Pesquisou ${count} vezes`,
-        fetchedUrls: ({ count }: { count: number }) => count === 1 ? 'Obteve 1 URL' : `Obteve ${count} URLs`,
-        ranTasks: ({ count }: { count: number }) => count === 1 ? 'Executou 1 tarefa' : `Executou ${count} tarefas`,
-        usedTools: ({ count }: { count: number }) => count === 1 ? 'Usou 1 ferramenta' : `Usou ${count} ferramentas`,
+        ran: 'Executado',
+        edited: 'Editado',
+        read: 'Lido',
+        searched: 'Busca',
+        fetched: 'Obtido',
+        ranTask: 'Tarefa executada',
         workedFor: ({ duration }: { duration: string }) => `Worked ${duration}`,
+        hide: 'Ocultar',
     },
 
     tools: {
@@ -657,6 +680,16 @@ export const pt: TranslationStructure = {
         fileConflictDescription: 'Este arquivo foi modificado no dispositivo enquanto você o editava. Recarregue para ver a versão mais recente.',
         reload: 'Recarregar',
         overwrite: 'Sobrescrever',
+    },
+    diff: {
+        showMoreLines: ({ count }: { count: number }) => `Mostrar mais ${count} linhas`,
+        tapToExpand: ({ count }: { count: number }) => `${count} linhas modificadas — toque para expandir`,
+        ignoreWhitespace: 'Ignorar espaços em branco',
+        imageBefore: 'Antes',
+        imageAfter: 'Depois',
+        unchangedLines: ({ count }: { count: number }) => `${count} sem alterações`,
+        noChanges: 'Nenhuma alteração',
+        binaryFile: 'Arquivo binário não exibido',
     },
     sideChat: {
         panelTitle: 'Chat lateral',
@@ -1099,6 +1132,9 @@ export const pt: TranslationStructure = {
         unknownEvent: 'Evento desconhecido',
         usageLimitUntil: ({ time }: { time: string }) => `Limite de uso atingido até ${time}`,
         sentAsGoal: 'Sent as goal',
+        sendsAfterThisTurn: 'Sends after this turn',
+        sending: 'Sending…',
+        sendFailed: ({ reason }: { reason: string }) => `Não enviado: ${reason}`,
         unknownTime: 'horário desconhecido',
     },
 

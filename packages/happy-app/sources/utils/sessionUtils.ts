@@ -95,6 +95,7 @@ export function useSessionStatus(session: Session): SessionStatus {
  * Returns the last segment of the path, or 'unknown' if no path is available.
  */
 export function getSessionName(session: Session): string {
+    if (session.metadata?.bot) return session.metadata.bot.name;
     if (session.metadata?.summary) {
         return session.metadata.summary.text;
     }
@@ -106,6 +107,7 @@ export function getSessionName(session: Session): string {
  * This ensures the same machine + path combination always gets the same avatar.
  */
 export function getSessionAvatarId(session: Session): string {
+    if (session.metadata?.bot) return `${session.metadata.machineId ?? ''}:bot:${session.metadata.bot.id}`;
     if (session.metadata?.machineId && session.metadata?.path) {
         // Combine machine ID and path for a unique, deterministic avatar
         return `${session.metadata.machineId}:${session.metadata.path}`;

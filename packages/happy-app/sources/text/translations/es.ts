@@ -1,4 +1,4 @@
-import type { TranslationStructure } from '../_default';
+import { en, type TranslationStructure } from '../_default';
 
 /**
  * Spanish plural helper function
@@ -15,6 +15,13 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
  * Must match the exact structure of the English translations
  */
 export const es: TranslationStructure = {
+    voiceStatusBar: {
+        tapToEnd: 'toca para finalizar',
+        connecting: 'Conectando…',
+        error: 'Error de conexión',
+        active: 'Asistente de voz activo',
+    },
+
     tabs: {
         // Tab navigation labels
         inbox: 'Bandeja',
@@ -164,13 +171,6 @@ export const es: TranslationStructure = {
         },
         chat: 'Chat',
         chatDescription: 'Personaliza la apariencia de los mensajes del chat',
-        sessionStatusBar: 'Información de estado de la sesión',
-        sessionStatusBarDescription: 'Elige dónde aparecen la rama, el modelo, el esfuerzo y el contexto',
-        sessionStatusDisplayOptions: {
-            hidden: 'Oculto',
-            above: 'Sobre el compositor',
-            below: 'Bajo el compositor',
-        },
         usageLimitShowRemaining: 'Mostrar cuota restante',
         usageLimitShowRemainingDescription: 'Los indicadores de límite cuentan hacia atrás en vez de hacia adelante',
         userMessageBubbleColor: 'Color de tus mensajes',
@@ -189,12 +189,33 @@ export const es: TranslationStructure = {
         compactToolCallsDescription: 'Muestra las llamadas no interactivas en una sola línea; abre una fila para ver los detalles',
         showLineNumbersInToolViews: 'Mostrar números de línea en vistas de herramientas',
         showLineNumbersInToolViewsDescription: 'Mostrar números de línea en diferencias de vistas de herramientas',
-        alwaysShowContextSize: 'Mostrar siempre tamaño del contexto',
-        alwaysShowContextSizeDescription: 'Mostrar uso del contexto incluso cuando no esté cerca del límite',
+        alwaysShowContextSize: 'Mostrar uso',
+        alwaysShowContextSizeDescription: 'Contexto y límites del plan bajo el campo de mensaje. Los avisos cerca del límite siempre se muestran.',
+        input: 'Entrada',
+        inputDescription: 'Configura el campo de mensaje',
         showHarnessIconInSessionHeader: 'Mostrar el icono del harness en el encabezado de la sesión',
         showHarnessIconInSessionHeaderDescription: 'Mostrar el icono del harness en el encabezado de la sesión',
         showHarnessIconsInSessionList: 'Mostrar iconos de harness en la lista de sesiones',
         showHarnessIconsInSessionListDescription: 'Mostrar iconos de harness en los avatares de la lista de sesiones',
+        avatars: 'Avatares',
+        avatarsDescription: 'Elige cómo se ven los avatares de sesión generados',
+        avatarStyle: 'Estilo de avatar',
+        avatarStyleOptions: {
+            brutalist: 'Brutalista',
+            pixelated: 'Pixelado',
+            gradient: 'Degradado',
+        },
+        avatarMonochrome: 'Avatares en blanco y negro',
+        avatarMonochromeDescription: 'Mostrar los avatares sin color',
+    },
+
+    sessionsFilter: {
+        // Filter menu on the home sessions list header
+        title: 'Filtro',
+        groupingTitle: 'Agrupación',
+        flatList: 'Lista plana',
+        groupByProject: 'Agrupar por proyecto',
+        appearanceSettings: 'Configuración de apariencia',
     },
 
     settingsFeatures: {
@@ -214,12 +235,8 @@ export const es: TranslationStructure = {
         commandPaletteDisabled: 'Acceso rápido a comandos deshabilitado',
         markdownCopyV2: 'Markdown Copy v2',
         markdownCopyV2Subtitle: 'Pulsación larga abre modal de copiado',
-        hideInactiveSessions: 'Ocultar sesiones inactivas',
-        hideInactiveSessionsSubtitle: 'Muestra solo los chats activos en tu lista',
         groupToolCalls: 'Agrupar llamadas a herramientas',
         groupToolCallsSubtitle: 'Contrae las llamadas consecutivas a herramientas en un solo contenedor',
-        imageUpload: 'Subida de imágenes',
-        imageUploadSubtitle: 'Adjunta imágenes a los mensajes para que los agentes compatibles las analicen',
     },
 
     errors: {
@@ -335,7 +352,12 @@ export const es: TranslationStructure = {
         failedToConnectToServer: 'Falló al conectar con el servidor',
         currentlyUsingCustomServer: 'Actualmente usando servidor personalizado',
         customServerUrlLabel: 'URL del servidor personalizado',
-        advancedFeatureFooter: 'Esta es una característica avanzada. Solo cambia el servidor si sabes lo que haces. Necesitarás cerrar sesión e iniciarla nuevamente después de cambiar servidores.'
+        advancedFeatureFooter: 'Esta es una característica avanzada. Solo cambia el servidor si sabes lo que haces. Necesitarás cerrar sesión e iniciarla nuevamente después de cambiar servidores.',
+        services: 'Servicios',
+        useCustomServerForVoice: 'Usar servidor personalizado para voz',
+        customServerVoiceEnabled: 'Las credenciales y el uso de voz utilizan tu servidor personalizado',
+        customServerVoiceDisabled: 'La voz utiliza Happy Cloud y tu suscripción de Happy',
+        customServerVoiceFooter: 'Cuando está desactivado, iniciar la voz contacta con Happy Cloud y ElevenLabs. Actívalo solo si tu servidor personalizado está configurado para voz.',
     },
 
     sessionInfo: {
@@ -365,6 +387,8 @@ export const es: TranslationStructure = {
         quickActions: 'Acciones rápidas',
         viewMachine: 'Ver máquina',
         viewMachineSubtitle: 'Ver detalles de máquina y sesiones',
+        viewChanges: 'Ver cambios',
+        viewChangesSubtitle: 'Diferencias de todos los archivos sin confirmar',
         resumeSession: 'Resume Session',
         resumeSessionSubtitle: 'Resume this session on the same machine',
         resumeSessionSameMachineOnly: 'This session can only be resumed on the same machine it started on.',
@@ -407,6 +431,7 @@ export const es: TranslationStructure = {
 
     components: {
         emptyMainScreen: {
+            ...en.components.emptyMainScreen,
             // Used by EmptyMainScreen component
             readyToCode: '¿Listo para programar?',
             installCli: 'Instale el Happy CLI',
@@ -420,14 +445,6 @@ export const es: TranslationStructure = {
             clearGoal: 'Borrar objetivo',
             stopGoal: 'Detener objetivo',
             editGoal: 'Editar objetivo',
-        },
-        sessionStatusBar: {
-            contextUsage: ({ used, total, percent }: { used: string; total: string; percent: number }) => `Contexto ${used} de ${total} tokens, ${percent}%`,
-            limitFiveHour: 'Límite de 5 horas',
-            limitSevenDay: 'Límite de 7 días',
-            limitResets: ({ time }: { time: string }) => `se restablece ${time}`,
-            limitAsOf: ({ age }: { age: string }) => `hace ${age}`,
-            limitRemaining: ({ percent }: { percent: number }) => `${percent}% restante`,
         },
     },
 
@@ -495,7 +512,14 @@ export const es: TranslationStructure = {
             badgePlan: 'Planificación',
         },
         context: {
-            remaining: ({ percent }: { percent: number }) => `${percent}% restante`,
+            detailContext: ({ used, total }: { used: string; total: string }) => `${used} / ${total} de contexto`,
+            percentContext: ({ percent }: { percent: number }) => `${percent}% contexto`,
+            percentWeek: ({ percent }: { percent: number }) => `${percent}% semana`,
+        },
+        usagePopup: {
+            session: 'Sesión',
+            week: 'Semana',
+            resets: ({ time }: { time: string }) => `Se restablece ${time}`,
         },
         suggestion: {
             fileLabel: 'ARCHIVO',
@@ -543,15 +567,14 @@ export const es: TranslationStructure = {
     },
 
     toolGroup: {
-        editedFile: 'Edited file',
-        editedFiles: ({ count }: { count: number }) => count === 1 ? 'Se editó 1 archivo' : `Se editaron ${count} archivos`,
-        readFiles: ({ count }: { count: number }) => count === 1 ? 'Se leyó 1 archivo' : `Se leyeron ${count} archivos`,
-        ranCommands: ({ count }: { count: number }) => count === 1 ? 'Se ejecutó 1 comando' : `Se ejecutaron ${count} comandos`,
-        searched: ({ count }: { count: number }) => count === 1 ? 'Se buscó 1 vez' : `Se buscó ${count} veces`,
-        fetchedUrls: ({ count }: { count: number }) => count === 1 ? 'Se obtuvo 1 URL' : `Se obtuvieron ${count} URLs`,
-        ranTasks: ({ count }: { count: number }) => count === 1 ? 'Se ejecutó 1 tarea' : `Se ejecutaron ${count} tareas`,
-        usedTools: ({ count }: { count: number }) => count === 1 ? 'Se usó 1 herramienta' : `Se usaron ${count} herramientas`,
+        ran: 'Ejecutado',
+        edited: 'Editado',
+        read: 'Leído',
+        searched: 'Búsqueda',
+        fetched: 'Obtenido',
+        ranTask: 'Tarea ejecutada',
         workedFor: ({ duration }: { duration: string }) => `Worked ${duration}`,
+        hide: 'Ocultar',
     },
 
     tools: {
@@ -658,6 +681,16 @@ export const es: TranslationStructure = {
         fileConflictDescription: 'Este archivo fue modificado en el dispositivo mientras lo editabas. Recarga para ver la última versión.',
         reload: 'Recargar',
         overwrite: 'Sobrescribir',
+    },
+    diff: {
+        showMoreLines: ({ count }: { count: number }) => `Mostrar ${count} líneas más`,
+        tapToExpand: ({ count }: { count: number }) => `${count} líneas modificadas — toca para expandir`,
+        ignoreWhitespace: 'Ignorar espacios en blanco',
+        imageBefore: 'Antes',
+        imageAfter: 'Después',
+        unchangedLines: ({ count }: { count: number }) => `${count} sin cambios`,
+        noChanges: 'Sin cambios',
+        binaryFile: 'Archivo binario no mostrado',
     },
     sideChat: {
         panelTitle: 'Chat lateral',
@@ -1100,6 +1133,9 @@ export const es: TranslationStructure = {
         unknownEvent: 'Evento desconocido',
         usageLimitUntil: ({ time }: { time: string }) => `Límite de uso alcanzado hasta ${time}`,
         sentAsGoal: 'Sent as goal',
+        sendsAfterThisTurn: 'Sends after this turn',
+        sending: 'Sending…',
+        sendFailed: ({ reason }: { reason: string }) => `No enviado: ${reason}`,
         unknownTime: 'tiempo desconocido',
     },
 

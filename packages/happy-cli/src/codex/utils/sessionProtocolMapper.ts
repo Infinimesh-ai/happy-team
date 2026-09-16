@@ -933,7 +933,58 @@ function pickTurnEndStatus(message: Record<string, unknown>, type: unknown): Tur
     return 'completed';
 }
 
+/**
+ * Extract a user-presentable failure from Codex lifecycle events.
+ *
+ * Codex reports failures on task_complete/turn_aborted rather than as regular
+ * agent text, so callers must explicitly project the error into the session
+ * text stream or ISCP phone clients will only observe the failed turn-end.
+ */
+export function describeCodexFailure(message: Record<string, unknown>): string | null {
+    const hasFailure = message.status === 'failed'
+        || (message.error !== undefined && message.error !== null);
+    if (!hasFailure) {
+        return null;
+    }
+
+    const error = message.error;
+    if (typeof error === 'string' && error.length > 0) {
+        return error;
+    }
+    if (error && typeof error === 'object') {
+        const errorMessage = (error as Record<string, unknown>).message;
+        if (typeof errorMessage === 'string' && errorMessage.length > 0) {
+            return errorMessage;
+        }
+    }
+    return 'Unknown error';
+}
+
 export function mapCodexMcpMessageToSessionEnvelopes(message: Record<string, unknown>, state: CodexTurnState): CodexMapperResult {
+    const result = mapCodexMcpMessageToSessionEnvelopesInner(message, state);
+    ensureCodexEnvelopeTurn(result);
+    return result;
+}
+
+function ensureCodexEnvelopeTurn(result: Pick<CodexMapperResult, 'currentTurnId' | 'envelopes'>): void {
+    // Automatic continuations may deliver content without a task_started event.
+    // Keep usage-only service envelopes turn-less for older client compatibility.
+    const requiresTurn = (envelope: SessionEnvelope) => envelope.role === 'agent'
+        && !envelope.turn
+        && !(envelope.ev.t === 'service' && !envelope.ev.text.trim() && envelope.usage);
+    if (!result.envelopes.some(requiresTurn)) return;
+
+    const turn = result.currentTurnId ?? createId();
+    result.envelopes = result.envelopes.map((envelope) => requiresTurn(envelope)
+        ? { ...envelope, turn }
+        : envelope);
+    if (!result.currentTurnId) {
+        result.envelopes.unshift(createEnvelope('agent', { t: 'turn-start' }, { turn }));
+    }
+    result.currentTurnId = turn;
+}
+
+function mapCodexMcpMessageToSessionEnvelopesInner(message: Record<string, unknown>, state: CodexTurnState): CodexMapperResult {
     const type = message.type;
     const startedSubagents = getStartedSubagents(state);
     const activeSubagents = getActiveSubagents(state);
@@ -976,6 +1027,7 @@ export function mapCodexMcpMessageToSessionEnvelopes(message: Record<string, unk
         }
 
         const lifecycleOpts = { turn: state.currentTurnId } satisfies CreateEnvelopeOptions;
+        const failure = describeCodexFailure(message);
         collabReceiverThreadIdsByCall.clear();
         collabToolByCall.clear();
         return {
@@ -988,6 +1040,12 @@ export function mapCodexMcpMessageToSessionEnvelopes(message: Record<string, unk
             collabToolByCall,
             envelopes: [
                 ...emitSubagentStops(lifecycleOpts, startedSubagents, activeSubagents),
+                ...(failure
+                    ? [createEnvelope('agent', {
+                        t: 'text',
+                        text: `Codex error: ${failure}`,
+                    }, lifecycleOpts)]
+                    : []),
                 createEnvelope('agent', {
                     t: 'turn-end',
                     status: pickTurnEndStatus(message, type),
@@ -1318,6 +1376,18 @@ export function mapCodexMcpMessageToSessionEnvelopes(message: Record<string, unk
 }
 
 export function mapCodexProcessorMessageToSessionEnvelopes(
+    message: ReasoningOutput | DiffToolCall | DiffToolResult,
+    state: CodexTurnState,
+): Pick<CodexMapperResult, 'currentTurnId' | 'envelopes'> {
+    const result = {
+        currentTurnId: state.currentTurnId,
+        envelopes: mapCodexProcessorMessageToSessionEnvelopesInner(message, state),
+    };
+    ensureCodexEnvelopeTurn(result);
+    return result;
+}
+
+function mapCodexProcessorMessageToSessionEnvelopesInner(
     message: ReasoningOutput | DiffToolCall | DiffToolResult,
     state: CodexTurnState,
 ): SessionEnvelope[] {

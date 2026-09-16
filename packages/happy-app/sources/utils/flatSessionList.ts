@@ -31,7 +31,7 @@ export function buildFlatSessionRows(
     const rows: FlatSessionRowData[] = [];
 
     for (const item of items) {
-        if (item.type === 'active-sessions') {
+        if (item.type === 'active-sessions' || item.type === 'bots') {
             for (const session of item.sessions) {
                 rows.push(toFlatSessionRow(session));
             }
@@ -66,6 +66,13 @@ export function buildFlatSessionRows(
  * as the workspace.
  */
 export function toFlatSessionRow(session: SessionRowData): FlatSessionRowData {
+    if (session.botId) {
+        return {
+            session,
+            projectName: [`@${session.botUsername ?? ''}`, session.machineName].filter(Boolean).join(' · '),
+            workspaceName: null,
+        };
+    }
     const path = session.path?.trim() || '';
     const worktree = isWorktreePath(path);
     const projectPath = worktree ? getRepoPath(path) : path;

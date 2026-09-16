@@ -21,7 +21,8 @@ import {
 } from '@/claude/utils/sessionProtocolMapper';
 import { InvalidateSync } from '@/utils/sync';
 import { DaemonSessionEventTee, iscpNetworkProfile } from '@/iscp/daemonTee';
-import { startIscpSessionRpcServer } from '@/iscp/sessionRpcServer';
+import { startIscpSessionRpcServer, type IscpSessionRpcServer } from '@/iscp/sessionRpcServer';
+import { notifyDaemonSessionStarted } from '@/daemon/controlClient';
 import axios from 'axios';
 
 /**
@@ -188,13 +189,14 @@ function buildMultipartUploadBody(
 }
 
 export class ApiSessionClient extends EventEmitter {
-    private readonly token: string;
+    private readonly token: string | null;
     readonly sessionId: string;
     private metadata: Metadata | null;
     private metadataVersion: number;
     private agentState: AgentState | null;
     private agentStateVersion: number;
-    private socket: Socket<ServerToClientEvents, ClientToServerEvents>;
+    /** null in ISCP-only mode — no Happy Server socket is ever created. */
+    private socket: Socket<ServerToClientEvents, ClientToServerEvents> | null = null;
     private pendingMessages: UserMessage[] = [];
     private pendingMessageCallback: ((message: UserMessage) => void) | null = null;
     private pendingFileEvents: FileEventMessage[] = [];
@@ -213,6 +215,8 @@ export class ApiSessionClient extends EventEmitter {
     private encryptionKey: Uint8Array;
     private encryptionVariant: 'legacy' | 'dataKey';
     private reconnectInterval: NodeJS.Timeout | null = null;
+    private reconnectTimeout: NodeJS.Timeout | null = null;
+    private closed = false;
     private ignoreArchiveSignal = false;
     private skipInitialMessages = false;
     private claudeSessionProtocolState: ClaudeSessionProtocolState = {
@@ -249,24 +253,49 @@ export class ApiSessionClient extends EventEmitter {
      * behavior byte-identical.
      */
     private readonly iscpTee: DaemonSessionEventTee | null;
+    /**
+     * ISCP-only transport (OPS 2026-08-26 §4.1): token === null means this
+     * session has no legacy Happy account at all. No Happy Server socket,
+     * HTTP outbox, or reconnection machinery exists; history goes to the
+     * daemon event log via the tee, inbound user messages and RPC arrive over
+     * the localhost session RPC server, and metadata/agent-state are kept
+     * locally with metadata propagated to the daemon (the wire directory
+     * source). Explicitly out of scope on this path — not lossy stubs but
+     * legacy-only surfaces: attachments (no blob store), push notifications,
+     * server usage aggregation, and the socket keep-alive (liveness is the
+     * session RPC heartbeat + the daemon child table).
+     */
+    private readonly iscpOnly: boolean;
+    private readonly iscpRpcServer: Promise<IscpSessionRpcServer | null> | null;
+    /** Initial log seq from the session object, echoed in daemon propagation. */
+    private readonly initialSeq: number;
 
-    constructor(token: string, session: Session) {
+    constructor(token: string | null, session: Session) {
         super()
         this.token = token;
         this.sessionId = session.id;
+        this.iscpOnly = token === null;
+        this.initialSeq = session.seq;
         const iscpProfile = iscpNetworkProfile();
+        if (this.iscpOnly && iscpProfile === null) {
+            throw new Error('ISCP-only session client requires HAPPY_NETWORK_PROFILE to be set');
+        }
         this.iscpTee = iscpProfile !== null ? new DaemonSessionEventTee(iscpProfile, session.id) : null;
         if (iscpProfile !== null) {
             // ISCP mode: expose the localhost RPC bridge so the daemon's wire
-            // responder can deliver user messages and session RPCs.
-            void startIscpSessionRpcServer({
+            // responder can deliver user messages and session RPCs. The handle
+            // is retained so close() stops the server and its heartbeat.
+            this.iscpRpcServer = startIscpSessionRpcServer({
                 profileId: iscpProfile,
                 sessionId: session.id,
                 onUserMessage: (body) => this.routeIncomingMessage(body),
                 callHandler: (method, params) => this.rpcHandlerManager.callHandler(method, params),
             }).catch((error) => {
                 logger.debug('[API] Failed to start ISCP session RPC server', { error });
+                return null;
             });
+        } else {
+            this.iscpRpcServer = null;
         }
         this.metadata = session.metadata;
         this.metadataVersion = session.metadataVersion;
@@ -287,10 +316,16 @@ export class ApiSessionClient extends EventEmitter {
         registerCommonHandlers(this.rpcHandlerManager, this.metadata.path);
 
         //
-        // Create socket
+        // Create socket — never in ISCP-only mode: that path must not open
+        // any Happy Server connection (auth, session socket, or otherwise).
         //
 
-        this.socket = io(configuration.serverUrl, {
+        if (this.iscpOnly) {
+            logger.debug('[API] ISCP-only session client: no Happy Server socket will be created');
+            return;
+        }
+
+        const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(configuration.serverUrl, {
             auth: {
                 token: this.token,
                 clientType: 'session-scoped' as const,
@@ -303,40 +338,44 @@ export class ApiSessionClient extends EventEmitter {
             withCredentials: true,
             autoConnect: false
         });
+        this.socket = socket;
 
         //
         // Handlers
         //
 
-        this.socket.on('connect', () => {
-            logger.debug('Socket connected successfully');
-            if (this.reconnectInterval) {
-                clearInterval(this.reconnectInterval);
-                this.reconnectInterval = null;
+        socket.on('connect', () => {
+            if (this.closed) {
+                socket.close();
+                return;
             }
-            this.rpcHandlerManager.onSocketConnect(this.socket);
+            logger.debug('Socket connected successfully');
+            this.clearReconnectTimers();
+            this.rpcHandlerManager.onSocketConnect(socket);
             this.receiveSync.invalidate();
         })
 
         // Set up global RPC request handler
-        this.socket.on('rpc-request', async (data: { method: string, params: string }, callback: (response: string) => void) => {
+        socket.on('rpc-request', async (data: { method: string, params: string }, callback: (response: string) => void) => {
             callback(await this.rpcHandlerManager.handleRequest(data));
         })
 
-        this.socket.on('disconnect', (reason) => {
+        socket.on('disconnect', (reason) => {
             logger.debug(`[API] Socket disconnected: ${reason}`);
             this.rpcHandlerManager.onSocketDisconnect();
+            if (this.closed) return;
             this.startSmartReconnect();
         })
 
-        this.socket.on('connect_error', (error) => {
+        socket.on('connect_error', (error) => {
             logger.debug('[API] Socket connection error:', error);
             this.rpcHandlerManager.onSocketDisconnect();
+            if (this.closed) return;
             this.startSmartReconnect();
         })
 
         // Server events
-        this.socket.on('update', (data: Update) => {
+        socket.on('update', (data: Update) => {
             try {
                 logger.debugLargeJson('[SOCKET] [UPDATE] Received update:', data);
 
@@ -395,7 +434,7 @@ export class ApiSessionClient extends EventEmitter {
         });
 
         // DEATH
-        this.socket.on('error', (error) => {
+        socket.on('error', (error) => {
             logger.debug('[API] Socket error:', error);
         });
 
@@ -403,7 +442,7 @@ export class ApiSessionClient extends EventEmitter {
         // Connect (after short delay to give a time to add handlers)
         //
 
-        this.socket.connect();
+        socket.connect();
     }
 
     onUserMessage(callback: (data: UserMessage) => void) {
@@ -490,6 +529,9 @@ export class ApiSessionClient extends EventEmitter {
         attachment: LocalImageAttachment,
         opts: Pick<CreateEnvelopeOptions, 'id' | 'time' | 'claudeUuid' | 'codexItemId'> = {},
     ): Promise<SessionEnvelope> {
+        if (this.iscpOnly) {
+            throw new Error('Attachments are a legacy-server feature and are not available on an ISCP-only session');
+        }
         const blobKey = await this.getBlobKey();
         const encrypted = encryptBlob(attachment.data, blobKey);
         const upload = await this.requestAttachmentUpload(attachment.name, encrypted.length);
@@ -511,6 +553,9 @@ export class ApiSessionClient extends EventEmitter {
      * presigned URL that does not accept extra headers.
      */
     async downloadAttachment(ref: string): Promise<Uint8Array> {
+        if (this.iscpOnly) {
+            throw new Error('Attachments are a legacy-server feature and are not available on an ISCP-only session');
+        }
         const requestUrl = `${configuration.serverUrl}/v1/sessions/${this.sessionId}/attachments/request-download`;
         const requestRes = await axios.post(
             requestUrl,
@@ -576,6 +621,9 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     private authHeaders() {
+        if (this.token === null) {
+            throw new Error('Happy Server HTTP is not available on an ISCP-only session');
+        }
         return {
             'Authorization': `Bearer ${this.token}`,
             'Content-Type': 'application/json',
@@ -769,6 +817,16 @@ export class ApiSessionClient extends EventEmitter {
             this.sendClaudeSessionMessage(body);
             return;
         }
+        if (this.iscpOnly) {
+            // No blob store without the legacy server: the message text still
+            // flows to the event log; only the image blobs are dropped.
+            logger.debug('[API] ISCP-only session: dropping local transcript image attachments (no blob store)', {
+                sessionId: this.sessionId,
+                count: attachments.length,
+            });
+            this.sendClaudeSessionMessage(body);
+            return;
+        }
 
         const closeMapped = closeClaudeTurnWithStatus(this.claudeSessionProtocolState, 'completed');
         this.claudeSessionProtocolState.currentTurnId = closeMapped.currentTurnId;
@@ -846,6 +904,58 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     /**
+     * Emit a phone-safe approval lifecycle record into the daemon event log.
+     * This surface exists only for ISCP sessions: legacy Happy clients receive
+     * their richer permission object through agent state instead.
+     */
+    sendPhoneApproval(
+        approvalId: string,
+        toolName: string,
+        status: 'pending' | 'approved' | 'denied' | 'cancelled',
+    ): boolean {
+        if (!this.iscpTee) {
+            return false;
+        }
+        const safeApprovalId = approvalId.trim().toLocaleLowerCase('en-US');
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(safeApprovalId)) {
+            return false;
+        }
+        const safeToolName = toolName
+            .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim()
+            .slice(0, 160);
+        if (safeToolName === '') {
+            return false;
+        }
+        this.enqueueMessage({
+            role: 'happy-control',
+            content: {
+                type: 'approval',
+                approvalId: safeApprovalId,
+                toolName: safeToolName,
+                status,
+            },
+        });
+        return true;
+    }
+
+    /** Close any approval cards left by an earlier Agent process. */
+    sendPhoneApprovalReset(): boolean {
+        if (!this.iscpTee) {
+            return false;
+        }
+        this.enqueueMessage({
+            role: 'happy-control',
+            content: {
+                type: 'approval-reset',
+                reason: 'agent-restarted',
+            },
+        });
+        return true;
+    }
+
+    /**
      * Send a generic agent message to the session using ACP (Agent Communication Protocol) format.
      * Works for any agent type (Gemini, Codex, Claude, etc.) - CLI normalizes to unified ACP format.
      * 
@@ -894,6 +1004,11 @@ export class ApiSessionClient extends EventEmitter {
      * Send a ping message to keep the connection alive
      */
     keepAlive(thinking: boolean, mode: 'local' | 'remote') {
+        if (this.socket === null) {
+            // ISCP-only: liveness is the session RPC heartbeat plus the
+            // daemon's child-process table; there is no server to ping.
+            return;
+        }
         if (process.env.DEBUG) { // too verbose for production
             logger.debug(`[API] Sending keep alive message: ${thinking}`);
         }
@@ -909,6 +1024,12 @@ export class ApiSessionClient extends EventEmitter {
      * Send session death message
      */
     sendSessionDeath() {
+        if (this.socket === null) {
+            // ISCP-only: the daemon observes process exit (child table prune +
+            // RPC port unregistration) and emits the session-lifecycle event.
+            logger.debug('[API] ISCP-only session: death is observed by the daemon, no server emit');
+            return;
+        }
         this.socket.emit('session-end', { sid: this.sessionId, time: Date.now() });
     }
 
@@ -938,6 +1059,11 @@ export class ApiSessionClient extends EventEmitter {
                 output: costs.output
             }
         }
+        if (this.socket === null) {
+            // ISCP-only: raw usage already rides inside the history events in
+            // the daemon event log; the server-side aggregation is legacy-only.
+            return;
+        }
         logger.debugLargeJson('[SOCKET] Sending usage data:', usageReport)
         this.socket.emit('usage-report', usageReport);
     }
@@ -961,11 +1087,44 @@ export class ApiSessionClient extends EventEmitter {
         this.skipInitialMessages = true;
     }
 
+    /**
+     * ISCP-only state propagation: the daemon's session directory (wire
+     * `sessions.list` display metadata, resume-in-place env) is fed by the
+     * same /session-started webhook the initial report uses. Re-posting after
+     * every local metadata/agent-state change keeps the daemon current; the
+     * daemon event log remains untouched (metadata is not history).
+     */
+    private async propagateIscpSessionState(): Promise<void> {
+        try {
+            const result = await notifyDaemonSessionStarted(this.sessionId, this.metadata!, {
+                encryptionKey: encodeBase64(this.encryptionKey),
+                encryptionVariant: this.encryptionVariant,
+                seq: this.initialSeq,
+                metadataVersion: this.metadataVersion,
+                agentStateVersion: this.agentStateVersion,
+            });
+            if (result?.error) {
+                logger.debug('[API] ISCP-only session state propagation failed (daemon may be down)', { error: result.error });
+            }
+        } catch (error) {
+            logger.debug('[API] ISCP-only session state propagation failed', { error });
+        }
+    }
+
     updateMetadata(handler: (metadata: Metadata) => Metadata) {
         this.metadataLock.inLock(async () => {
+            if (this.socket === null) {
+                // ISCP-only: this client is the single writer, so optimistic
+                // concurrency degenerates to a local version counter.
+                this.metadata = handler(this.metadata!);
+                this.metadataVersion += 1;
+                await this.propagateIscpSessionState();
+                return;
+            }
+            const socket = this.socket;
             await backoff(async () => {
                 let updated = handler(this.metadata!); // Weird state if metadata is null - should never happen but here we are
-                const answer = await this.socket.emitWithAck('update-metadata', { sid: this.sessionId, expectedVersion: this.metadataVersion, metadata: encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, updated)) });
+                const answer = await socket.emitWithAck('update-metadata', { sid: this.sessionId, expectedVersion: this.metadataVersion, metadata: encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, updated)) });
                 if (answer.result === 'success') {
                     this.metadata = decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(answer.metadata));
                     this.metadataVersion = answer.version;
@@ -989,9 +1148,20 @@ export class ApiSessionClient extends EventEmitter {
     updateAgentState(handler: (metadata: AgentState) => AgentState) {
         logger.debugLargeJson('Updating agent state', this.agentState);
         this.agentStateLock.inLock(async () => {
+            if (this.socket === null) {
+                // ISCP-only: kept locally for in-process consumers (permission
+                // handler, goal status). There is no ISCP state channel yet, so
+                // phones cannot observe agentState — a documented legacy-only
+                // surface, not a silent drop of history.
+                this.agentState = handler(this.agentState || {});
+                this.agentStateVersion += 1;
+                await this.propagateIscpSessionState();
+                return;
+            }
+            const socket = this.socket;
             await backoff(async () => {
                 let updated = handler(this.agentState || {});
-                const answer = await this.socket.emitWithAck('update-state', { sid: this.sessionId, expectedVersion: this.agentStateVersion, agentState: updated ? encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, updated)) : null });
+                const answer = await socket.emitWithAck('update-state', { sid: this.sessionId, expectedVersion: this.agentStateVersion, agentState: updated ? encodeBase64(encrypt(this.encryptionKey, this.encryptionVariant, updated)) : null });
                 if (answer.result === 'success') {
                     this.agentState = answer.agentState ? decrypt(this.encryptionKey, this.encryptionVariant, decodeBase64(answer.agentState)) : null;
                     this.agentStateVersion = answer.version;
@@ -1011,18 +1181,29 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     /**
-     * Wait for socket buffer to flush
+     * Wait for outbound buffers to flush: the ISCP tee (when present — both
+     * dual-stack and ISCP-only) and the legacy socket outbox (when present).
      */
     async flush(): Promise<void> {
+        if (this.iscpTee) {
+            await Promise.race([
+                this.iscpTee.flush(),
+                delay(10000)
+            ]);
+        }
+        const socket = this.socket;
+        if (socket === null) {
+            return;
+        }
         await Promise.race([
             this.sendSync.invalidateAndAwait(),
             delay(10000)
         ]);
-        if (!this.socket.connected) {
+        if (!socket.connected) {
             return;
         }
         return new Promise((resolve) => {
-            this.socket.emit('ping', () => {
+            socket.emit('ping', () => {
                 resolve();
             });
             setTimeout(() => {
@@ -1032,23 +1213,31 @@ export class ApiSessionClient extends EventEmitter {
     }
 
     async close() {
+        if (this.closed) return;
+        this.closed = true;
         logger.debug('[API] socket.close() called');
         this.sendSync.stop();
         this.receiveSync.stop();
-        if (this.reconnectInterval) {
-            clearInterval(this.reconnectInterval);
-            this.reconnectInterval = null;
+        this.clearReconnectTimers();
+        if (this.iscpRpcServer) {
+            try {
+                const rpcServer = await this.iscpRpcServer;
+                await rpcServer?.stop();
+            } catch (error) {
+                logger.debug('[API] Failed to stop ISCP session RPC server', { error });
+            }
         }
-        this.socket.close();
+        this.socket?.close();
     }
 
     private startSmartReconnect() {
-        if (this.reconnectInterval) return;
+        if (this.closed || this.reconnectInterval) return;
+        const socket = this.socket;
+        if (socket === null) return;
 
         this.reconnectInterval = setInterval(() => {
-            if (this.socket.connected) {
-                clearInterval(this.reconnectInterval!);
-                this.reconnectInterval = null;
+            if (this.closed || socket.connected) {
+                this.clearReconnectTimers();
                 return;
             }
             if (!shouldReconnect()) {
@@ -1056,12 +1245,26 @@ export class ApiSessionClient extends EventEmitter {
                 return;
             }
             logger.debug('[API] Attempting reconnect');
-            this.socket.connect();
+            socket.connect();
         }, 3000);
 
         if (shouldReconnect()) {
             logger.debug('[API] Network up + lid open — reconnecting in 1s');
-            setTimeout(() => { if (!this.socket.connected) this.socket.connect() }, 1000);
+            this.reconnectTimeout = setTimeout(() => {
+                this.reconnectTimeout = null;
+                if (!this.closed && !socket.connected) socket.connect();
+            }, 1000);
+        }
+    }
+
+    private clearReconnectTimers() {
+        if (this.reconnectInterval) {
+            clearInterval(this.reconnectInterval);
+            this.reconnectInterval = null;
+        }
+        if (this.reconnectTimeout) {
+            clearTimeout(this.reconnectTimeout);
+            this.reconnectTimeout = null;
         }
     }
 }

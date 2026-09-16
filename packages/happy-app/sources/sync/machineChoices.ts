@@ -159,16 +159,14 @@ export function machineChoiceAgentAvailable(
 }
 
 /**
- * Whether the Home picker should contain this harness at all.
- *
- * Common harnesses stay visible but disabled when unavailable. Antigravity and
- * Happy Agent stay absent until this computer reports them available.
+ * Every non-retired harness this computer can actually run, in picker order.
+ * An empty result is meaningful: the UI can offer setup help instead of
+ * advertising harnesses that cannot be started from the selected computer.
  */
-export function machineChoiceAgentVisible(
+export function listMachineChoiceAvailableAgents(
     choice: MachineChoice | null,
-    agent: NewSessionAgentType,
-): boolean {
-    return (agent !== 'agy' && agent !== 'rig') || machineChoiceAgentAvailable(choice, agent);
+): NewSessionAgentType[] {
+    return NEW_SESSION_AGENT_ORDER.filter((agent) => machineChoiceAgentAvailable(choice, agent));
 }
 
 /**
@@ -195,29 +193,6 @@ export function resolveChoiceAgent(
 }
 
 /**
- * Resolve the harness a new-session surface may offer and launch.
- *
- * Happy's own harness remains fully supported for existing sessions and sync,
- * but session creation is experimental. A saved Happy draft therefore falls
- * back to the first regular harness while experiments are disabled. Falling
- * back even when a computer only has Happy registered keeps the hidden harness
- * from being launched through a stale draft; the normal missing-daemon check
- * then explains why the regular harness cannot start on that computer.
- */
-export function resolveNewSessionAgent(
-    choice: MachineChoice | null,
-    agent: NewSessionAgentType,
-    experiments: boolean,
-): NewSessionAgentType {
-    const resolved = resolveChoiceAgent(choice, agent);
-    if (experiments || resolved !== 'rig') return resolved;
-
-    return NEW_SESSION_AGENT_ORDER.find((candidate) => (
-        candidate !== 'rig' && machineChoiceAgentAvailable(choice, candidate)
-    )) ?? NEW_SESSION_AGENT_ORDER.find((candidate) => candidate !== 'rig') ?? resolved;
-}
-
-/**
  * The daemon that runs this agent on this computer.
  *
  * Null is a refusal: a computer without the daemon an agent needs is told so, rather than having
@@ -229,4 +204,31 @@ export function resolveAgentMachine(
 ): Machine | null {
     if (!choice) return null;
     return agent === 'rig' ? choice.rigMachine : choice.happyMachine;
+}
+
+/**
+ * The daemon that can create a git worktree for a new session.
+ *
+ * Happy Agent may publish `worktrees: false` while the Happy CLI daemon paired
+ * with it still exposes the machine-level git RPC. In that case the CLI daemon
+ * creates the checkout and Happy Agent starts the session inside the resulting
+ * directory. Other harnesses keep respecting their own worktree capability.
+ */
+export function resolveWorktreeCreationMachine(
+    choice: MachineChoice | null,
+    agent: NewSessionAgentType,
+    agentSupportsWorktrees: boolean,
+): Machine | null {
+    if (!choice) return null;
+
+    if (agent === 'rig') {
+        const happyMachine = choice.happyMachine;
+        if (happyMachine && isMachineOnline(happyMachine)) {
+            return happyMachine;
+        }
+    }
+
+    if (!agentSupportsWorktrees) return null;
+    const agentMachine = resolveAgentMachine(choice, agent);
+    return agentMachine && isMachineOnline(agentMachine) ? agentMachine : null;
 }

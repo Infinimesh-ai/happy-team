@@ -27,25 +27,27 @@ import { layout } from './layout';
 import { t } from '@/text';
 import { useNewSessionDraft } from '@/hooks/useNewSessionDraft';
 import { useAllMachines, useSessions, useSetting } from '@/sync/storage';
-import { resolveAgentDefaultConfig } from '@/sync/agentDefaults';
+import { getCodeAgentDefaults, resolveAgentDefaultConfig } from '@/sync/agentDefaults';
 import { formatLastSeen, formatPathRelativeToHome } from '@/utils/sessionUtils';
 import { isMachineOnline } from '@/utils/machineUtils';
 import { resolveAbsolutePath } from '@/utils/pathUtils';
-import { listWorktrees } from '@/utils/worktree';
+import { useWorktrees } from '@/hooks/useWorktrees';
 import { collectSessionPlaces, collectSessionWorkspaces } from '@/sync/agentSessionPlaces';
 import {
     collectMachineChoices,
     findMachineChoice,
-    machineChoiceAgentAvailable,
-    machineChoiceAgentVisible,
-    resolveNewSessionAgent,
+    listMachineChoiceAvailableAgents,
+    resolveChoiceAgent,
+    resolveWorktreeCreationMachine,
 } from '@/sync/machineChoices';
 import type { Session } from '@/sync/storageTypes';
 import {
     getEffortLevelsForModel,
     getHardcodedModelModes,
     getHardcodedPermissionModes,
+    filterPermissionModesForCli,
     getSupportsWorktree,
+    groupModelModesByProvider,
     includeConfiguredModel,
     type ModeOption,
 } from './modelModeOptions';
@@ -71,9 +73,10 @@ import {
 import { StatusDot } from './StatusDot';
 import { Shaker, type ShakeInstance } from './Shaker';
 import { hapticsError } from './haptics';
-import { HARNESS_ORDER, getHarnessName } from '@/utils/harnessCatalog';
+import { getHarnessName } from '@/utils/harnessCatalog';
 import { getPermissionModeMenuLabel, getPermissionModeShortLabel } from '@/utils/permissionModeLabels';
 import { getRigMachineSessionCreation } from '@/sync/rigSessionCreation';
+import { openExternalUrl } from '@/utils/openExternalUrl';
 import {
     MobileHeaderScrim,
     MOBILE_HOME_SCRIM_OVERLAY_OPACITY,
@@ -107,6 +110,7 @@ const MOBILE_HOME_DOCK_TOP_PADDING = 8;
 // Sits in the gap the focused dock already leaves above the composer, so it
 // costs no layout: showing it must not move the pickers or the composer.
 const START_PROGRESS_ROW_HEIGHT = 18;
+const HARNESS_SETUP_HELP_URL = 'https://happy.engineering/docs/quick-start/';
 // Matches Shaker's own keyframes so a refused picker reads the same as every
 // other refusal in the app.
 const SHAKE_KEYFRAMES = [3, -3, 3, -3, 0];
@@ -486,6 +490,14 @@ const styles = StyleSheet.create((theme) => ({
     optionList: {
         flexGrow: 0,
     },
+    optionSectionTitle: {
+        color: theme.colors.textSecondary,
+        fontSize: 12,
+        paddingHorizontal: 8,
+        paddingTop: 8,
+        paddingBottom: 4,
+        ...Typography.default('semiBold'),
+    },
     option: {
         minHeight: 48,
         flexDirection: 'row',
@@ -665,8 +677,6 @@ export const HomeDock = React.memo(({
     // and use an in-modal React Native picker only on Android.
     const useNativeMenus = shouldUseNativeHomeDockMenus(Platform.OS);
     const [sheetPage, setSheetPage] = React.useState<PickerPage | null>(null);
-    const expImageUpload = useSetting('expImageUpload');
-    const experiments = useSetting('experiments');
     const { selectedImages, pickImages, removeImage, clearImages } = useImagePicker();
     const agentType = useNewSessionDraft((state) => state.agentType);
     const selectedMachineId = useNewSessionDraft((state) => state.selectedMachineId);
@@ -766,12 +776,12 @@ export const HomeDock = React.memo(({
         [rigSelectionMachine],
     );
     const rigCreation = agentType === 'rig' ? rigSelectionCreation : null;
+    const happyCliVersion = selectedChoice?.happyMachine?.metadata?.happyCliVersion;
     const supportsWorktree = rigCreation?.supportsWorktrees
         ?? (agentType === 'rig' ? false : getSupportsWorktree(agentType));
     const selectedWorktreeKey = sessionType === 'worktree'
         ? worktreeKey ?? '__new__'
         : '__none__';
-    const [existingWorktrees, setExistingWorktrees] = React.useState<ModeOption[]>([]);
     const agentWorkspaces = React.useMemo(
         () => collectSessionWorkspaces({
             machineIds: placeMachineIds,
@@ -780,47 +790,43 @@ export const HomeDock = React.memo(({
         }),
         [placeMachineIds, selectedProjectId, sessionList],
     );
-
-    React.useEffect(() => {
-        const path = resolveAbsolutePath(selectedPath ?? '~', selectedHomeDir);
-
-        // A Happy Agent project keeps its own workspaces, each with a name somebody chose. Those
-        // are better than the branches git reports, so git is only asked when nothing knows better.
-        // Starting in one only needs its directory, so this does not wait on the worktree
-        // capability the daemon advertises for making new ones.
-        if (selectedProjectId) {
-            setExistingWorktrees(agentWorkspaces.map((workspace) => ({
-                key: workspace.key,
-                name: workspace.name,
-                description: workspace.path,
-            })));
-            return;
-        }
-
-        // Only Happy CLI's daemon answers the worktree RPC, so it is asked directly rather than
-        // through whichever machine the draft happens to name.
-        const happyMachine = selectedChoice?.happyMachine ?? null;
-        if (!supportsWorktree || !happyMachine || !isMachineOnline(happyMachine) || !path) {
-            setExistingWorktrees([]);
-            return;
-        }
-
-        let cancelled = false;
-        listWorktrees(happyMachine.id, path).then((worktrees) => {
-            if (cancelled) return;
-            setExistingWorktrees(worktrees.map((worktree) => ({
-                key: worktree.path,
-                name: worktree.branch,
-                description: worktree.path,
-            })));
-        });
-        return () => {
-            cancelled = true;
-        };
-    }, [agentWorkspaces, selectedChoice, selectedHomeDir, selectedPath, selectedProjectId, supportsWorktree]);
-
+    const resolvedWorktreePath = React.useMemo(
+        () => resolveAbsolutePath(selectedPath ?? '~', selectedHomeDir),
+        [selectedHomeDir, selectedPath],
+    );
+    const happyMachine = selectedChoice?.happyMachine ?? null;
+    const happyMachineId = happyMachine?.id ?? null;
+    const happyMachineOnline = happyMachine !== null && isMachineOnline(happyMachine);
     // Happy Agent calls these workspaces, and names them; git calls them worktrees.
     const picksWorkspaces = selectedProjectId !== null;
+    const { worktrees, refresh: refreshWorktrees } = useWorktrees(
+        happyMachineId,
+        resolvedWorktreePath,
+        !picksWorkspaces && supportsWorktree && happyMachineOnline,
+    );
+    // Native workspaces are already in the session store; deriving their options must not fetch Git.
+    const existingWorktrees = React.useMemo<ModeOption[]>(() => picksWorkspaces
+        ? agentWorkspaces.map((workspace) => ({
+            key: workspace.key,
+            name: workspace.name,
+            description: workspace.path,
+        }))
+        : worktrees.map((worktree) => ({
+            key: worktree.path,
+            name: worktree.branch,
+            description: worktree.path,
+        })), [agentWorkspaces, picksWorkspaces, worktrees]);
+    const createsNativeHappyAgentWorkspace = agentType === 'rig'
+        && picksWorkspaces
+        && rigCreation !== null;
+    const worktreeCreationMachine = React.useMemo(
+        () => resolveWorktreeCreationMachine(selectedChoice, agentType, supportsWorktree),
+        [agentType, selectedChoice, supportsWorktree],
+    );
+    // Happy Agent owns workspace creation through its catalog-native spawn.
+    // Happy CLI's Git RPC remains only for the ordinary code-agent worktree flow.
+    const canCreateWorktree = createsNativeHappyAgentWorkspace
+        || (agentType !== 'rig' && worktreeCreationMachine !== null);
 
     React.useEffect(() => {
         if (!supportsWorktree && !picksWorkspaces && sessionType === 'worktree') {
@@ -838,13 +844,12 @@ export const HomeDock = React.memo(({
             }];
         }
         const options: ModeOption[] = [
+            ...(canCreateWorktree
+                ? [{ key: '__new__', name: picksWorkspaces ? 'Create New' : 'Create new worktree' }]
+                : []),
             // Starting in no workspace means starting in the project's own
             // checkout, which is a place with a name rather than an absence.
             { key: '__none__', name: picksWorkspaces ? 'Main' : 'No worktree' },
-            // Making one is a separate ability from starting in one that already exists.
-            ...(supportsWorktree
-                ? [{ key: '__new__', name: picksWorkspaces ? 'Create New' : 'Create new worktree' }]
-                : []),
             ...existingWorktrees,
         ];
         if (
@@ -854,41 +859,31 @@ export const HomeDock = React.memo(({
             options.push({ key: worktreeKey, name: worktreeKey });
         }
         return options;
-    }, [agentType, existingWorktrees, picksWorkspaces, supportsWorktree, worktreeKey]);
+    }, [agentType, canCreateWorktree, existingWorktrees, picksWorkspaces, supportsWorktree, worktreeKey]);
     const currentWorktree = resolveOption(worktreeOptions, [selectedWorktreeKey]);
-    // Common harnesses stay listed but disabled when unavailable, so the picker
-    // still reads as a choice. Antigravity is niche and stays entirely absent
-    // until this computer explicitly reports it installed.
-    const harnessKeys = React.useMemo<NewSessionAgentType[]>(() => (
-        (HARNESS_ORDER.includes(agentType) ? [...HARNESS_ORDER] : [agentType, ...HARNESS_ORDER])
-            .filter((key) => experiments || key !== 'rig')
-            .filter((key) => machineChoiceAgentVisible(selectedChoice, key))
-    ), [agentType, experiments, selectedChoice]);
     const availableAgents = React.useMemo<ModeOption[]>(() => (
-        harnessKeys.map((key) => {
-            const agent = { key, name: getHarnessName(key) };
-            return machineChoiceAgentAvailable(selectedChoice, key)
-                ? agent
-                : {
-                    ...agent,
-                    disabled: true,
-                    description: key === 'rig'
-                        ? 'Happy Agent is not running on this computer'
-                        : 'Not installed on this machine',
-                };
-        })
-    ), [harnessKeys, selectedChoice]);
-    const resolvedAgentType = resolveNewSessionAgent(selectedChoice, agentType, experiments);
+        listMachineChoiceAvailableAgents(selectedChoice).map((key) => ({
+            key,
+            name: getHarnessName(key),
+        }))
+    ), [selectedChoice]);
+    const hasAvailableHarness = availableAgents.length > 0;
+    const resolvedAgentType = resolveChoiceAgent(selectedChoice, agentType);
     const defaults = React.useMemo(() => rigCreation
         ? {
             permissionMode: rigCreation.defaultPermissionMode ?? '',
             modelMode: rigCreation.defaultModelKey ?? '',
             effortLevel: rigCreation.defaultEffortForModel(rigCreation.defaultModelKey),
         }
-        : resolveAgentDefaultConfig(defaultOverrides, agentType), [agentType, defaultOverrides, rigCreation]);
+        : resolveAgentDefaultConfig(defaultOverrides, agentType, happyCliVersion), [agentType, defaultOverrides, happyCliVersion, rigCreation]);
     const permissionOptions = React.useMemo(
-        () => rigCreation?.permissionModes ?? getHardcodedPermissionModes(agentType, t),
-        [agentType, rigCreation],
+        // The CLI daemon on the picked computer is what will parse the mode;
+        // older CLIs drop the whole prompt on modes they do not know (`auto`).
+        () => rigCreation?.permissionModes ?? filterPermissionModesForCli(
+            getHardcodedPermissionModes(agentType, t),
+            happyCliVersion,
+        ),
+        [agentType, happyCliVersion, rigCreation],
     );
     const modelOptions = React.useMemo(
         () => rigCreation?.models ?? includeConfiguredModel(
@@ -898,7 +893,14 @@ export const HomeDock = React.memo(({
         ),
         [agentType, defaults.modelMode, rigCreation],
     );
-    const currentPermission = resolveOption(permissionOptions, [permissionMode, defaults.permissionMode]);
+    // The code default last: when the saved and configured modes were both
+    // filtered out for an old CLI, land there rather than on whichever mode
+    // happens to lead the list.
+    const currentPermission = resolveOption(permissionOptions, [
+        permissionMode,
+        defaults.permissionMode,
+        rigCreation ? null : getCodeAgentDefaults(agentType, happyCliVersion).permissionMode,
+    ]);
     const currentModel = resolveOption(modelOptions, [modelMode, defaults.modelMode]);
     const effortOptions = React.useMemo(
         () => rigCreation
@@ -915,7 +917,7 @@ export const HomeDock = React.memo(({
     const permissionLabel = getPermissionModeShortLabel(currentPermission);
     const focusedPromptPlaceholder = resolveHomeDockPromptPlaceholder(currentAgent.key, currentAgent.name);
     const canSubmit = !isSubmitting && (
-        prompt.trim().length > 0 || (expImageUpload && selectedImages.length > 0)
+        prompt.trim().length > 0 || selectedImages.length > 0
     );
     const startPhase = isSubmitting ? submitPhase ?? 'spawning' : null;
     const startProgressLabel = resolveNewSessionProgressLabel({
@@ -1069,13 +1071,6 @@ export const HomeDock = React.memo(({
         };
     }, []);
 
-    React.useEffect(() => {
-        if (!expImageUpload && selectedImages.length > 0) {
-            clearImages();
-            useNewSessionDraft.getState().setAttachments([]);
-        }
-    }, [clearImages, expImageUpload, selectedImages.length]);
-
     const openFocusMode = React.useCallback(() => {
         if (focusAnimationTimerRef.current) {
             clearTimeout(focusAnimationTimerRef.current);
@@ -1158,14 +1153,14 @@ export const HomeDock = React.memo(({
                 modelMode: nextRigCreation.defaultModelKey ?? '',
                 effortLevel: nextRigCreation.defaultEffortForModel(nextRigCreation.defaultModelKey),
             }
-            : resolveAgentDefaultConfig(defaultOverrides, agent);
+            : resolveAgentDefaultConfig(defaultOverrides, agent, happyCliVersion);
         // Choosing Happy Agent no longer moves the machine selection: the computer already covers
         // both daemons, and switching it under the person was what made the picker show two.
         setAgentType(agent);
         setPermissionMode(nextDefaults.permissionMode);
         setModelMode(nextDefaults.modelMode);
         if (nextDefaults.effortLevel) setEffortLevel(nextDefaults.effortLevel);
-    }, [defaultOverrides, rigSelectionCreation, setAgentType, setEffortLevel, setModelMode, setPermissionMode]);
+    }, [defaultOverrides, happyCliVersion, rigSelectionCreation, setAgentType, setEffortLevel, setModelMode, setPermissionMode]);
 
     React.useEffect(() => {
         if (resolvedAgentType !== agentType) {
@@ -1192,13 +1187,18 @@ export const HomeDock = React.memo(({
             value: currentWorktree?.name ?? (picksWorkspaces ? 'Main' : 'No worktree'),
             icon: 'git-branch-outline',
         },
-        { page: 'agent', label: 'HARNESS', value: currentAgent.name, icon: 'hardware-chip-outline' },
+        {
+            page: 'agent',
+            label: 'HARNESS',
+            value: hasAvailableHarness ? currentAgent.name : 'Help',
+            icon: hasAvailableHarness ? 'hardware-chip-outline' : 'help-circle-outline',
+        },
     ];
-    const agentRows: SettingsRow[] = [
+    const agentRows: SettingsRow[] = hasAvailableHarness ? [
         ...(currentModel ? [{ page: 'model', label: t('agentInput.model.title'), value: currentModel.name, icon: 'cube-outline' as const }] : []),
         ...(currentPermission ? [{ page: 'permission', label: t('agentInput.permissionMode.title'), value: permissionLabel ?? currentPermission.name, icon: 'shield-outline' as const }] : []),
         ...(currentEffort ? [{ page: 'effort', label: t('agentInput.effort.title'), value: currentEffort.name, icon: 'speedometer-outline' as const }] : []),
-    ];
+    ] : [];
 
     type PickerConfig = {
         title: string;
@@ -1227,6 +1227,11 @@ export const HomeDock = React.memo(({
                 setPath(selectedCustomPath);
             }
         })();
+    };
+
+    const openHarnessSetupHelp = () => {
+        Keyboard.dismiss();
+        void openExternalUrl(HARNESS_SETUP_HELP_URL);
     };
 
     const getEnvironmentPickerConfig = (setting: EnvironmentSetting): PickerConfig => {
@@ -1277,19 +1282,26 @@ export const HomeDock = React.memo(({
         return { title: t('agentInput.effort.title'), options: effortOptions, selectedKey: currentEffort?.key, onSelect: setEffortLevel };
     };
 
-    const agentSettingsGroups: NativeSettingsMenuGroup[] = agentRows.map((row) => {
+    const agentSettingsGroups: NativeSettingsMenuGroup[] = agentRows.flatMap((row) => {
         const config = getAgentPickerConfig(row.page as AgentSetting);
-        return {
-            key: row.page,
+        const sections = row.page === 'model'
+            ? groupModelModesByProvider(modelOptions).map((providerGroup) => ({
+                key: `model:${providerGroup.key}`,
+                title: providerGroup.title ?? config.title,
+                options: providerGroup.models,
+            }))
+            : [{ key: row.page, title: config.title, options: config.options }];
+        return sections.map((section) => ({
+            key: section.key,
             label: row.value || config.title,
-            title: config.title,
+            title: section.title,
             systemImage: {
                 agent: 'cpu',
                 model: 'cube',
                 permission: 'shield',
                 effort: 'bolt',
             }[row.page],
-            options: config.options.map((option) => ({
+            options: section.options.map((option) => ({
                 key: option.key,
                 // The permission menu spells the mode out; only its chip is
                 // short on space. Model and effort read fine on their own.
@@ -1298,9 +1310,9 @@ export const HomeDock = React.memo(({
             })),
             selectedKey: config.selectedKey,
             onSelect: config.onSelect,
-        };
+        }));
     });
-    const modelSettingsGroup = agentSettingsGroups.find((group) => group.key === 'model');
+    const modelSettingsGroups = agentSettingsGroups.filter((group) => group.key.startsWith('model:'));
     const effortSettingsGroup = agentSettingsGroups.find((group) => group.key === 'effort');
     const permissionSettingsGroup = agentSettingsGroups.find((group) => group.key === 'permission');
 
@@ -1363,11 +1375,26 @@ export const HomeDock = React.memo(({
     );
 
     const renderPickerRow = (row: SettingsRow, config: PickerConfig, compact: boolean) => {
+        if (row.page === 'agent' && !hasAvailableHarness) {
+            return (
+                <Pressable
+                    key={row.page}
+                    onPress={openHarnessSetupHelp}
+                    accessibilityRole="link"
+                    accessibilityLabel="Harness setup help"
+                >
+                    {renderPickerRowContent(row, compact)}
+                </Pressable>
+            );
+        }
         if (!useNativeMenus) {
             return (
                 <Pressable
                     key={row.page}
-                    onPress={() => setSheetPage(row.page as PickerPage)}
+                    onPress={() => {
+                        if (row.page === 'worktree') refreshWorktrees();
+                        setSheetPage(row.page as PickerPage);
+                    }}
                     accessibilityRole="button"
                     accessibilityLabel={`${row.label}: ${row.value}`}
                 >
@@ -1392,7 +1419,10 @@ export const HomeDock = React.memo(({
                 }[row.page]}
                 options={config.options.map((option) => ({ key: option.key, label: option.name }))}
                 selectedKey={config.selectedKey}
-                onMenuOpen={markNativeMenuOpen}
+                onMenuOpen={() => {
+                    markNativeMenuOpen();
+                    if (row.page === 'worktree') refreshWorktrees();
+                }}
                 onSelect={(key) => {
                     nativeMenuOpenRef.current = false;
                     config.onSelect(key);
@@ -1472,6 +1502,13 @@ export const HomeDock = React.memo(({
     // Only reached with a page selected: `sheetVisible` gates the whole sheet.
     const renderSettingsSheet = (page: PickerPage) => {
         const config = getPickerConfig(page);
+        const optionSections = page === 'model'
+            ? groupModelModesByProvider(modelOptions).map((providerGroup) => ({
+                key: providerGroup.key,
+                title: providerGroup.title,
+                options: providerGroup.models,
+            }))
+            : [{ key: page, title: null, options: config.options }];
         return (
             <View style={styles.settingsStack}>
                 <MobileGlassSurface
@@ -1494,10 +1531,15 @@ export const HomeDock = React.memo(({
                         </Text>
                     </View>
                     <ScrollView style={styles.optionList} keyboardShouldPersistTaps="always">
-                        {config.options.map((option) => {
-                            const selectable = isHomeDockOptionSelectable(option.disabled);
-                            const selected = option.key === config.selectedKey;
-                            return (
+                        {optionSections.map((section) => (
+                            <React.Fragment key={section.key}>
+                                {section.title ? (
+                                    <Text style={styles.optionSectionTitle}>{section.title}</Text>
+                                ) : null}
+                                {section.options.map((option) => {
+                                    const selectable = isHomeDockOptionSelectable(option.disabled);
+                                    const selected = option.key === config.selectedKey;
+                                    return (
                                 <Pressable
                                     key={option.key}
                                     disabled={!selectable}
@@ -1528,8 +1570,10 @@ export const HomeDock = React.memo(({
                                         )}
                                     </View>
                                 </Pressable>
-                            );
-                        })}
+                                    );
+                                })}
+                            </React.Fragment>
+                        ))}
                     </ScrollView>
                 </MobileGlassSurface>
             </View>
@@ -1608,7 +1652,7 @@ export const HomeDock = React.memo(({
 
     const submit = async () => {
         if (!canSubmit) return false;
-        useNewSessionDraft.getState().setAttachments(expImageUpload ? selectedImages : []);
+        useNewSessionDraft.getState().setAttachments(selectedImages);
         const started = await onSubmit();
         if (started) clearImages();
         return started;
@@ -1640,7 +1684,7 @@ export const HomeDock = React.memo(({
                     ]}
                 >
                 <View style={styles.focusedComposerContent}>
-                    {expImageUpload && selectedImages.length > 0 && (
+                    {selectedImages.length > 0 && (
                         <Animated.View style={focusedInputRevealStyle}>
                             <AgentInputAttachmentStrip images={selectedImages} onRemove={removeImage} />
                         </Animated.View>
@@ -1693,22 +1737,20 @@ export const HomeDock = React.memo(({
                         />
                     )}
                     <Animated.View style={[styles.focusedComposerActions, focusedActionsRevealStyle]}>
-                        {expImageUpload && (
-                            <RefusableControl refusing={isSubmitting} onRefuse={refuse}>
-                                <BubblePressable
-                                    onPress={() => void pickImages()}
-                                    style={styles.sideButton}
-                                    accessibilityRole="button"
-                                    accessibilityLabel="Add image"
-                                >
-                                    <Ionicons
-                                        name="add"
-                                        size={MOBILE_COMPOSER_METRICS.addIconSize}
-                                        color={theme.colors.text}
-                                    />
-                                </BubblePressable>
-                            </RefusableControl>
-                        )}
+                        <RefusableControl refusing={isSubmitting} onRefuse={refuse}>
+                            <BubblePressable
+                                onPress={() => void pickImages()}
+                                style={styles.sideButton}
+                                accessibilityRole="button"
+                                accessibilityLabel="Add image"
+                            >
+                                <Ionicons
+                                    name="add"
+                                    size={MOBILE_COMPOSER_METRICS.addIconSize}
+                                    color={theme.colors.text}
+                                />
+                            </BubblePressable>
+                        </RefusableControl>
                         {/* The permission mode reads out in words instead of
                             hiding behind a gear: it is the one setting here that
                             changes what the agent is allowed to do to your
@@ -1736,11 +1778,10 @@ export const HomeDock = React.memo(({
                         {/* Pushes model/effort right so the pair sits against the
                             send button instead of drifting when a label changes. */}
                         <View style={{ flex: 1 }} />
-                        {modelSettingsGroup ? (
+                        {modelSettingsGroups.length > 0 ? (
                             renderMenuControl({
                                 page: 'model',
-                                groups: [modelSettingsGroup],
-                                flat: true,
+                                groups: modelSettingsGroups,
                                 style: styles.nativeModeMenu,
                                 accessibilityLabel: t('agentInput.model.title'),
                                 triggerLabel: currentModel?.name ?? currentAgent.name,
