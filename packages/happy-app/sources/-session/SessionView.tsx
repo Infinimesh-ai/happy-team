@@ -7,20 +7,20 @@ import { resolveVisibleAgentGoalStatus } from '@/components/agentGoalStatus';
 import type { MultiTextInputHandle } from '@/components/MultiTextInput';
 import { layout } from '@/components/layout';
 import {
-    getAvailableModels,
-    getAvailablePermissionModes,
     getEffortLevelsForModel,
-    getRigCurrentModelOptionKey,
-    resolveCurrentOption,
     EffortLevel,
 } from '@/components/modelModeOptions';
 import { getSuggestions } from '@/components/autocomplete/suggestions';
 import { ChatHeaderView } from '@/components/ChatHeaderView';
+import { PendingChatPlaceholder } from '@/components/PendingChatPlaceholder';
+import { WorktreeTabStrip, WORKTREE_TAB_STRIP_HEIGHT } from '@/components/WorktreeTabStrip';
+import { useProjectWorktreeSummary } from '@/hooks/useProjectWorktree';
 import { ChatList } from '@/components/ChatList';
 import { Deferred } from '@/components/Deferred';
 import { EmptyMessages } from '@/components/EmptyMessages';
 import { Avatar } from '@/components/Avatar';
 import { VoiceAssistantStatusBar, VOICE_PILL_TOTAL_HEIGHT } from '@/components/VoiceAssistantStatusBar';
+import { useComposerModes } from '@/hooks/useComposerModes';
 import { useDraft } from '@/hooks/useDraft';
 import { useSessionVisibility } from '@/hooks/useSessionVisibility';
 import { useImagePicker } from '@/hooks/useImagePicker';
@@ -28,6 +28,8 @@ import { Modal } from '@/modal';
 import { voiceHooks } from '@/realtime/hooks/voiceHooks';
 import { getCurrentVoiceConversationId, getCurrentVoiceSessionDurationSeconds, startRealtimeSession, stopRealtimeSession } from '@/realtime/RealtimeSession';
 import { sessionAbort, sessionCancelCommunication, sessionGoalAction, sessionSetAgentModes, spawnSideChat, sessionKill, sessionArchive } from '@/sync/ops';
+import { dismissPendingChat, getPendingChat, setPendingChatDraft, submitPendingChat, usePendingChat, type PendingChat } from '@/sync/pendingChats';
+import { claimComposerFocus } from '@/utils/composerFocus';
 import { storage, useIsDataReady, useLocalSetting, useRealtimeStatus, useSessionGitStatus, useSessionMessages, useSessionPendingCommunications, useSessionAvatar, useSessionUsage, useSetting, useSideChatSessions } from '@/sync/storage';
 import { useSession } from '@/sync/storage';
 import { getSessionForkSource } from '@/utils/sessionFork';
@@ -40,7 +42,7 @@ import { t } from '@/text';
 import { tracking } from '@/track';
 import { getVoiceMessageCount, getVoiceOnboardingPromptLoadCount } from '@/sync/persistence';
 import { isRunningOnMac } from '@/utils/platform';
-import { useDeviceType, useHeaderHeight, useIsLandscape, useIsTablet } from '@/utils/responsive';
+import { useHeaderHeight, useIsLandscape, useIsTablet, useLayoutDimensions } from '@/utils/responsive';
 import { resolveSessionGitPresentation } from '@/utils/sessionGitPresentation';
 import { FilesSidebar, SidebarMode } from '@/components/FilesSidebar';
 import { AllFilesDiffView } from '@/components/AllFilesDiffView';
@@ -48,7 +50,7 @@ import { FileViewPanel } from '@/components/FileViewPanel';
 import { GitFileStatus } from '@/sync/gitStatusFiles';
 import { useOverlayNav } from '@/-session/sessionOverlayNav';
 import { formatPathRelativeToHome, getResumeCommandBlock, getSessionAvatarId, getSessionName, useSessionStatus } from '@/utils/sessionUtils';
-import { useSessionQuickActions } from '@/hooks/useSessionQuickActions';
+import { MISSING_SESSION, useSessionQuickActions } from '@/hooks/useSessionQuickActions';
 import { isVersionSupported, MINIMUM_CLI_VERSION } from '@/utils/versionUtils';
 import * as Clipboard from 'expo-clipboard';
 import { Ionicons } from '@expo/vector-icons';
@@ -56,16 +58,14 @@ import { useRouter } from 'expo-router';
 import { useFocusEffect, useIsFocused } from '@react-navigation/native';
 import * as React from 'react';
 import { useMemo } from 'react';
-import { ActivityIndicator, LayoutChangeEvent, Platform, Pressable, Text, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, LayoutChangeEvent, Platform, Pressable, Text, View } from 'react-native';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ModelMode, PermissionMode } from '@/components/PermissionModeSelector';
-import { resolveAgentDefaultConfig } from '@/sync/agentDefaults';
 import { performAgentGoalAction } from './agentGoalActionHandler';
 import { MOBILE_GLASS_HEADER_HEIGHT } from '@/components/navigation/headerMetrics';
 import {
-    getRigReasoningSelection,
     isRigMetadata,
     isRigMetadataV1,
     isRigModelSelectionEnabled,
@@ -81,31 +81,59 @@ import { RigActivityBar } from '@/components/RigActivityBar';
 import { AnimatedFade } from '@/components/AnimatedOverlay';
 
 export const SessionView = React.memo((props: { id: string }) => {
-    const sessionId = props.id;
+    const routeId = props.id;
     const router = useRouter();
     const isFocused = useIsFocused();
-    const session = useSession(sessionId);
-    const avatar = useSessionAvatar(sessionId);
-    const gitStatus = useSessionGitStatus(sessionId);
+    /**
+     * A chat opened from the strip's `+` is on screen before any machine has
+     * agreed to run it, standing in for itself under an id of its own.
+     *
+     * The route stays on that id for the whole life of the screen, and this
+     * record is what maps it to the chat it becomes. It used to move to the
+     * real id the moment the machine answered, and the route's id is this
+     * screen's identity: moving it threw the screen away — the composer the
+     * user was typing into included — at the one moment they were typing.
+     */
+    const pendingChat = usePendingChat(routeId);
+    // What this screen is showing, once there is something to show. Null while
+    // a chat that was asked for has not arrived.
+    const sessionId = pendingChat ? pendingChat.sessionId : routeId;
+    const session = useSession(sessionId ?? '');
+    const avatar = useSessionAvatar(sessionId ?? '');
+    /**
+     * A chat that does not exist yet cannot speak for its checkout, so the
+     * header reads the chat it was started beside until it can — and does not
+     * lose its branch and its diff on the way in.
+     */
+    const headerSessionId = session ? sessionId! : pendingChat?.anchorSessionId ?? routeId;
+    const headerSession = useSession(headerSessionId);
+    const gitStatus = useSessionGitStatus(headerSessionId);
     const headerGit = React.useMemo(
-        () => resolveSessionGitPresentation(session?.metadata, gitStatus),
-        [session?.metadata, gitStatus],
+        () => resolveSessionGitPresentation(headerSession?.metadata, gitStatus),
+        [headerSession?.metadata, gitStatus],
     );
     const isDataReady = useIsDataReady();
+    // Grouped by project, a chat is one tab of its checkout: the header names
+    // the checkout, and the strip under it holds the checkout's chats.
+    const worktree = useProjectWorktreeSummary(headerSessionId);
+    const showTabStrip = !!worktree && !!headerSession && isDataReady;
+    const tabStripHeight = showTabStrip ? WORKTREE_TAB_STRIP_HEIGHT : 0;
     const { theme } = useUnistyles();
     const safeArea = useSafeAreaInsets();
     const isLandscape = useIsLandscape();
-    const deviceType = useDeviceType();
+    const isTablet = useIsTablet();
     const headerHeight = useHeaderHeight();
-    const mobileHeaderHeight = deviceType === 'phone' && Platform.OS !== 'web'
+    const mobileHeaderHeight = !isTablet && Platform.OS === 'ios'
         ? Math.max(headerHeight, MOBILE_GLASS_HEADER_HEIGHT)
         : headerHeight;
-    const contentRunsUnderHeader = deviceType === 'phone'
+    // Keep Android's compact landscape header: it owns the session info and
+    // Changes navigation even when a small tablet uses the phone layout.
+    const hidesLandscapeHeader = isLandscape && !isTablet && Platform.OS === 'ios';
+    const contentRunsUnderHeader = !isTablet
         && Platform.OS !== 'web'
         && !isLandscape;
     const realtimeStatus = useRealtimeStatus();
-    const isTablet = useIsTablet();
-    const { width: windowWidth } = useWindowDimensions();
+    const { width: windowWidth } = useLayoutDimensions();
     const fileDiffsSidebarEnabled = useSetting('fileDiffsSidebar');
     const zenMode = useLocalSetting('zenMode');
     const [headerBackdropVisible, setHeaderBackdropVisible] = React.useState(false);
@@ -113,6 +141,35 @@ export const SessionView = React.memo((props: { id: string }) => {
     React.useEffect(() => {
         setHeaderBackdropVisible(false);
     }, [sessionId]);
+
+    /**
+     * The start is not coming. It has already said why, in its own words, and
+     * the writing was handed back to the anchor by whoever retired the record
+     * — it had to be, since this screen may not be mounted when the failure
+     * lands. All that is left is to stop standing on a tab that is not coming,
+     * which is a genuine change of screen and may remount as much as it likes.
+     */
+    const failedAnchorId = pendingChat?.status === 'failed' ? pendingChat.anchorSessionId : null;
+    React.useEffect(() => {
+        if (failedAnchorId) router.setParams({ id: failedAnchorId });
+    }, [failedAnchorId, router]);
+
+    /**
+     * The record is this screen's own, and the screen is done with it.
+     *
+     * Retired on the way out rather than on arrival: the route stands on the
+     * stand-in's id until the very last frame, and a record dropped any earlier
+     * would leave the screen on an id that means nothing. A start still in
+     * flight is left alone — leaving the tab is not the end of the start, and
+     * the user can come back to it.
+     */
+    const pendingId = pendingChat?.id ?? null;
+    const pendingSettled = !!pendingChat?.sessionId || pendingChat?.status === 'failed';
+    const settledRef = React.useRef(pendingSettled);
+    settledRef.current = pendingSettled;
+    React.useEffect(() => () => {
+        if (pendingId && settledRef.current) dismissPendingChat(pendingId);
+    }, [pendingId]);
 
     // Base condition: can we show the diff sidebar at all?
     const canShowSidebar = fileDiffsSidebarEnabled
@@ -187,7 +244,7 @@ export const SessionView = React.memo((props: { id: string }) => {
     // Creation is unified into the sidebar panel picker (the top "+") so there
     // is no separate per-tab add button. Which side chat is focused lives here
     // (not in the panel) so the picker can create-and-focus a new one in one go.
-    const rawSideChats = useSideChatSessions(sessionId);
+    const rawSideChats = useSideChatSessions(sessionId ?? '');
     const sideChatForkSource = session ? getSessionForkSource(session) : null;
     const [activeSideChatId, setActiveSideChatId] = React.useState<string | null>(null);
     // Optimistically hide a side chat the instant it's closed. The server's
@@ -351,6 +408,11 @@ export const SessionView = React.memo((props: { id: string }) => {
         if (!isDataReady) {
             return { title: '', isConnected: false };
         }
+        // A chat still on its way to a machine has no name of its own yet, and
+        // it is emphatically not a deleted one.
+        if (pendingChat) {
+            return { title: t('session.newChat'), isConnected: false };
+        }
         if (!session) {
             return { title: t('errors.sessionDeleted'), isConnected: false };
         }
@@ -360,11 +422,11 @@ export const SessionView = React.memo((props: { id: string }) => {
             title: sessionName,
             isConnected,
         };
-    }, [session, isDataReady]);
-    const headerRight = session && deviceType === 'phone' && Platform.OS !== 'web'
+    }, [session, isDataReady, pendingChat]);
+    const headerRight = session && !isTablet && Platform.OS !== 'web'
         ? (
             <Pressable
-                onPress={() => router.push(`/session/${sessionId}/info`)}
+                onPress={() => router.push(`/session/${session.id}/info`)}
                 hitSlop={10}
             >
                 <Avatar
@@ -384,9 +446,9 @@ export const SessionView = React.memo((props: { id: string }) => {
 
     const mainContent = (
         <>
-            <MobileGlassBackdrop enabled={deviceType === 'phone' && Platform.OS !== 'web'} />
+            <MobileGlassBackdrop enabled={!isTablet && Platform.OS !== 'web'} />
             {/* Status bar shadow for landscape mode */}
-            {isLandscape && deviceType === 'phone' && (
+            {hidesLandscapeHeader && (
                 <View style={{
                     position: 'absolute',
                     top: 0,
@@ -410,10 +472,10 @@ export const SessionView = React.memo((props: { id: string }) => {
             <View
                 style={{
                     flex: 1,
-                    paddingTop: !(isLandscape && deviceType === 'phone' && Platform.OS !== 'web')
+                    paddingTop: !hidesLandscapeHeader
                         ? contentRunsUnderHeader
                             ? 0
-                            : safeArea.top + mobileHeaderHeight + (!isTablet && realtimeStatus !== 'disconnected' ? VOICE_PILL_TOTAL_HEIGHT : 0)
+                            : safeArea.top + mobileHeaderHeight + tabStripHeight + (!isTablet && realtimeStatus !== 'disconnected' ? VOICE_PILL_TOTAL_HEIGHT : 0)
                         : 0,
                 }}
             >
@@ -421,27 +483,36 @@ export const SessionView = React.memo((props: { id: string }) => {
                     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
                         <ActivityIndicator size="small" color={theme.colors.textSecondary} />
                     </View>
-                ) : !session ? (
+                ) : session || pendingChat ? (
+                    // Keyed on the route rather than on the chat, because the
+                    // chat arrives into this screen rather than replacing it:
+                    // the composer here is the one the user has been typing in
+                    // since the press, and it must not be rebuilt underneath
+                    // them when the machine finally answers.
+                    <View style={{ flexBasis: 0, flexGrow: 1 }}>
+                        <SessionViewLoaded
+                            key={routeId}
+                            sessionId={sessionId}
+                            session={session}
+                            pending={pendingChat}
+                            active={isFocused}
+                            headerAccessoryHeight={tabStripHeight}
+                            onHeaderBackdropVisibilityChange={contentRunsUnderHeader
+                                ? setHeaderBackdropVisible
+                                : undefined}
+                        />
+                    </View>
+                ) : (
                     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
                         <Ionicons name="trash-outline" size={48} color={theme.colors.textSecondary} />
                         <Text style={{ color: theme.colors.text, fontSize: 20, marginTop: 16, fontWeight: '600' }}>{t('errors.sessionDeleted')}</Text>
                         <Text style={{ color: theme.colors.textSecondary, fontSize: 15, marginTop: 8, textAlign: 'center', paddingHorizontal: 32 }}>{t('errors.sessionDeletedDescription')}</Text>
                     </View>
-                ) : (
-                    <SessionViewLoaded
-                        key={sessionId}
-                        sessionId={sessionId}
-                        session={session}
-                        active={isFocused}
-                        onHeaderBackdropVisibilityChange={contentRunsUnderHeader
-                            ? setHeaderBackdropVisible
-                            : undefined}
-                    />
                 )}
             </View>
 
             {/* Render the overlay header after the dynamic list so native blur samples its content. */}
-            {!(isLandscape && deviceType === 'phone' && Platform.OS !== 'web') && (
+            {!hidesLandscapeHeader && (
                 <View style={{
                     position: 'absolute',
                     top: 0,
@@ -450,15 +521,22 @@ export const SessionView = React.memo((props: { id: string }) => {
                     zIndex: 1000
                 }}>
                     <ChatHeaderView
-                        title={headerProps.title}
-                        subtitle={session && isDataReady ? headerGit.subtitle : undefined}
-                        gitChanges={session && isDataReady ? headerGit.changes : null}
+                        title={showTabStrip
+                            ? worktree.workspaceName ?? headerGit.subtitle ?? worktree.projectName
+                            : headerProps.title}
+                        subtitle={showTabStrip
+                            ? t('sessionsFilter.worktreeTabs', { count: worktree.tabCount })
+                            : headerSession && isDataReady ? headerGit.subtitle : undefined}
+                        gitChanges={headerSession && isDataReady ? headerGit.changes : null}
                         backdropVisible={headerBackdropVisible}
                         extraPathSegment={fileViewPath ?? undefined}
                         rightSlot={(diffViewOpen || !!fileViewPath) ? headerRightSlot : headerRight}
-                        onTitlePress={session ? () => router.push(`/session/${sessionId}/info`) : undefined}
+                        onTitlePress={session ? () => router.push(`/session/${session.id}/info`) : undefined}
                         onBackPress={() => router.back()}
                     />
+                    {/* The strip goes by the route, which is where a chat that
+                        does not exist yet still has a chip of its own. */}
+                    {showTabStrip && <WorktreeTabStrip sessionId={routeId} />}
                     {/* Voice status bar below header - not on tablet (shown in sidebar) */}
                     {!isTablet && realtimeStatus !== 'disconnected' && (
                         <VoiceAssistantStatusBar variant="full" />
@@ -468,7 +546,9 @@ export const SessionView = React.memo((props: { id: string }) => {
         </>
     );
 
-    if (!canShowSidebar) {
+    // The sidebar and the overlays it opens are about one chat's files, so
+    // there is nothing for them to show until there is a chat.
+    if (!canShowSidebar || !sessionId) {
         return mainContent;
     }
 
@@ -494,7 +574,7 @@ export const SessionView = React.memo((props: { id: string }) => {
                         pointerEvents="box-none"
                         style={{
                             position: 'absolute',
-                            top: safeArea.top + mobileHeaderHeight,
+                            top: safeArea.top + mobileHeaderHeight + tabStripHeight,
                             left: 0,
                             right: 0,
                             bottom: 0,
@@ -513,7 +593,7 @@ export const SessionView = React.memo((props: { id: string }) => {
                         pointerEvents="box-none"
                         style={{
                             position: 'absolute',
-                            top: safeArea.top + mobileHeaderHeight,
+                            top: safeArea.top + mobileHeaderHeight + tabStripHeight,
                             left: 0,
                             right: 0,
                             bottom: 0,
@@ -569,9 +649,14 @@ type ChatComposerHandle = {
 
 type ChatComposerProps = Omit<
     React.ComponentProps<typeof AgentInput>,
-    'initialValue' | 'onChangeText'
+    'initialValue' | 'onChangeText' | 'sessionId'
 > & {
-    sessionId: string;
+    /** Null while the chat this composer belongs to is still being started. */
+    sessionId: string | null;
+    /** Where keystrokes go in the meantime. */
+    pendingChatId: string | null;
+    /** Only for a composer the user asked for, which is why it opens focused. */
+    focusOnMount: boolean;
     composerHandleRef: React.RefObject<ChatComposerHandle | null>;
 };
 
@@ -581,13 +666,25 @@ type ChatComposerProps = Omit<
 // `message` here is a low-priority mirror updated via startTransition; it's
 // only used to feed useDraft's debounced autosave. Reads/clears on send go
 // through the MultiTextInput handle imperatively.
+//
+// It also outlives the arrival of the chat it writes to. A chat opened from
+// the strip's `+` has no session for the first second or two of its life, and
+// this same instance carries the caret, the text and the keyboard across the
+// moment the machine answers — so nothing here may re-seed the field from the
+// store when `sessionId` stops being null. The field already holds what was
+// typed, and it is the truth.
 const ChatComposer = React.memo(function ChatComposer(props: ChatComposerProps) {
-    const { sessionId, composerHandleRef, ...rest } = props;
-    // Synchronously hydrate the textarea with any saved draft so the user sees
-    // their work-in-progress on session open without an extra round-trip.
-    const initialDraft = React.useMemo(() => {
-        return storage.getState().sessions[sessionId]?.draft ?? '';
-    }, [sessionId]);
+    const { sessionId, pendingChatId, focusOnMount, composerHandleRef, ...rest } = props;
+    // Read once, on mount, so the user sees their work in progress without a
+    // round-trip — from the chat if there is one, and otherwise from the record
+    // standing in for it, which is where a tab left mid-sentence kept it.
+    // Re-reading it on a later render would fight whatever has been typed
+    // since, which is exactly what the chat's arrival must not do.
+    const [initialDraft] = React.useState(() => (
+        sessionId
+            ? storage.getState().sessions[sessionId]?.draft ?? ''
+            : pendingChatId ? getPendingChat(pendingChatId)?.draft ?? '' : ''
+    ));
     const inputHandleRef = React.useRef<MultiTextInputHandle>(null);
     const [message, setMessage] = React.useState(initialDraft);
 
@@ -601,8 +698,14 @@ const ChatComposer = React.memo(function ChatComposer(props: ChatComposerProps) 
     const handleChangeText = React.useCallback((text: string) => {
         // Transition keeps the textarea responsive even when the draft
         // autosave / re-render takes longer than a frame.
-        React.startTransition(() => setMessage(text));
-    }, []);
+        React.startTransition(() => {
+            setMessage(text);
+            // Nothing owns this text yet but the record standing in for the
+            // chat, and the handover reads it from there — including when the
+            // user has left for a sibling tab in the meantime.
+            if (!sessionId && pendingChatId) setPendingChatDraft(pendingChatId, text);
+        });
+    }, [pendingChatId, sessionId]);
 
     React.useImperativeHandle(composerHandleRef, () => ({
         getMessage: () => inputHandleRef.current?.getText() ?? '',
@@ -613,40 +716,70 @@ const ChatComposer = React.memo(function ChatComposer(props: ChatComposerProps) 
         },
     }), [clearDraft]);
 
+    // A chat that was asked for was asked for in order to be typed into, so the
+    // caret starts here — on the press, not a beat after it. Once, on mount:
+    // latched so that a chat landing later cannot move the caret back from
+    // wherever typing has since taken it.
+    const opensFocused = React.useRef(focusOnMount).current;
+    React.useLayoutEffect(() => {
+        if (!opensFocused) return;
+        return claimComposerFocus(inputHandleRef, { caretToEnd: true });
+    }, [opensFocused]);
+
     return (
         <AgentInput
             {...rest}
             ref={inputHandleRef}
-            sessionId={sessionId}
+            sessionId={sessionId ?? undefined}
             initialValue={initialDraft}
             onChangeText={handleChangeText}
         />
     );
 });
 
+/**
+ * The chat itself: the messages, and the one composer under them.
+ *
+ * It is mounted from the first frame of the screen, before there is anything
+ * to draw in it. A chat asked for from the strip's `+` does not exist for the
+ * second or two the machine takes to answer, and this renders it anyway — the
+ * placeholder above, the live composer below — so the composer the user starts
+ * typing in is the composer the chat arrives into. Nothing about the caret,
+ * the text or the keyboard is handed over, because nothing changes hands.
+ */
 export function SessionViewLoaded({
     sessionId,
     session,
+    pending = null,
     active = true,
     embedded = false,
+    headerAccessoryHeight = 0,
     onHeaderBackdropVisibilityChange,
 }: {
-    sessionId: string;
-    session: Session;
+    /** Null until the chat exists. */
+    sessionId: string | null;
+    session: Session | null;
+    /**
+     * The record standing in for a chat that has been asked for and has not
+     * arrived. A plain prop: nothing in here knows or cares that the tab strip
+     * is usually what asks.
+     */
+    pending?: PendingChat | null;
     active?: boolean;
     embedded?: boolean;
+    /** Chrome stacked under the header (the tab strip) that the chat scrolls beneath. */
+    headerAccessoryHeight?: number;
     onHeaderBackdropVisibilityChange?: (visible: boolean) => void;
 }) {
     const { theme } = useUnistyles();
     const router = useRouter();
     const safeArea = useSafeAreaInsets();
     const isLandscape = useIsLandscape();
-    const deviceType = useDeviceType();
     const isTablet = useIsTablet();
     // Only the portrait phone chat uses an overlay dock. Tablet, desktop,
     // landscape, and embedded views retain their existing split layout.
     const usesFloatingMobileDock = !embedded
-        && deviceType === 'phone'
+        && !isTablet
         && Platform.OS !== 'web'
         && !isRunningOnMac()
         && !isLandscape;
@@ -693,91 +826,65 @@ export function SessionViewLoaded({
     }, [sessionId, usesFloatingMobileDock]);
 
     const realtimeStatus = useRealtimeStatus();
-    const { messages, isLoaded } = useSessionMessages(sessionId);
-    const pendingCommunications = useSessionPendingCommunications(sessionId);
+    const { messages, isLoaded } = useSessionMessages(sessionId ?? '');
+    const pendingCommunications = useSessionPendingCommunications(sessionId ?? '');
     const acknowledgedCliVersions = useLocalSetting('acknowledgedCliVersions');
     const zenMode = useLocalSetting('zenMode');
     const sessionInputHorizontalPadding = Platform.OS === 'web' || isRunningOnMac() || isTablet ? 12 : 8;
-    const chatListTopContentInset = embedded || (isLandscape && deviceType === 'phone')
+    const chatListTopContentInset = embedded || (isLandscape && !isTablet)
         ? 12
-        : deviceType === 'phone' && Platform.OS !== 'web'
+        : !isTablet && Platform.OS !== 'web'
             ? safeArea.top
                 + MOBILE_GLASS_HEADER_HEIGHT
                 + (realtimeStatus !== 'disconnected' ? VOICE_PILL_TOTAL_HEIGHT : 0)
+                + headerAccessoryHeight
                 + 12
             : undefined;
 
+    // Read off the record rather than held as it: every keystroke into a chat
+    // that does not exist yet rewrites the record, and the composer must not be
+    // handed a new send on each of them.
+    const pendingChatId = pending?.id ?? null;
+    // A chat that does not exist yet cannot say how it will be configured, so
+    // the chips report the chat it was started beside, which decides that.
+    const anchorSession = useSession(pending?.anchorSessionId ?? '');
+    const composerSession = session ?? anchorSession;
+    // The hooks below all want a chat, and this screen is drawn before there is
+    // one. The frozen stand-in keeps them in the same order on the render that
+    // has nothing to give them; everything it feeds is guarded on `session`.
+    const sessionOrMissing = session ?? MISSING_SESSION;
+
     // Check if CLI version is outdated and not already acknowledged
-    const cliVersion = session.metadata?.version;
-    const machineId = session.metadata?.machineId;
+    const cliVersion = session?.metadata?.version;
+    const machineId = session?.metadata?.machineId;
     const isCliOutdated = cliVersion && !isVersionSupported(cliVersion, MINIMUM_CLI_VERSION);
     const isAcknowledged = machineId && acknowledgedCliVersions[machineId] === cliVersion;
     const shouldShowCliWarning = isCliOutdated && !isAcknowledged;
-    const flavor = session.metadata?.flavor;
-    const isRig = isRigMetadata(session.metadata);
-    const agentDefaultOverrides = useSetting('agentDefaultOverrides');
-    const effectiveAgentDefaults = React.useMemo(() => (
-        resolveAgentDefaultConfig(agentDefaultOverrides, flavor, cliVersion)
-    ), [agentDefaultOverrides, cliVersion, flavor]);
-    const availableModels = React.useMemo(() => (
-        getAvailableModels(
-            flavor,
-            session.metadata,
-            t,
-            session.modelMode ?? (isRig ? null : effectiveAgentDefaults.modelMode),
-        )
-    ), [flavor, session.metadata, session.modelMode, effectiveAgentDefaults.modelMode, isRig]);
-    const availableModes = React.useMemo(() => (
-        getAvailablePermissionModes(flavor, session.metadata, t, session.permissionMode)
-    ), [flavor, session.metadata, session.permissionMode]);
+    const flavor = composerSession?.metadata?.flavor;
+    const isRig = isRigMetadata(session?.metadata);
+    const {
+        availableModes,
+        permissionMode,
+        availableModels,
+        modelMode,
+        availableEffortLevels,
+        effortLevel,
+    } = useComposerModes(composerSession);
 
-    const permissionMode = React.useMemo<PermissionMode | null>(() => (
-        resolveCurrentOption(availableModes, [
-            session.permissionMode,
-            ...(isRig ? [
-                session.metadata?.currentOperatingModeCode,
-                session.metadata?.permissionMode,
-                session.metadata?.session?.permissionMode,
-            ] : [
-                effectiveAgentDefaults.permissionMode,
-                session.metadata?.currentOperatingModeCode,
-            ]),
-        ])
-    ), [availableModes, session.permissionMode, effectiveAgentDefaults.permissionMode, session.metadata?.currentOperatingModeCode, session.metadata?.permissionMode, session.metadata?.session?.permissionMode, isRig]);
-
-    const modelMode = React.useMemo<ModelMode | null>(() => (
-        resolveCurrentOption(availableModels, [
-            session.modelMode,
-            isRig ? getRigCurrentModelOptionKey(session.metadata) : effectiveAgentDefaults.modelMode,
-            isRig ? undefined : session.metadata?.currentModelCode,
-        ])
-    ), [availableModels, session.modelMode, effectiveAgentDefaults.modelMode, session.metadata, isRig]);
-
-    // Effort level state
-    const modelKey = modelMode?.key ?? 'default';
-    const availableEffortLevels = React.useMemo<EffortLevel[]>(() => (
-        getEffortLevelsForModel(flavor, modelKey, session.metadata)
-    ), [flavor, modelKey, session.metadata]);
-    const effortLevel = React.useMemo<EffortLevel | null>(() => (
-        resolveCurrentOption(availableEffortLevels, [
-            session.effortLevel,
-            isRig ? getRigReasoningSelection(session.metadata, modelKey) : effectiveAgentDefaults.effortLevel,
-        ])
-    ), [availableEffortLevels, session.effortLevel, effectiveAgentDefaults.effortLevel, session.metadata, modelKey, isRig]);
-
-    const sessionStatus = useSessionStatus(session);
-    const sessionUsage = useSessionUsage(sessionId);
+    const sessionStatus = useSessionStatus(sessionOrMissing);
+    const sessionUsage = useSessionUsage(sessionId ?? '');
     const alwaysShowContextSize = useSetting('alwaysShowContextSize');
     const experiments = useSetting('experiments');
-    const { canResume, resumeSession, resumingSession } = useSessionQuickActions(session);
+    const { canResume, resumeSession, resumingSession } = useSessionQuickActions(sessionOrMissing);
     const isDisconnected = !sessionStatus.isConnected;
-    const resumeCommandBlock = getResumeCommandBlock(session);
+    const resumeCommandBlock = session ? getResumeCommandBlock(session) : null;
 
-    // Attachment availability is capability-driven by the active session.
-    const { selectedImages, pickImages, removeImage, clearImages, addImages } = useImagePicker();
-    const canUseAttachments = isRigMetadataV1(session.metadata)
+    // Attachment availability is capability-driven by the active session. There
+    // is nothing to attach to before the chat exists.
+    const { selectedImages, attachImages, removeImage, clearImages, addImages } = useImagePicker();
+    const canUseAttachments = !!session && (isRigMetadataV1(session.metadata)
         ? rigCanUseAttachments(session.metadata)
-        : supportsImageAttachmentsForFlavor(session.metadata?.flavor);
+        : supportsImageAttachmentsForFlavor(session.metadata?.flavor));
     React.useEffect(() => {
         if (!canUseAttachments && selectedImages.length > 0) {
             clearImages();
@@ -810,10 +917,11 @@ export function SessionViewLoaded({
 
     // Function to update permission mode
     const updatePermissionMode = React.useCallback((mode: PermissionMode) => {
-        sessionSetAgentModes(sessionId, { permissionMode: mode.key });
+        if (sessionId) sessionSetAgentModes(sessionId, { permissionMode: mode.key });
     }, [sessionId]);
 
     const updateModelMode = React.useCallback((mode: ModelMode) => {
+        if (!session || !sessionId) return;
         const nextEffortLevels = getEffortLevelsForModel(flavor, mode.key, session.metadata);
         const currentEffortSupported = session.effortLevel
             ? nextEffortLevels.some((level) => level.key === session.effortLevel)
@@ -822,10 +930,10 @@ export function SessionViewLoaded({
             modelMode: mode.key,
             ...(!currentEffortSupported ? { effortLevel: mode.defaultThinkingLevel ?? null } : {}),
         });
-    }, [sessionId, flavor, session.metadata, session.effortLevel]);
+    }, [sessionId, flavor, session]);
 
     const updateEffortLevel = React.useCallback((level: EffortLevel) => {
-        sessionSetAgentModes(sessionId, { effortLevel: level.key });
+        if (sessionId) sessionSetAgentModes(sessionId, { effortLevel: level.key });
     }, [sessionId]);
 
     // Memoize header-dependent styles to prevent re-renders
@@ -841,9 +949,20 @@ export function SessionViewLoaded({
     // handleSend reads the live message via the composer ref, so it doesn't
     // need to re-create on every keystroke.
     const handleSend = React.useCallback(() => {
-        if (sendingSessionsRef.current.has(sessionId)) return;
         const composer = composerHandleRef.current;
+        if (!sessionId) {
+            // Send, on a chat with nothing to send to yet. The text leaves the
+            // composer exactly as it would anywhere else and waits in line; the
+            // handover delivers it the moment there is a chat to deliver to.
+            const text = composer?.getMessage() ?? '';
+            if (!pendingChatId || !text.trim()) return;
+            submitPendingChat(pendingChatId, text);
+            composer?.clearMessage();
+            return;
+        }
+        if (sendingSessionsRef.current.has(sessionId)) return;
         const liveMessage = composer?.getMessage() ?? '';
+        const draftUpdatedAt = storage.getState().sessions[sessionId]?.draftUpdatedAt;
         if (liveMessage.trim() || selectedImages.length > 0) {
             const attachments = selectedImages.length > 0 ? selectedImages : undefined;
             const communicationsToDismiss = [...pendingCommunications];
@@ -861,7 +980,10 @@ export function SessionViewLoaded({
                         awaitDelivery: communicationsToDismiss.length > 0,
                         onAccepted: () => {
                             if (currentSessionIdRef.current === sessionId) {
-                                if (composerHandleRef.current === composer && composer?.getMessage() === liveMessage) {
+                                const latest = storage.getState().sessions[sessionId];
+                                const unchanged = !isRigMetadataV1(latest?.metadata)
+                                    || latest?.draft == null || latest.draftUpdatedAt === draftUpdatedAt;
+                                if (unchanged && composerHandleRef.current === composer && composer?.getMessage() === liveMessage) {
                                     composer.clearMessage();
                                 }
                                 for (const attachment of attachments ?? []) removeImage(attachment.id);
@@ -884,20 +1006,22 @@ export function SessionViewLoaded({
                 }
             })();
         }
-    }, [sessionId, selectedImages, removeImage, pendingCommunications]);
+    }, [sessionId, pendingChatId, selectedImages, removeImage, pendingCommunications]);
 
     const handleAbort = React.useCallback(() => {
         // Stop cancels only the active turn. Permission, model, and effort are
         // session choices and must remain sticky for the next message.
-        sessionAbort(sessionId);
+        if (sessionId) sessionAbort(sessionId);
     }, [sessionId]);
 
     const handleFileViewerPress = React.useCallback(() => {
-        router.push(`/session/${sessionId}/files`);
+        if (sessionId) router.push(`/session/${sessionId}/files`);
     }, [router, sessionId]);
 
+    // Nothing is fetched for a chat that does not exist, so there is nothing to
+    // complete against either.
     const handleAutocompleteSuggestions = React.useCallback((query: string) => (
-        getSuggestions(sessionId, query)
+        sessionId ? getSuggestions(sessionId, query) : Promise.resolve([])
     ), [sessionId]);
 
     const connectionStatus = React.useMemo(() => ({
@@ -908,7 +1032,7 @@ export function SessionViewLoaded({
     }), [sessionStatus.statusText, sessionStatus.statusColor, sessionStatus.statusDotColor, sessionStatus.isPulsing]);
 
     const usageData = React.useMemo(() => {
-        const source = sessionUsage ?? session.latestUsage;
+        const source = sessionUsage ?? session?.latestUsage;
         if (!source) return undefined;
         return {
             inputTokens: source.inputTokens,
@@ -918,14 +1042,14 @@ export function SessionViewLoaded({
             contextSize: source.contextSize,
             contextWindow: source.contextWindow,
         };
-    }, [sessionUsage, session.latestUsage]);
+    }, [sessionUsage, session?.latestUsage]);
     const visibleAgentGoal = React.useMemo(() => (
-        resolveVisibleAgentGoalStatus(session)
+        session ? resolveVisibleAgentGoalStatus(session) : null
     ), [
-        session.agentState?.agentGoalStatus,
-        session.presence,
-        session.metadata?.claudeSessionId,
-        session.metadata?.codexThreadId,
+        session?.agentState?.agentGoalStatus,
+        session?.presence,
+        session?.metadata?.claudeSessionId,
+        session?.metadata?.codexThreadId,
     ]);
     const [goalActionInFlight, setGoalActionInFlight] = React.useState<AgentGoalAction | null>(null);
     const handleGoalAction = React.useCallback(async (action: AgentGoalAction) => {
@@ -938,7 +1062,7 @@ export function SessionViewLoaded({
                 cancelText: t('common.cancel'),
                 confirmText: t('common.save'),
             }),
-            dispatchGoalAction: (nextAction, objective) => sessionGoalAction(sessionId, nextAction, objective),
+            dispatchGoalAction: (nextAction, objective) => sessionGoalAction(sessionId!, nextAction, objective),
             setInFlight: setGoalActionInFlight,
             onError: (error) => console.error('Failed to perform goal action', error),
         });
@@ -946,7 +1070,7 @@ export function SessionViewLoaded({
 
     // Handle microphone button press - memoized to prevent button flashing
     const handleMicrophonePress = React.useCallback(async () => {
-        if (realtimeStatus === 'connecting') {
+        if (realtimeStatus === 'connecting' || !sessionId) {
             return; // Prevent actions during transitions
         }
         if (realtimeStatus === 'disconnected' || realtimeStatus === 'error') {
@@ -998,17 +1122,23 @@ export function SessionViewLoaded({
 
     useSessionVisibility(sessionId, active, embedded, realtimeStatus);
 
-    let content = (
+    let content = session ? (
         <>
             <Deferred>
                 {messages.length > 0 && (
+                    // Keyed on the chat: the messages are the one part of this
+                    // screen that is genuinely a different thing when a
+                    // different chat is in it, and a chat arriving into a
+                    // screen that was standing in for it has none of the
+                    // scroll state the last one left behind.
                     <ChatList
+                        key={sessionId}
                         session={session}
                         active={active}
                         topContentInset={chatListTopContentInset}
                         bottomContentInset={usesFloatingMobileDock ? bottomDockInset : undefined}
                         scrollButtonInset={usesFloatingMobileDock ? scrollButtonInset : undefined}
-                        headerOverlayHeight={safeArea.top + MOBILE_GLASS_HEADER_HEIGHT}
+                        headerOverlayHeight={safeArea.top + MOBILE_GLASS_HEADER_HEIGHT + headerAccessoryHeight}
                         onHeaderBackdropVisibilityChange={onHeaderBackdropVisibilityChange}
                         onBottomDockVisibilityChange={usesFloatingMobileDock
                             ? handleChatBottomVisibilityChange
@@ -1017,8 +1147,10 @@ export function SessionViewLoaded({
                 )}
             </Deferred>
         </>
-    );
-    const placeholder = messages.length === 0 ? (
+    ) : null;
+    const placeholder = !session ? (
+        pending ? <PendingChatPlaceholder pending={pending} /> : null
+    ) : messages.length === 0 ? (
         <>
             {isLoaded ? (
                 <EmptyMessages session={session} />
@@ -1028,29 +1160,34 @@ export function SessionViewLoaded({
         </>
     ) : null;
 
+    // The one composer, and the only part of this screen that survives the
+    // chat's arrival untouched. Everything above it is allowed to be rebuilt;
+    // this is what the user has their hands on.
     const composer = (
         <View onLayout={usesFloatingMobileDock ? handleComposerLayout : undefined}>
             <ChatComposer
                 composerHandleRef={composerHandleRef}
                 placeholder={t('session.inputPlaceholder')}
                 sessionId={sessionId}
+                pendingChatId={pendingChatId}
+                focusOnMount={!!pending && !session}
                 permissionMode={permissionMode}
-                onPermissionModeChange={isRigPermissionSelectionEnabled(session.metadata) ? updatePermissionMode : undefined}
+                onPermissionModeChange={session && isRigPermissionSelectionEnabled(session.metadata) ? updatePermissionMode : undefined}
                 availableModes={availableModes}
                 modelMode={modelMode}
                 availableModels={availableModels}
-                onModelModeChange={isRigModelSelectionEnabled(session.metadata) ? updateModelMode : undefined}
+                onModelModeChange={session && isRigModelSelectionEnabled(session.metadata) ? updateModelMode : undefined}
                 effortLevel={effortLevel}
                 availableEffortLevels={availableEffortLevels}
-                onEffortLevelChange={isRigReasoningSelectionEnabled(session.metadata) ? updateEffortLevel : undefined}
-                metadata={session.metadata}
-                connectionStatus={connectionStatus}
-                blockSend={isRig && session.thinking && session.metadata?.capabilities?.steering !== true}
+                onEffortLevelChange={session && isRigReasoningSelectionEnabled(session.metadata) ? updateEffortLevel : undefined}
+                metadata={composerSession?.metadata ?? null}
+                connectionStatus={session ? connectionStatus : undefined}
+                blockSend={isRig && session?.thinking && session.metadata?.capabilities?.steering !== true}
                 onSend={handleSend}
                 onMicPress={(embedded || isDisconnected) ? undefined : micButtonState.onMicPress}
                 isMicActive={(embedded || isDisconnected) ? false : micButtonState.isMicActive}
-                onAbort={isDisconnected || !rigCanAbort(session.metadata) ? undefined : handleAbort}
-                showAbortButton={rigCanAbort(session.metadata) && (
+                onAbort={!session || isDisconnected || !rigCanAbort(session.metadata) ? undefined : handleAbort}
+                showAbortButton={!!session && rigCanAbort(session.metadata) && (
                     sessionStatus.state === 'thinking'
                     // A pending selection or permission request parks the agent inside
                     // a tool call. Keep Stop reachable on every platform while either
@@ -1059,9 +1196,9 @@ export function SessionViewLoaded({
                     || sessionStatus.state === 'input_required'
                     || (Platform.OS === 'web' && sessionStatus.state === 'waiting')
                 )}
-                onFileViewerPress={experiments && !isTablet && rigCanBrowseFiles(session.metadata) && rigCanReadFiles(session.metadata) ? handleFileViewerPress : undefined}
+                onFileViewerPress={session && experiments && !isTablet && rigCanBrowseFiles(session.metadata) && rigCanReadFiles(session.metadata) ? handleFileViewerPress : undefined}
                 selectedImages={canUseAttachments ? selectedImages : undefined}
-                onPickImages={canUseAttachments ? pickImages : undefined}
+                onPickImages={canUseAttachments ? attachImages : undefined}
                 onRemoveImage={canUseAttachments ? removeImage : undefined}
                 onAddImages={canUseAttachments ? addImages : undefined}
                 autocompletePrefixes={AGENT_INPUT_AUTOCOMPLETE_PREFIXES}
@@ -1070,7 +1207,7 @@ export function SessionViewLoaded({
                 alwaysShowContextSize={alwaysShowContextSize}
                 zenMode={zenMode}
                 showStatusDetails={showBottomDockDetails}
-                sessionStatusUsageLimits={session.agentState?.usageLimits ?? null}
+                sessionStatusUsageLimits={session?.agentState?.usageLimits ?? null}
                 onActionAreaOffsetChange={usesFloatingMobileDock ? handleComposerCardOffsetChange : undefined}
             />
         </View>
@@ -1083,7 +1220,11 @@ export function SessionViewLoaded({
     // Resume button when canResume is true, falls back to the
     // copy-this-command hint when the daemon is incompatible or the machine
     // isn't reachable.
-    const inactiveHint = isDisconnected && !isRig ? (
+    //
+    // A chat that has not been created yet is not a disconnected one: nothing
+    // is resumable, and the hint would be the screen telling the user their
+    // brand new chat had died.
+    const inactiveHint = session && isDisconnected && !isRig ? (
         <AnimatedFade visible={showBottomDockDetails}>
             <CenteredInputWidth horizontalPadding={sessionInputHorizontalPadding}>
                 <InactiveArchivedHint
@@ -1110,13 +1251,15 @@ export function SessionViewLoaded({
                     </CenteredInputWidth>
                 </AnimatedFade>
             )}
+            {sessionId ? (
+                <AnimatedFade visible={showBottomDockDetails}>
+                    <CenteredInputWidth horizontalPadding={sessionInputHorizontalPadding}>
+                        <AgentQuestionBanner sessionId={sessionId} />
+                    </CenteredInputWidth>
+                </AnimatedFade>
+            ) : null}
             <AnimatedFade visible={showBottomDockDetails}>
-                <CenteredInputWidth horizontalPadding={sessionInputHorizontalPadding}>
-                    <AgentQuestionBanner sessionId={sessionId} />
-                </CenteredInputWidth>
-            </AnimatedFade>
-            <AnimatedFade visible={showBottomDockDetails}>
-                <RigActivityBar metadata={session.metadata} />
+                <RigActivityBar metadata={session?.metadata ?? null} />
             </AnimatedFade>
             {composer}
         </>
@@ -1126,7 +1269,7 @@ export function SessionViewLoaded({
     return (
         <>
             {/* CLI Version Warning Overlay - Subtle centered pill */}
-            {shouldShowCliWarning && !(isLandscape && deviceType === 'phone') && (
+            {shouldShowCliWarning && !(isLandscape && !isTablet) && (
                 <Pressable
                     onPress={handleDismissCliWarning}
                     style={{
@@ -1181,7 +1324,7 @@ export function SessionViewLoaded({
 
             {/* Back button for landscape phone mode when header is hidden */}
             {
-                isLandscape && deviceType === 'phone' && (
+                isLandscape && !isTablet && Platform.OS === 'ios' && (
                     <Pressable
                         onPress={() => router.back()}
                         style={{

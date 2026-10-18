@@ -213,6 +213,8 @@ New code is deliberately confined to new directories with a single registration 
 
 Existing `Account` / `Machine` / `Session` tables are not modified — Team Edition and Cloud Agent only add tables.
 
+Latest parent sync: `Infinimesh-ai/happy@e12f264a` (2026-10-17, America/Los_Angeles), including base Happy `1655df29`, CLI 1.2.5 and the native clients in `packages/happy-ios` and `packages/happy-android`. The native clients retain upstream behavior; Team Edition pages, directory browsing, local conversation selection and the optional ISCP transport remain in the Expo app and CLI. The native clients do not include Team Edition or the fork's ISCP integration.
+
 ## Status and known limits
 
 ### Team Edition (`main`)

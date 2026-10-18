@@ -70,6 +70,7 @@ export interface MobileComposerGeometryStyle {
     flexDirection?: 'row';
     alignItems?: 'center';
     justifyContent?: 'center' | 'flex-start' | 'flex-end';
+    overflow?: 'hidden';
     borderRadius?: number;
     paddingLeft?: number;
     paddingRight?: number;
@@ -141,7 +142,9 @@ export function resolveMobileComposerMenuGeometry(
 
     // The permission chip anchors the left of the row next to the add button,
     // so it sizes to its own label and never shrinks: it is always one word,
-    // and a clipped permission is worse than a clipped model name.
+    // and a clipped permission is worse than a clipped model name. It is
+    // padded tight against the add button, because every point it gives up on
+    // either side is a point the model name gets before it has to be cut.
     if (variant === 'permission') {
         return {
             frame: {
@@ -154,7 +157,8 @@ export function resolveMobileComposerMenuGeometry(
                 flexDirection: 'row',
                 alignItems: 'center',
                 justifyContent: 'center',
-                paddingHorizontal: 10,
+                paddingLeft: 4,
+                paddingRight: 8,
             },
         };
     }
@@ -199,7 +203,10 @@ export function resolveMobileComposerMenuGeometry(
             alignItems: 'center',
             justifyContent: 'flex-start',
             paddingLeft: 4,
-            paddingRight: 12,
+            // Sits close to the send button rather than held off it, for the
+            // same reason the permission chip hugs the add button: the slack
+            // belongs to the model name in the middle.
+            paddingRight: 6,
             gap: 4,
         },
     };
@@ -213,6 +220,30 @@ export function resolveMobileComposerActionRowGeometry(): MobileComposerGeometry
         justifyContent: 'flex-start',
         gap: 2,
         paddingHorizontal: 0,
+    };
+}
+
+/**
+ * The box between the add button and send, holding every chip.
+ *
+ *     [+] [ permission ......... model · effort ] [send]
+ *
+ * The row has three children and only this one can flex, so it is handed
+ * exactly the width left after the two fixed buttons; send is its sibling,
+ * not the chips', and no label can reach it. Whatever is inside has to fit
+ * here — the model name is the one thing that gives way — and anything that
+ * would not is cut at this edge rather than drawn over the button.
+ */
+export function resolveMobileComposerMiddleGeometry(): MobileComposerGeometryStyle {
+    return {
+        flex: 1,
+        minWidth: 0,
+        height: MOBILE_COMPOSER_METRICS.actionRowHeight,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+        overflow: 'hidden',
+        gap: 2,
     };
 }
 

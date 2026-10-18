@@ -67,6 +67,7 @@ export const zhHans: TranslationStructure = {
         fileViewer: '文件查看器',
         loading: '加载中...',
         retry: '重试',
+        loadMore: '加载更多',
         delete: '删除',
         optional: '可选的',
     },
@@ -139,6 +140,7 @@ export const zhHans: TranslationStructure = {
         termsOfService: '服务条款',
         eula: '最终用户许可协议',
         supportUs: '支持我们',
+        supportUnavailable: '目前无法购买，请稍后重试。',
         supportUsSubtitlePro: '感谢您的支持！',
         supportUsSubtitle: '支持项目开发',
         scanQrCodeToAuthenticate: '扫描二维码进行认证',
@@ -217,6 +219,7 @@ export const zhHans: TranslationStructure = {
         flatList: '平铺列表',
         groupByProject: '按项目分组',
         appearanceSettings: '外观设置',
+        worktreeTabs: ({ count }: { count: number }) => `${count} 个标签页`,
     },
 
     settingsFeatures: {
@@ -332,6 +335,9 @@ export const zhHans: TranslationStructure = {
         forkErrorMissingMetadata: '缺少分叉所需的会话元数据。',
         forkErrorGeneric: '分叉会话失败。',
         forkClaudeOnly: '目前仅支持 Claude 会话的分叉。',
+        archiveAction: '归档',
+        startingChat: '正在启动新对话…',
+        actionsTitle: '会话',
     },
 
     commandPalette: {
@@ -339,6 +345,9 @@ export const zhHans: TranslationStructure = {
     },
 
     server: {
+        title: en.server.title,
+        serverUrlLabel: en.server.serverUrlLabel,
+        selfHostFooter: en.server.selfHostFooter,
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: '服务器配置',
         enterServerUrl: '请输入服务器 URL',
@@ -556,6 +565,9 @@ export const zhHans: TranslationStructure = {
         hideArchived: '隐藏已归档',
         newSession: '新建会话',
         projects: "项目",
+        bots: '机器人',
+        showAllWorkspaces: ({ count }: { count: number }) => `显示全部 ${count} 个工作区`,
+        showFewerWorkspaces: '收起',
     },
 
     zen: {
@@ -721,7 +733,7 @@ export const zhHans: TranslationStructure = {
         },
         // Bring your own agent
         byoTitle: '使用自己的代理',
-        byoDescription: '使用您自己的 ElevenLabs 代理代替 Happy 默认代理。无需订阅 — 直接使用您自己的 ElevenLabs 账户连接。您的代理必须定义两个客户端工具：messageClaudeCode（向编码代理发送文本）和 processPermissionRequest（允许或拒绝工具使用）。通过 {{initialConversationContext}} 动态变量接收会话上下文。',
+        byoDescription: '使用您自己的 ElevenLabs 代理代替 Happy 默认代理。无需订阅 — 直接使用您自己的 ElevenLabs 账户连接。您的代理必须定义两个客户端工具：sendMessageToSession（向编码代理发送文本）和 processPermissionRequest（允许或拒绝工具使用）。通过 {{initialConversationContext}} 动态变量接收会话上下文。',
         customAgentId: 'ElevenLabs Agent ID',
         customAgentIdNotSet: '未配置',
         customAgentIdDescription: '输入您的 ElevenLabs Agent ID。留空则使用 Happy 默认代理。',
@@ -729,7 +741,7 @@ export const zhHans: TranslationStructure = {
         bypassToken: '直接连接',
         bypassTokenSubtitle: '跳过 Happy 服务器，直接连接到 ElevenLabs',
         promptGuideTitle: '代理提示词指南',
-        promptGuideDescription: '您的 ElevenLabs 代理需要：\n\n• 工具：messageClaudeCode — 参数：message (string)。向活跃的编码会话发送消息。\n• 工具：processPermissionRequest — 参数：decision ("allow" 或 "deny")。批准或拒绝待处理的工具权限。\n• 动态变量：{{initialConversationContext}} — 启动时接收会话历史和上下文。\n\n代理充当用户和编码代理之间的语音桥梁。它应该简洁，仅在被呼叫时回应，并在编码代理完成工作时进行报告。',
+        promptGuideDescription: '您的 ElevenLabs 代理需要：\n\n• 工具：sendMessageToSession — 参数：sessionId (string), message (string)。向指定的编码会话发送消息。\n• 工具：processPermissionRequest — 参数：requestId (string), decision ("allow" 或 "deny")。批准或拒绝待处理的工具权限。\n• 动态变量：{{initialConversationContext}} — 启动时接收会话历史和上下文。\n\n代理充当用户和编码代理之间的语音桥梁。它应该简洁，仅在被呼叫时回应，并在编码代理完成工作时进行报告。',
         usageTitle: '使用量（过去 30 天）',
         usageFooter: '过去 30 天使用的语音时间。免费方案: 20 分钟。订阅用户: 5 小时。每月最多 100 次对话。',
         usageLabel: '语音时间',
@@ -745,7 +757,7 @@ export const zhHans: TranslationStructure = {
         status: '状态',
         statusActive: '活跃',
         statusNotAuthenticated: '未认证',
-        anonymousId: '匿名 ID',
+        anonymousId: '分析 ID',
         publicId: '公共 ID',
         notAvailable: '不可用',
         linkNewDevice: '链接新设备',
@@ -764,10 +776,10 @@ export const zhHans: TranslationStructure = {
         secretKeyCopied: '密钥已复制到剪贴板。请将其保存在安全的地方！',
         secretKeyCopyFailed: '复制密钥失败',
         privacy: '隐私',
-        privacyDescription: '通过分享匿名使用数据来帮助改进应用。不会收集个人信息。',
+        privacyDescription: '分享使用数据（例如您使用的功能和设备类型），帮助我们改进 Happy。绝不包括您的消息或代码。',
         analytics: '分析',
         analyticsDisabled: '不分享数据',
-        analyticsEnabled: '分享匿名使用数据',
+        analyticsEnabled: '分享使用数据',
         dangerZone: '危险区域',
         logout: '登出',
         logoutSubtitle: '登出并清除本地数据',
@@ -1070,6 +1082,14 @@ export const zhHans: TranslationStructure = {
         agentAuthSwitchTo: ({ mode }: { mode: string }) => `Switch to ${mode}`,
     },
 
+    onboarding: {
+        ...en.onboarding,
+    },
+
+    troubleshoot: {
+        ...en.troubleshoot,
+    },
+
     welcome: {
         // Main welcome screen for unauthenticated users
         title: 'Codex 和 Claude Code 移动客户端',
@@ -1281,6 +1301,11 @@ export const zhHans: TranslationStructure = {
             : `${count} 张图片上传失败，未发送。`,
         notSupportedTitle: '不支持图片',
         notSupportedMessage: '此代理不支持图片附件。图片未发送。',
+        attachTitle: '添加图片',
+        pasteFromClipboard: '从剪贴板粘贴',
+        chooseFromLibrary: '照片图库',
+        nothingToPasteTitle: '没有可粘贴的内容',
+        nothingToPasteMessage: '请先复制一张图片，然后重试。',
     },
 
     feed: {

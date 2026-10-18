@@ -33,7 +33,7 @@ import { KeyboardAvoidingView, KeyboardStickyView } from 'react-native-keyboard-
 import Constants from 'expo-constants';
 import { useHeaderHeight } from '@/utils/responsive';
 import { t } from '@/text';
-import { useAllMachines, useLocalSetting, useSessions, useSetting, storage } from '@/sync/storage';
+import { useAllMachines, useLocalSetting, useProjects, useSessions, useSetting, storage } from '@/sync/storage';
 import type { NewSessionAgentType } from '@/sync/persistence';
 import { sync } from '@/sync/sync';
 import { isMachineOnline } from '@/utils/machineUtils';
@@ -58,13 +58,14 @@ import { useShallow } from 'zustand/react/shallow';
 import type { MultiTextInputHandle } from '@/components/MultiTextInput';
 import { Modal } from '@/modal';
 import type { Session } from '@/sync/storageTypes';
-import { collectSessionPlaces, collectSessionWorkspaces } from '@/sync/agentSessionPlaces';
+import { collectSessionPlaces, collectSessionWorkspaces, projectPlaceKey } from '@/sync/agentSessionPlaces';
 import {
     collectMachineChoices,
     findMachineChoice,
     machineChoiceAgentAvailable,
     resolveAgentMachine,
     resolveChoiceAgent,
+    resolveNewSessionAgent,
     resolveWorktreeCreationMachine,
 } from '@/sync/machineChoices';
 import {
@@ -86,7 +87,7 @@ import {
     cancelPendingPickerOpenState,
     resolvePickerToggleAction,
 } from '@/utils/newSessionPickerInteraction';
-import { getCodeAgentDefaults, resolveAgentDefaultConfig } from '@/sync/agentDefaults';
+import { getCodeAgentDefaults, resolveAgentDefaultConfig, retireModelMode } from '@/sync/agentDefaults';
 import { delay } from '@/utils/time';
 import {
     buildRigSpawnConfiguration,
@@ -133,7 +134,18 @@ const ALL_AGENTS: { key: AgentKey; label: string }[] = [
     { key: 'rig', label: 'happy' },
 ];
 
-type PickerItem = { key: string; label: string; subtitle?: string; dimmed?: boolean; section?: string };
+type PickerItem = {
+    key: string;
+    label: string;
+    subtitle?: string;
+    dimmed?: boolean;
+    section?: string;
+    /**
+     * Set for a project the path picker can only offer by identity, because nothing outside Happy
+     * Agent's catalog knows its folder. Such a row is chosen, never typed.
+     */
+    projectId?: string;
+};
 
 // Agents whose discovered local conversations can be resumed on spawn,
 // mapped to the spawn-happy-session option carrying the resume id.
@@ -532,20 +544,28 @@ function PathPickerContent({
     title,
     items,
     value,
+    selectedProjectKey,
     homeDir,
     machineId,
     browseEnabled,
     onChangeValue,
+    onSelectProject,
     onDone,
     embedded = false,
 }: {
     title: string;
     items: PickerItem[];
     value: string | null;
+    /**
+     * The row that reads as chosen when the draft names a project rather than a directory. Null
+     * while it names a directory, which the field itself already shows.
+     */
+    selectedProjectKey: string | null;
     homeDir?: string;
     machineId?: string | null;
     browseEnabled?: boolean;
     onChangeValue: (value: string) => void;
+    onSelectProject: (projectId: string) => void;
     onDone?: () => void;
     embedded?: boolean;
 }) {
@@ -641,6 +661,12 @@ function PathPickerContent({
     }, [currentValue, homeDir, items]);
 
     const handleSuggestionPress = React.useCallback((item: PickerItem) => {
+        if (item.projectId) {
+            // There is no path to put in the field: the project is picked by identity, and the
+            // field goes back to standing empty for whatever directory is typed next.
+            onSelectProject(item.projectId);
+            return;
+        }
         const nextValue = item.label;
         const nextSelection = { start: nextValue.length, end: nextValue.length };
 
@@ -650,8 +676,11 @@ function PathPickerContent({
         setTimeout(() => {
             inputRef.current?.focus();
         }, 0);
-    }, [onChangeValue]);
+    }, [onChangeValue, onSelectProject]);
 
+    const selectedProjectName = selectedProjectKey
+        ? items.find((item) => item.key === selectedProjectKey)?.label ?? null
+        : null;
     const isCustomPath = currentValue.trim().length > 0 && matchedItemKey === null;
     const handleSelectionChange = React.useCallback((event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
         setSelection(event.nativeEvent.selection);
@@ -729,7 +758,11 @@ function PathPickerContent({
                 </View>
             </View>
 
-            {isCustomPath && (
+            {selectedProjectName ? (
+                <Text style={[pickerStyles.pathMetaText, { color: theme.colors.textSecondary }]}>
+                    using project {selectedProjectName}
+                </Text>
+            ) : isCustomPath && (
                 <Text style={[pickerStyles.pathMetaText, { color: theme.colors.textSecondary }]}>
                     using custom path above
                 </Text>
@@ -745,7 +778,9 @@ function PathPickerContent({
                 </Text>
 
                 {items.map((item) => {
-                    const isSelected = item.key === matchedItemKey;
+                    const isSelected = selectedProjectKey
+                        ? item.key === selectedProjectKey
+                        : item.key === matchedItemKey;
 
                     return (
                         <BubblePressable
@@ -897,6 +932,8 @@ function NewSessionScreen() {
     // Real data sources
     const allMachines = useAllMachines({ includeOffline: true });
     const sessions = useSessions();
+    // Names projects the session list cannot: the catalog keeps them whether or not a chat is open.
+    const projects = useProjects();
     const agentInputEnterToSend = useSetting('agentInputEnterToSend');
     const agentDefaultOverrides = useSetting('agentDefaultOverrides');
     const fileDiffsSidebarEnabled = useSetting('fileDiffsSidebar');
@@ -917,8 +954,12 @@ function NewSessionScreen() {
         renameMachineId: s.renameMachineId,
         selectedPath: s.selectedPath,
         setPath: s.setPath,
+        selectedProjectId: s.selectedProjectId,
+        setProjectId: s.setProjectId,
         agentType: s.agentType,
+        pickedAgentType: s.pickedAgentType,
         setAgentType: s.setAgentType,
+        pickAgentType: s.pickAgentType,
         permissionMode: s.permissionMode,
         setPermissionMode: s.setPermissionMode,
         modelMode: s.modelMode,
@@ -937,6 +978,8 @@ function NewSessionScreen() {
     const renameSelectedMachineId = draft.renameMachineId;
     const selectedPath = draft.selectedPath;
     const setSelectedPath = draft.setPath;
+    const draftProjectId = draft.selectedProjectId;
+    const setDraftProjectId = draft.setProjectId;
     const [worktreeKey, setWorktreeKey] = React.useState<string>(
         draft.worktreeKey ?? (draft.sessionType === 'worktree' ? '__new__' : '__none__')
     );
@@ -976,7 +1019,7 @@ function NewSessionScreen() {
         () => findMachineChoice(machineChoices, selectedMachineId),
         [machineChoices, selectedMachineId],
     );
-    const selectedAgent = resolveChoiceAgent(selectedChoice, draftAgent);
+    const selectedAgent = resolveNewSessionAgent(selectedChoice, draftAgent, draft.pickedAgentType);
     const selectedMachine = React.useMemo(
         () => resolveAgentMachine(selectedChoice, selectedAgent),
         [selectedAgent, selectedChoice],
@@ -1053,9 +1096,20 @@ function NewSessionScreen() {
         [placeMachineIds, selectedPath, sessionList],
     );
     const selectedProjectId = React.useMemo(
-        () => places.find((place) => place.path === selectedPath)?.projectId ?? null,
-        [places, selectedPath],
+        () => draftProjectId
+            ?? places.find((place) => place.path === selectedPath)?.projectId
+            ?? null,
+        [draftProjectId, places, selectedPath],
     );
+    // A project the draft names is addressed by whatever row stands for it: its own directory once
+    // one is known, and the project itself until then.
+    const draftProjectPlace = React.useMemo(
+        () => (draftProjectId ? places.find((place) => place.projectId === draftProjectId) ?? null : null),
+        [draftProjectId, places],
+    );
+    const selectedProjectKey = draftProjectId
+        ? draftProjectPlace?.key ?? projectPlaceKey(draftProjectId)
+        : null;
     const agentWorkspaces = React.useMemo(
         () => collectSessionWorkspaces({
             machineIds: placeMachineIds,
@@ -1065,25 +1119,41 @@ function NewSessionScreen() {
         [placeMachineIds, selectedProjectId, sessionList],
     );
     const pathItems = React.useMemo<PickerItem[]>(() => {
-        return places.map((place) => ({
-            key: place.key,
-            label: place.projectId
-                ? place.name
-                : formatPathRelativeToHome(place.path, selectedHomeDir),
-            subtitle: place.projectId
-                ? formatPathRelativeToHome(place.path, selectedHomeDir)
-                : undefined,
-        }));
-    }, [places, selectedHomeDir]);
+        const items = places.map((place): PickerItem => {
+            if (place.path === null) {
+                // A project worked on only inside its workspaces: Happy Agent's catalog owns the
+                // folder, so the row offers the project itself rather than a path to type.
+                return { key: place.key, label: place.name, projectId: place.projectId };
+            }
+            const relative = formatPathRelativeToHome(place.path, selectedHomeDir);
+            return {
+                key: place.key,
+                label: place.projectId ? place.name : relative,
+                subtitle: place.projectId ? relative : undefined,
+            };
+        });
+        // Archiving a project's last chat takes it out of the list while leaving it in the catalog,
+        // where it can still be started in. The draft's own project therefore keeps its row, named
+        // by the catalog rather than by a chat.
+        if (draftProjectId && !draftProjectPlace) {
+            items.push({
+                key: projectPlaceKey(draftProjectId),
+                label: projects[draftProjectId]?.name ?? 'Project',
+                projectId: draftProjectId,
+            });
+        }
+        return items;
+    }, [draftProjectId, draftProjectPlace, places, projects, selectedHomeDir]);
 
-    // Auto-select first path when machine changes
+    // Auto-select first path when machine changes. A draft that names a project has no path by
+    // design, and filling one in here would quietly start the session somewhere else.
     React.useEffect(() => {
-        if (!selectedChoice || selectedPath !== null) {
+        if (!selectedChoice || selectedPath !== null || draftProjectId !== null) {
             return;
         }
 
-        setSelectedPath(pathItems[0]?.key ?? '~');
-    }, [pathItems, selectedChoice, selectedPath, setSelectedPath]);
+        setSelectedPath(pathItems.find((item) => !item.projectId)?.key ?? '~');
+    }, [draftProjectId, pathItems, selectedChoice, selectedPath, setSelectedPath]);
 
     const resolvedSelectedPath = React.useMemo(() => {
         return normalizePathForComparison(selectedPath, selectedHomeDir);
@@ -1283,7 +1353,7 @@ function NewSessionScreen() {
         ]));
 
         setModelIndex(findPreferredModeIndex(modelModes, [
-            draft.modelMode,
+            retireModelMode(selectedAgent, draft.modelMode),
             effectiveAgentDefaults.modelMode,
         ]));
 
@@ -1331,6 +1401,16 @@ function NewSessionScreen() {
         cancelPendingPickerOpen();
         setActivePicker(null);
     }, [cancelPendingPickerOpen]);
+
+    // Picking a project rather than a directory settles the question the picker asks, so it closes
+    // behind the choice, and the harness moves to the only one that can resolve that project.
+    const selectProjectPlace = React.useCallback((projectId: string) => {
+        setDraftProjectId(projectId);
+        if (availableAgents.some((candidate) => candidate.key === 'rig')) {
+            draft.pickAgentType('rig');
+        }
+        closePicker();
+    }, [availableAgents, closePicker, draft.pickAgentType, setDraftProjectId]);
 
     const toggleConfig = React.useCallback(() => {
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -1443,9 +1523,11 @@ function NewSessionScreen() {
 
     // Display values
     const machineName = selectedChoice?.name ?? 'Select machine';
-    const pathName = trimPathInput(selectedPath)
-        ? formatPathRelativeToHome(trimPathInput(selectedPath), selectedHomeDir)
-        : '~';
+    const pathName = draftProjectId
+        ? pathItems.find((item) => item.projectId === draftProjectId)?.label ?? 'Project'
+        : trimPathInput(selectedPath)
+            ? formatPathRelativeToHome(trimPathInput(selectedPath), selectedHomeDir)
+            : '~';
     const worktreeLabel = worktreeKey === '__none__'
         ? picksWorkspaces ? 'Main' : 'no worktree'
         : worktreeKey === '__new__'
@@ -1555,7 +1637,7 @@ function NewSessionScreen() {
                 break;
             case 'agent':
                 if (availableAgents.some((candidate) => candidate.key === key)) {
-                    setSelectedAgent(key as NewSessionAgentType);
+                    draft.pickAgentType(key as NewSessionAgentType);
                 }
                 break;
             case 'model': {
@@ -1592,13 +1674,13 @@ function NewSessionScreen() {
         applyResumeSelection,
         availableAgents,
         closePicker,
+        draft.pickAgentType,
         draft.setEffortLevel,
         draft.setModelMode,
         draft.setPermissionMode,
         effortLevels,
         modelModes,
         permissionModes,
-        setSelectedAgent,
         setSelectedMachineId,
     ]);
 
@@ -1683,6 +1765,15 @@ function NewSessionScreen() {
             Modal.alert(t('common.error'), 'This machine cannot start Happy agent sessions');
             return;
         }
+        if (draftProjectId && !spawnRigCreation) {
+            // The draft names a project with no path of its own, and only Happy Agent can turn that
+            // into a directory. Starting anyway would open a session somewhere else entirely.
+            Modal.alert(
+                t('common.error'),
+                'Only Happy Agent knows where this project is, so no other harness can open it. Switch the harness back to Happy Agent, or pick the project’s folder.',
+            );
+            return;
+        }
         const agentSupportsWorktree = spawnRigCreation?.supportsWorktrees
             ?? (agentType === 'rig' ? false : getSupportsWorktree(agentType));
         const requestedWorktree = canPickWorktree ? worktreeKey : '__none__';
@@ -1730,7 +1821,9 @@ function NewSessionScreen() {
             const clientRequestId = resolveSpawnRequestId(buildSpawnRequestSignature({
                 machineId: machine.id,
                 agent: agentType,
-                directory: pathToUse,
+                // Catalog projects all share the same empty path, so the project is what tells two
+                // of them apart; without it, starting in one would be deduped into the other.
+                place: draftProjectId ? projectPlaceKey(draftProjectId) : pathToUse,
                 worktree: worktreeSelection,
                 modelKey: currentModelKey,
                 permissionMode: permissionKey,
@@ -1907,7 +2000,7 @@ function NewSessionScreen() {
             if (sendingRef.current === controller) sendingRef.current = null;
             if (isMountedRef.current) setIsSpawning(false);
         }
-    }, [agentWorkspaces, allMachines, canPickWorktree, currentEffort?.key, currentModelKey, currentPermission?.key, effectiveAgentDefaults.effortLevel, effectiveAgentDefaults.modelMode, effectiveAgentDefaults.permissionMode, navigateToSession, picksWorkspaces, resumeSession, router, selectedAgent, selectedMachineId, selectedPath, selectedProjectId, worktreeKey]);
+    }, [agentWorkspaces, allMachines, canPickWorktree, currentEffort?.key, currentModelKey, currentPermission?.key, draftProjectId, effectiveAgentDefaults.effortLevel, effectiveAgentDefaults.modelMode, effectiveAgentDefaults.permissionMode, navigateToSession, picksWorkspaces, resumeSession, router, selectedAgent, selectedMachineId, selectedPath, selectedProjectId, worktreeKey]);
 
     const canSend = selectedMachineId && selectedMachine && isMachineOnline(selectedMachine) && !isSpawning;
     React.useEffect(() => {
@@ -1975,10 +2068,12 @@ function NewSessionScreen() {
                 title="Project"
                 items={pathItems}
                 value={selectedPath}
+                selectedProjectKey={selectedProjectKey}
                 homeDir={selectedHomeDir}
                 machineId={selectedMachineId}
                 browseEnabled={!isOffline}
                 onChangeValue={setSelectedPath}
+                onSelectProject={selectProjectPlace}
                 onDone={closePicker}
                 embedded={sidebarLayout.showSidebar}
             />
@@ -2007,6 +2102,8 @@ function NewSessionScreen() {
         isOffline,
         pathItems,
         pickerData,
+        selectProjectPlace,
+        selectedProjectKey,
         selectedHomeDir,
         selectedMachineId,
         selectedPath,
@@ -2039,10 +2136,12 @@ function NewSessionScreen() {
             title="Project"
             items={pathItems}
             value={selectedPath}
+            selectedProjectKey={selectedProjectKey}
             homeDir={selectedHomeDir}
             machineId={selectedMachineId}
             browseEnabled={!isOffline}
             onChangeValue={setSelectedPath}
+            onSelectProject={selectProjectPlace}
             onDone={closePicker}
             embedded
         />
@@ -2699,10 +2798,12 @@ function NewSessionScreen() {
                             title="Project"
                             items={pathItems}
                             value={selectedPath}
+                            selectedProjectKey={selectedProjectKey}
                             homeDir={selectedHomeDir}
                             machineId={selectedMachineId}
                             browseEnabled={!isOffline}
                             onChangeValue={setSelectedPath}
+                            onSelectProject={selectProjectPlace}
                             onDone={closePicker}
                         />
                     ) : pickerData ? (

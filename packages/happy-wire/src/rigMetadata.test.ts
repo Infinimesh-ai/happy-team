@@ -11,13 +11,24 @@ describe('Rig wire contract', () => {
     expect(RigBotSchema.parse({ ...bot, future: true })).toHaveProperty('future', true);
   });
 
+  it('carries the system bot key, null for user bots and absent from older Happy Agents', () => {
+    const bot = { id: 'bot-1', name: 'Chief of Staff', username: 'chief', workspaceId: 'workspace-1', orderKey: '1' };
+    expect(RigBotSchema.parse({ ...bot, systemKey: 'chief_of_staff' }).systemKey).toBe('chief_of_staff');
+    expect(RigBotSchema.parse({ ...bot, systemKey: null }).systemKey).toBeNull();
+    expect(RigBotSchema.parse(bot)).not.toHaveProperty('systemKey');
+  });
+
   it('accepts native Rig message selection codes and provider qualification', () => {
     expect(MessageMetaSchema.parse({
+      expectsAcceptance: true,
+      queuedWhileBusy: true,
       permissionMode: 'workspace_write',
       model: 'shared-model',
       modelProviderId: 'codex',
       effort: 'high',
     })).toEqual({
+      expectsAcceptance: true,
+      queuedWhileBusy: true,
       permissionMode: 'workspace_write',
       model: 'shared-model',
       modelProviderId: 'codex',
@@ -71,5 +82,52 @@ describe('Rig wire contract', () => {
       ...parsed,
       operatingModes: [{ code: 'future', value: 'Future', description: 'Future mode', kind: 'future-kind' }],
     }).success).toBe(true);
+  });
+
+  it('parses composer drafts and timestamped clears without obsolete selection fields', () => {
+    const lastMode = {
+      effort: 'high', modelId: 'm', permissionMode: 'auto', providerId: 'codex', serviceTier: null,
+    };
+    const payload = {
+      capabilities: {
+        abort: true,
+        attachments: { enabled: true, maxBytes: 10485760, mediaTypes: ['image/*'] },
+        files: { browse: false, read: false, search: false, write: false },
+        modelSelection: true,
+        permissionModeSelection: true,
+        reasoningSelection: true,
+        resume: false,
+        rpcMethods: ['abort'],
+        shell: false,
+        steering: true,
+      },
+      client: { id: 'rig', name: 'Happy Agent', version: '0.0.40' },
+      draft: { ...lastMode, text: 'Finish this on the phone' },
+      draftUpdatedAt: 1_758_262_000_000,
+      lastMode,
+      models: [],
+      operatingModes: [],
+      providers: [],
+      rigMetadataVersion: 1,
+      session: { modelLocked: false, status: 'idle' },
+      tools: [],
+    };
+    const parsed = RigMetadataV1Schema.parse(payload);
+    expect(parsed.draft).toMatchObject({ text: 'Finish this on the phone', serviceTier: null });
+    expect(parsed.lastMode).toMatchObject(lastMode);
+
+    // A cleared draft keeps its timestamp.
+    const cleared = RigMetadataV1Schema.parse({
+      ...payload, draft: null, draftUpdatedAt: 1_758_262_000_001, lastMode: null,
+    });
+    expect(cleared.draft).toBeNull();
+    expect(cleared.draftUpdatedAt).toBe(1_758_262_000_001);
+
+    // Task depth is optional, and a bad value drops only itself.
+    expect(RigMetadataV1Schema.parse({ ...payload, depth: 2 }).depth).toBe(2);
+    expect(parsed.depth).toBeUndefined();
+    for (const depth of [-1, 1.5, '2']) {
+      expect(RigMetadataV1Schema.parse({ ...payload, depth }).depth).toBeUndefined();
+    }
   });
 });

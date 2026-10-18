@@ -76,6 +76,7 @@ export const ru: TranslationStructure = {
         fileViewer: 'Просмотр файла',
         loading: 'Загрузка...',
         retry: 'Повторить',
+        loadMore: 'Загрузить ещё',
         delete: 'Удалить',
         optional: 'необязательно',
     },
@@ -123,6 +124,7 @@ export const ru: TranslationStructure = {
         termsOfService: 'Условия использования',
         eula: 'EULA',
         supportUs: 'Поддержите нас',
+        supportUnavailable: 'Покупки сейчас недоступны. Попробуйте позже.',
         supportUsSubtitlePro: 'Спасибо за вашу поддержку!',
         supportUsSubtitle: 'Поддержать разработку проекта',
         scanQrCodeToAuthenticate: 'Отсканируйте QR-код для авторизации',
@@ -201,6 +203,7 @@ export const ru: TranslationStructure = {
         flatList: 'Общий список',
         groupByProject: 'Группировать по проектам',
         appearanceSettings: 'Настройки внешнего вида',
+        worktreeTabs: ({ count }: { count: number }) => `${count} ${plural({ count, one: 'вкладка', few: 'вкладки', many: 'вкладок' })}`,
     },
 
     settingsFeatures: {
@@ -293,6 +296,9 @@ export const ru: TranslationStructure = {
     },
 
     server: {
+        title: en.server.title,
+        serverUrlLabel: en.server.serverUrlLabel,
+        selfHostFooter: en.server.selfHostFooter,
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: 'Настройка сервера',
         enterServerUrl: 'Пожалуйста, введите URL сервера',
@@ -458,6 +464,9 @@ export const ru: TranslationStructure = {
         forkErrorMissingMetadata: 'Не хватает метаданных сессии для форка.',
         forkErrorGeneric: 'Не удалось форкнуть сессию.',
         forkClaudeOnly: 'Форк сейчас поддерживается только для Claude-сессий.',
+        archiveAction: 'Архивировать',
+        startingChat: 'Запускаем новый чат…',
+        actionsTitle: 'Сессия',
     },
 
     commandPalette: {
@@ -571,6 +580,9 @@ export const ru: TranslationStructure = {
         hideArchived: 'Скрыть архив',
         newSession: 'Новая сессия',
         projects: "Проекты",
+        bots: 'Боты',
+        showAllWorkspaces: ({ count }: { count: number }) => `Показать все пространства (${count})`,
+        showFewerWorkspaces: 'Показать меньше',
     },
 
     zen: {
@@ -738,7 +750,7 @@ export const ru: TranslationStructure = {
         },
         // Bring your own agent
         byoTitle: 'Используйте своего агента',
-        byoDescription: 'Используйте собственного агента ElevenLabs вместо стандартного Happy. Подписка не требуется — подключайтесь напрямую через свой аккаунт ElevenLabs. Ваш агент должен определить два клиентских инструмента: messageClaudeCode (отправляет текст агенту кодирования) и processPermissionRequest (разрешает или запрещает использование инструментов). Контекст сессии передаётся через динамическую переменную {{initialConversationContext}}.',
+        byoDescription: 'Используйте собственного агента ElevenLabs вместо стандартного Happy. Подписка не требуется — подключайтесь напрямую через свой аккаунт ElevenLabs. Ваш агент должен определить два клиентских инструмента: sendMessageToSession (отправляет текст агенту кодирования) и processPermissionRequest (разрешает или запрещает использование инструментов). Контекст сессии передаётся через динамическую переменную {{initialConversationContext}}.',
         customAgentId: 'ElevenLabs Agent ID',
         customAgentIdNotSet: 'Не настроено',
         customAgentIdDescription: 'Введите ваш ElevenLabs Agent ID. Оставьте пустым, чтобы использовать стандартный Happy.',
@@ -746,7 +758,7 @@ export const ru: TranslationStructure = {
         bypassToken: 'Прямое подключение',
         bypassTokenSubtitle: 'Пропустить сервер Happy, подключиться напрямую к ElevenLabs',
         promptGuideTitle: 'Руководство по промптам агента',
-        promptGuideDescription: 'Вашему агенту ElevenLabs необходимы:\n\n• Инструмент: messageClaudeCode — параметр: message (string). Отправляет сообщение в активную сессию кодирования.\n• Инструмент: processPermissionRequest — параметр: decision ("allow" или "deny"). Одобряет или отклоняет ожидающее разрешение на использование инструмента.\n• Динамическая переменная: {{initialConversationContext}} — получает историю и контекст сессии при запуске.\n\nАгент выступает голосовым мостом между пользователем и агентами кодирования. Он должен быть кратким, отвечать только при обращении и сообщать, когда агент кодирования завершает работу.',
+        promptGuideDescription: 'Вашему агенту ElevenLabs необходимы:\n\n• Инструмент: sendMessageToSession — параметры: sessionId (string), message (string). Отправляет сообщение в указанную сессию кодирования.\n• Инструмент: processPermissionRequest — параметры: requestId (string), decision ("allow" или "deny"). Одобряет или отклоняет ожидающее разрешение на использование инструмента.\n• Динамическая переменная: {{initialConversationContext}} — получает историю и контекст сессии при запуске.\n\nАгент выступает голосовым мостом между пользователем и агентами кодирования. Он должен быть кратким, отвечать только при обращении и сообщать, когда агент кодирования завершает работу.',
         usageTitle: 'Использование (последние 30 дней)',
         usageFooter: 'Время голосового общения за последние 30 дней. Бесплатный тариф: 20 мин. С подпиской: 5 часов. Макс. 100 разговоров в месяц.',
         usageLabel: 'Голосовое время',
@@ -762,7 +774,7 @@ export const ru: TranslationStructure = {
         status: 'Статус',
         statusActive: 'Активный',
         statusNotAuthenticated: 'Не авторизован',
-        anonymousId: 'Анонимный ID',
+        anonymousId: 'ID аналитики',
         publicId: 'Публичный ID',
         notAvailable: 'Недоступно',
         linkNewDevice: 'Привязать новое устройство',
@@ -781,10 +793,10 @@ export const ru: TranslationStructure = {
         secretKeyCopied: 'Секретный ключ скопирован в буфер обмена. Сохраните его в безопасном месте!',
         secretKeyCopyFailed: 'Не удалось скопировать секретный ключ',
         privacy: 'Конфиденциальность',
-        privacyDescription: 'Помогите улучшить приложение, поделившись анонимными данными об использовании. Никакая личная информация не собирается.',
+        privacyDescription: 'Передаёт данные об использовании, например какие функции вы используете и тип вашего устройства, чтобы помочь нам улучшить Happy. Никогда — ваши сообщения или код.',
         analytics: 'Аналитика',
         analyticsDisabled: 'Данные не передаются',
-        analyticsEnabled: 'Анонимные данные об использовании передаются',
+        analyticsEnabled: 'Данные об использовании передаются',
         dangerZone: 'Опасная зона',
         logout: 'Выйти',
         logoutSubtitle: 'Выйти из аккаунта и очистить локальные данные',
@@ -1075,6 +1087,14 @@ export const ru: TranslationStructure = {
         agentAuthSwitchTo: ({ mode }: { mode: string }) => `Switch to ${mode}`,
     },
 
+    onboarding: {
+        ...en.onboarding,
+    },
+
+    troubleshoot: {
+        ...en.troubleshoot,
+    },
+
     welcome: {
         // Main welcome screen for unauthenticated users
         title: 'Мобильный клиент Codex и Claude Code',
@@ -1311,6 +1331,11 @@ export const ru: TranslationStructure = {
             : `${count} изображений не удалось загрузить — они не были отправлены.`,
         notSupportedTitle: 'Изображения не поддерживаются',
         notSupportedMessage: 'Этот агент не поддерживает вложения изображений. Изображения не были отправлены.',
+        attachTitle: 'Добавить изображение',
+        pasteFromClipboard: 'Вставить из буфера обмена',
+        chooseFromLibrary: 'Библиотека фото',
+        nothingToPasteTitle: 'Нечего вставить',
+        nothingToPasteMessage: 'Сначала скопируйте изображение, затем попробуйте снова.',
     },
 
     feed: {

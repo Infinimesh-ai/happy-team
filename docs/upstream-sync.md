@@ -10,6 +10,8 @@ slopus/happy                 base Happy
 
 `upstream` points at the **parent fork**, not at `slopus/happy`. Changes from base Happy reach this repo by first landing in the parent, so syncing the parent is normally all you need.
 
+Latest parent sync: `e12f264a` (2026-10-17, America/Los_Angeles), carrying base Happy `1655df29` and CLI 1.2.5. Team authentication, SSH provisioning, task handlers, additive Prisma models and cross-platform artifact dependencies remain in place. The imported native iOS/Android clients retain upstream behavior and do not include Team Edition or ISCP integration.
+
 ## Remotes
 
 ```bash
@@ -49,7 +51,7 @@ git merge upstream/main
 Then reinstall and validate:
 
 ```bash
-pnpm install --force
+pnpm install --frozen-lockfile --force
 ```
 
 `--force` re-materializes the cross-platform optional native binaries pinned by `supportedArchitectures` in `pnpm-workspace.yaml`. Without it a later CLI artifact build silently covers only your own platform.
@@ -62,6 +64,7 @@ pnpm --filter happy-app typecheck
 
 ```bash
 pnpm --filter happy-server exec vitest run sources/team
+pnpm --filter happy-server exec vitest run sources/app/api/socket/sessionSubscribeHandler.spec.ts
 ```
 
 ```bash

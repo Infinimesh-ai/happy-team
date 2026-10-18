@@ -50,6 +50,7 @@ An opt-in transport that reaches the daemon over ISCP v2 instead of happy-server
 - [happy-wire.md](happy-wire.md): Shared wire schemas/types package and migration notes.
 - [api.md](api.md): HTTP endpoints and authentication flows.
 - [realtime-sync-and-rpc.md](realtime-sync-and-rpc.md): Realtime socket management and RPC control flow.
+- [plans/provider-envelope-redesign.md](plans/provider-envelope-redesign.md): Proposed provider/session envelope redesign.
 - [permission-resolution.md](permission-resolution.md): State-based permission mode resolution across app and CLI, including sandbox behavior.
 
 ## Server, CLI and app
@@ -65,7 +66,7 @@ An opt-in transport that reaches the daemon over ISCP v2 instead of happy-server
 ## Deployment and development
 
 - [deployment.md](deployment.md): Base server deployment and required infrastructure. Team Edition's compose stack sits on top of this — see [../deploy/README.md](../deploy/README.md).
-- [dev-environments.md](dev-environments.md): Local `environments/data/` workflow, lab-rat project provisioning, `env:cli` passthrough, daemon usage.
+- [dev-environments.md](dev-environments.md): Local `packages/dev-environments/data/` workflow, lab-rat project provisioning, `env:cli` passthrough, daemon usage.
 - [CONTRIBUTING.md](CONTRIBUTING.md): Development workflow, build variants, native builds, local server.
 - [3dparty.md](3dparty.md): Third-party dependencies and licensing.
 - [../AGENTS.md](../AGENTS.md): Working conventions for coding agents in this repo (the sync-to-main workflow).
