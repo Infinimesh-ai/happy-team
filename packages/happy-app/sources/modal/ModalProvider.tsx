@@ -92,7 +92,7 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
                     {currentModal.type === 'confirm' && (
                         <WebAlertModal
                             config={currentModal}
-                            onClose={() => hideModal(currentModal.id)}
+                            onClose={() => dismissModal(currentModal)}
                             onConfirm={(value) => {
                                 Modal.resolveConfirm(currentModal.id, value);
                                 hideModal(currentModal.id);
@@ -102,7 +102,6 @@ export function ModalProvider({ children }: { children: React.ReactNode }) {
                     {currentModal.type === 'prompt' && (
                         <WebPromptModal
                             config={currentModal}
-                            onClose={() => hideModal(currentModal.id)}
                             onConfirm={(value) => {
                                 Modal.resolvePrompt(currentModal.id, value);
                                 hideModal(currentModal.id);

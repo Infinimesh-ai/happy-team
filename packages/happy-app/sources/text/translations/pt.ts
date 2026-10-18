@@ -65,6 +65,7 @@ export const pt: TranslationStructure = {
         fileViewer: 'Visualizador de arquivos',
         loading: 'Carregando...',
         retry: 'Tentar novamente',
+        loadMore: 'Carregar mais',
         delete: 'Excluir',
         optional: 'Opcional',
     },
@@ -137,6 +138,7 @@ export const pt: TranslationStructure = {
         termsOfService: 'Termos de serviço',
         eula: 'EULA',
         supportUs: 'Nos apoie',
+        supportUnavailable: 'As compras não estão disponíveis no momento. Tente novamente mais tarde.',
         supportUsSubtitlePro: 'Obrigado pelo seu apoio!',
         supportUsSubtitle: 'Apoie o desenvolvimento do projeto',
         scanQrCodeToAuthenticate: 'Escaneie o código QR para autenticar',
@@ -215,6 +217,7 @@ export const pt: TranslationStructure = {
         flatList: 'Lista simples',
         groupByProject: 'Agrupar por projeto',
         appearanceSettings: 'Configurações de aparência',
+        worktreeTabs: ({ count }: { count: number }) => count === 1 ? '1 aba' : `${count} abas`,
     },
 
     settingsFeatures: {
@@ -330,6 +333,9 @@ export const pt: TranslationStructure = {
         forkErrorMissingMetadata: 'Faltam metadados da sessão necessários para bifurcar.',
         forkErrorGeneric: 'Não foi possível bifurcar a sessão.',
         forkClaudeOnly: 'A bifurcação atualmente só é suportada para sessões Claude.',
+        archiveAction: 'Arquivar',
+        startingChat: 'Iniciando um novo chat…',
+        actionsTitle: 'Sessão',
     },
 
     commandPalette: {
@@ -337,6 +343,9 @@ export const pt: TranslationStructure = {
     },
 
     server: {
+        title: en.server.title,
+        serverUrlLabel: en.server.serverUrlLabel,
+        selfHostFooter: en.server.selfHostFooter,
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: 'Configuração do servidor',
         enterServerUrl: 'Por favor, insira uma URL do servidor',
@@ -554,6 +563,9 @@ export const pt: TranslationStructure = {
         hideArchived: 'Ocultar arquivadas',
         newSession: 'Nova sessão',
         projects: "Projetos",
+        bots: 'Bots',
+        showAllWorkspaces: ({ count }: { count: number }) => `Mostrar todos os ${count} espaços de trabalho`,
+        showFewerWorkspaces: 'Mostrar menos',
     },
 
     zen: {
@@ -719,7 +731,7 @@ export const pt: TranslationStructure = {
         },
         // Bring your own agent
         byoTitle: 'Traga seu próprio agente',
-        byoDescription: 'Use seu próprio agente ElevenLabs em vez do padrão do Happy. Nenhuma assinatura necessária — conecte-se diretamente com sua própria conta ElevenLabs. Seu agente deve definir duas ferramentas de cliente: messageClaudeCode (envia texto ao agente de código) e processPermissionRequest (permite ou nega o uso de ferramentas). Recebe o contexto da sessão através da variável dinâmica {{initialConversationContext}}.',
+        byoDescription: 'Use seu próprio agente ElevenLabs em vez do padrão do Happy. Nenhuma assinatura necessária — conecte-se diretamente com sua própria conta ElevenLabs. Seu agente deve definir duas ferramentas de cliente: sendMessageToSession (envia texto ao agente de código) e processPermissionRequest (permite ou nega o uso de ferramentas). Recebe o contexto da sessão através da variável dinâmica {{initialConversationContext}}.',
         customAgentId: 'ElevenLabs Agent ID',
         customAgentIdNotSet: 'Não configurado',
         customAgentIdDescription: 'Insira seu ElevenLabs Agent ID. Deixe vazio para usar o padrão do Happy.',
@@ -727,7 +739,7 @@ export const pt: TranslationStructure = {
         bypassToken: 'Conexão direta',
         bypassTokenSubtitle: 'Pule o servidor do Happy, conecte-se diretamente ao ElevenLabs',
         promptGuideTitle: 'Guia de prompt do agente',
-        promptGuideDescription: 'Seu agente ElevenLabs precisa de:\n\n• Ferramenta: messageClaudeCode — parâmetro: message (string). Envia uma mensagem para a sessão de código ativa.\n• Ferramenta: processPermissionRequest — parâmetro: decision ("allow" ou "deny"). Aprova ou nega uma permissão de ferramenta pendente.\n• Variável dinâmica: {{initialConversationContext}} — recebe o histórico e contexto da sessão ao iniciar.\n\nO agente atua como ponte de voz entre o usuário e os agentes de código. Deve ser conciso, responder apenas quando abordado e informar quando um agente de código terminar o trabalho.',
+        promptGuideDescription: 'Seu agente ElevenLabs precisa de:\n\n• Ferramenta: sendMessageToSession — parâmetros: sessionId (string), message (string). Envia uma mensagem para a sessão de código especificada.\n• Ferramenta: processPermissionRequest — parâmetros: requestId (string), decision ("allow" ou "deny"). Aprova ou nega uma permissão de ferramenta pendente.\n• Variável dinâmica: {{initialConversationContext}} — recebe o histórico e contexto da sessão ao iniciar.\n\nO agente atua como ponte de voz entre o usuário e os agentes de código. Deve ser conciso, responder apenas quando abordado e informar quando um agente de código terminar o trabalho.',
         usageTitle: 'Uso (últimos 30 dias)',
         usageFooter: 'Tempo de voz utilizado nos últimos 30 dias. Plano gratuito: 20 min. Assinante: 5 horas. Máx. 100 conversas por mês.',
         usageLabel: 'Tempo de voz',
@@ -743,7 +755,7 @@ export const pt: TranslationStructure = {
         status: 'Status',
         statusActive: 'Ativo',
         statusNotAuthenticated: 'Não autenticado',
-        anonymousId: 'ID anônimo',
+        anonymousId: 'ID de análises',
         publicId: 'ID público',
         notAvailable: 'Não disponível',
         linkNewDevice: 'Vincular novo dispositivo',
@@ -762,10 +774,10 @@ export const pt: TranslationStructure = {
         secretKeyCopied: 'Chave secreta copiada para a área de transferência. Guarde-a em um local seguro!',
         secretKeyCopyFailed: 'Falha ao copiar chave secreta',
         privacy: 'Privacidade',
-        privacyDescription: 'Ajude a melhorar o aplicativo compartilhando dados de uso anônimos. Nenhuma informação pessoal é coletada.',
+        privacyDescription: 'Compartilha dados de uso, como os recursos que você usa e o tipo do seu dispositivo, para nos ajudar a melhorar o Happy. Nunca suas mensagens ou seu código.',
         analytics: 'Análises',
         analyticsDisabled: 'Nenhum dado é compartilhado',
-        analyticsEnabled: 'Dados de uso anônimos são compartilhados',
+        analyticsEnabled: 'Dados de uso são compartilhados',
         dangerZone: 'Zona perigosa',
         logout: 'Sair',
         logoutSubtitle: 'Sair e limpar dados locais',
@@ -860,6 +872,14 @@ export const pt: TranslationStructure = {
         restoreWithSecretKey: 'Restaurar com chave secreta',
         whatsNew: 'Novidades',
         friends: 'Amigos',
+    },
+
+    onboarding: {
+        ...en.onboarding,
+    },
+
+    troubleshoot: {
+        ...en.troubleshoot,
     },
 
     welcome: {
@@ -1073,6 +1093,11 @@ export const pt: TranslationStructure = {
             : `Não foi possível enviar ${count} imagens e não foram enviadas.`,
         notSupportedTitle: 'Imagens não suportadas',
         notSupportedMessage: 'Este agente não suporta anexos de imagem. As imagens não foram enviadas.',
+        attachTitle: 'Adicionar imagem',
+        pasteFromClipboard: 'Colar da área de transferência',
+        chooseFromLibrary: 'Biblioteca de fotos',
+        nothingToPasteTitle: 'Nada para colar',
+        nothingToPasteMessage: 'Copie uma imagem primeiro e tente novamente.',
     },
 
     feed: {

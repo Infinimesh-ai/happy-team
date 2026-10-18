@@ -7,4 +7,5 @@ packages:
   - "packages/happy-wire"
   - "packages/iscp"
   - "packages/happy-app-logs"
+  - "packages/happy-mobile-gym"
   - "packages/expo-tailcat"

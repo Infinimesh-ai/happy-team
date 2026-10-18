@@ -97,6 +97,8 @@ vi.mock('@/sync/storage', () => ({
     useSessionGitStatusFiles: () => null,
 }));
 vi.mock('@/sync/sync', () => ({ sync: { onSessionVisible: state.sessionVisible } }));
+vi.mock('@/track', () => ({ trackSessionSwitched: vi.fn() }));
+vi.mock('@/utils/perfLog', () => ({ perfMark: vi.fn() }));
 vi.mock('@/components/Deferred', async () => {
     const ReactModule = await import('react');
     return { Deferred: (props: any) => ReactModule.createElement('Deferred', props, props.children) };
@@ -131,13 +133,14 @@ vi.mock('@/sync/ops', () => ({ sessionArchive: vi.fn(), sessionKill: vi.fn(), se
 vi.mock('@/hooks/useWorktreeCleanup', () => ({ maybeCleanupWorktree: vi.fn() }));
 vi.mock('@/hooks/useHappyAction', () => ({ useHappyAction: (action: unknown) => [false, action] }));
 vi.mock('@/hooks/useSessionQuickActions', () => ({ useSessionQuickActions: () => ({}) }));
+vi.mock('@/hooks/useProjectWorktree', () => ({ useWorktreeTabSuccessor: () => null }));
 vi.mock('@/utils/copySessionMetadataToClipboard', () => ({
     copySessionMetadataToClipboard: vi.fn(), copySessionMetadataAndLogsToClipboard: vi.fn(),
 }));
 vi.mock('@/utils/versionUtils', () => ({ isVersionSupported: () => true, MINIMUM_CLI_VERSION: '1' }));
 
 import { ChatHeaderView } from './ChatHeaderView';
-import { Header, createPlainHeader } from './navigation/Header';
+import { Header, createHeader, createPlainHeader } from './navigation/Header';
 import { GitLineChanges } from './GitLineChanges';
 import { RigGitLineChanges } from './RigGitLineChanges';
 import SessionInfo from '@/app/(app)/session/[id]/info';
@@ -265,6 +268,22 @@ describe('session details', () => {
         const title = renderer.root.findByType('Text');
         expect(flattenStyle(title.props.style).textAlign).toBe('center');
         expect(title.props.numberOfLines).toBe(1);
+    });
+
+    it('keeps the stack back action on an Android tablet while the onboarding shell is hidden', () => {
+        state.platform = 'android';
+        state.tablet = true;
+        const renderer = render(createHeader({
+            options: { headerTitle: 'Settings', headerTitleAlign: 'center' },
+            route: { name: 'onboarding/settings' }, back: { title: 'Back' },
+            navigation: { goBack: state.back },
+        } as any)!);
+        const header = renderer.root.findByType((Header as any).type);
+        expect(header.props.headerLeft).toBeTypeOf('function');
+
+        const left = render(header.props.headerLeft());
+        act(() => left.root.findByType('Pressable').props.onPress());
+        expect(state.back).toHaveBeenCalledOnce();
     });
 
     it('keeps Changes available for a legacy session without cached statistics', () => {

@@ -21,10 +21,12 @@ import { CodeView } from '@/components/CodeView';
 import { Session } from '@/sync/storageTypes';
 import { useHappyAction } from '@/hooks/useHappyAction';
 import { useSessionQuickActions } from '@/hooks/useSessionQuickActions';
+import { useWorktreeTabSuccessor } from '@/hooks/useProjectWorktree';
 import { copySessionMetadataToClipboard, copySessionMetadataAndLogsToClipboard } from '@/utils/copySessionMetadataToClipboard';
 import { HappyError } from '@/utils/errors';
 import { getRigIdentity, isRigMetadata } from '@/sync/rig';
 import { MOBILE_GLASS_HEADER_HEIGHT } from '@/components/navigation/headerMetrics';
+import { navigateToSession } from '@/hooks/useNavigateToSession';
 
 function formatSandboxMetadata(sandbox: unknown, homeDir?: string): string {
     if (sandbox === null || sandbox === undefined) {
@@ -101,6 +103,10 @@ function SessionInfoContent({ session }: { session: Session }) {
         resumeSessionSubtitle,
     } = useSessionQuickActions(session);
 
+    // Asked now rather than after the archive, which is what takes the chat out
+    // of the checkout it would have been measured against.
+    const tabSuccessor = useWorktreeTabSuccessor(session.id);
+
     const gitStatus = useSessionGitStatus(session.id);
     const gitStatusFiles = useSessionGitStatusFiles(session.id);
     const gitPresentation = React.useMemo(
@@ -144,9 +150,16 @@ function SessionInfoContent({ session }: { session: Session }) {
             }
             await sessionArchive(session.id);
         }
-        // Success - navigate back
+        // Leave this screen, then leave the chat behind it — unless the chat was
+        // one tab of a checkout, in which case its neighbour takes the tab over
+        // and the strip stays where it is. Dropping all the way to the top of
+        // the app with sibling chats still on screen is the wrong exit.
         router.back();
-        router.back();
+        if (tabSuccessor) {
+            router.replace(`/session/${tabSuccessor}`);
+        } else {
+            router.back();
+        }
     });
 
     const handleArchiveSession = useCallback(() => {
@@ -266,7 +279,7 @@ function SessionInfoContent({ session }: { session: Session }) {
                             title={t('session.forkedFromLabel')}
                             subtitle={t('session.forkedFromSubtitle')}
                             icon={<Ionicons name="return-up-back-outline" size={29} color="#5856D6" />}
-                            onPress={() => router.push(`/session/${session.metadata!.parentSessionId}`)}
+                            onPress={() => navigateToSession(router, session.metadata!.parentSessionId!)}
                         />
                     )}
                     <Item

@@ -83,6 +83,8 @@ Full write-up, usage and known limitations: [that branch's README](https://githu
 
 `main` follows upstream by merge (not rebase), so fork history stays bisectable and upstream commits keep their hashes. The dual-stack work was developed on a local `iscp-dual-stack` branch and merged in `ce92f7af`.
 
+Latest upstream sync: `1655df29` (2026-10-17, America/Los_Angeles), including CLI 1.2.5 and the native clients in `packages/happy-ios` and `packages/happy-android`. The native clients retain upstream behavior; this fork's directory browser, local conversation picker and ISCP transport remain in the Expo app and CLI. Native clients have not been connected to the fork's ISCP stack.
+
 ## Running this fork
 
 The `happy` npm package, the App Store / Play Store builds and [app.happy.engineering](https://app.happy.engineering) are all **upstream's** — none of the changes above are in them. Build from source:

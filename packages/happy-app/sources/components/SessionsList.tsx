@@ -18,7 +18,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useIsTablet } from '@/utils/responsive';
 import { getHarnessName } from '@/utils/harnessCatalog';
 import { requestReview } from '@/utils/requestReview';
-import { UpdateBanner } from './UpdateBanner';
+import { HomeListHeader } from './HomeListHeader';
 import { layout } from './layout';
 import { useSessionPressHandlers } from '@/hooks/useNavigateToSession';
 import { SessionActionsAnchor, SessionActionsPopover } from './SessionActionsPopover';
@@ -573,7 +573,7 @@ export function SessionsList({
     const HeaderComponent = React.useCallback(() => {
         const isPhoneLayout = topContentInset > 0;
         return (
-            <UpdateBanner
+            <HomeListHeader
                 style={isPhoneLayout ? styles.phoneUpdateBanner : undefined}
                 headerStyle={isPhoneLayout ? styles.phoneUpdateBannerHeader : undefined}
             />
@@ -603,6 +603,10 @@ export function SessionsList({
                     windowSize={5}
                     maxToRenderPerBatch={8}
                     initialNumToRender={12}
+                    // FlatList defaults this on for Android only. Virtualization
+                    // already unmounts offscreen rows; detaching the rest too
+                    // only gives Android a second, divergent layout path.
+                    removeClippedSubviews={false}
                     onScroll={onScroll}
                     scrollEventThrottle={16}
                 />

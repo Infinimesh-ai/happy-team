@@ -67,6 +67,7 @@ export const ja: TranslationStructure = {
         fileViewer: 'ファイルビューアー',
         loading: '読み込み中...',
         retry: '再試行',
+        loadMore: 'さらに読み込む',
         delete: '削除',
         optional: '任意',
         saveAs: '名前を付けて保存',
@@ -139,6 +140,7 @@ export const ja: TranslationStructure = {
         termsOfService: '利用規約',
         eula: 'EULA',
         supportUs: '開発を支援',
+        supportUnavailable: '現在、購入をご利用いただけません。しばらくしてからもう一度お試しください。',
         supportUsSubtitlePro: 'ご支援ありがとうございます！',
         supportUsSubtitle: 'プロジェクト開発を支援',
         scanQrCodeToAuthenticate: 'QRコードをスキャンして認証',
@@ -217,6 +219,7 @@ export const ja: TranslationStructure = {
         flatList: 'フラットリスト',
         groupByProject: 'プロジェクト別にグループ化',
         appearanceSettings: '外観設定',
+        worktreeTabs: ({ count }: { count: number }) => `${count} 個のタブ`,
     },
 
     settingsFeatures: {
@@ -332,6 +335,9 @@ export const ja: TranslationStructure = {
         forkErrorMissingMetadata: 'フォークに必要なセッションのメタデータがありません。',
         forkErrorGeneric: 'セッションのフォークに失敗しました。',
         forkClaudeOnly: 'フォークは現在 Claude セッションのみ対応しています。',
+        archiveAction: 'アーカイブ',
+        startingChat: '新しいチャットを開始しています…',
+        actionsTitle: 'セッション',
     },
 
     commandPalette: {
@@ -339,6 +345,9 @@ export const ja: TranslationStructure = {
     },
 
     server: {
+        title: en.server.title,
+        serverUrlLabel: en.server.serverUrlLabel,
+        selfHostFooter: en.server.selfHostFooter,
         // Used by Server Configuration screen (app/(app)/server.tsx)
         serverConfiguration: 'サーバー設定',
         enterServerUrl: 'サーバーURLを入力してください',
@@ -556,6 +565,9 @@ export const ja: TranslationStructure = {
         hideArchived: 'アーカイブを非表示',
         newSession: '新しいセッション',
         projects: "プロジェクト",
+        bots: 'ボット',
+        showAllWorkspaces: ({ count }: { count: number }) => `${count}件のワークスペースをすべて表示`,
+        showFewerWorkspaces: '表示を減らす',
     },
 
     zen: {
@@ -721,7 +733,7 @@ export const ja: TranslationStructure = {
         },
         // Bring your own agent
         byoTitle: '自分のエージェントを使う',
-        byoDescription: 'Happy のデフォルトの代わりに、独自の ElevenLabs エージェントを使用します。サブスクリプション不要 — 自分の ElevenLabs アカウントで直接接続できます。エージェントには2つのクライアントツールを定義する必要があります: messageClaudeCode（コーディングエージェントにテキストを送信）と processPermissionRequest（ツール使用を許可または拒否）。セッションコンテキストは {{initialConversationContext}} 動的変数を通じて受信されます。',
+        byoDescription: 'Happy のデフォルトの代わりに、独自の ElevenLabs エージェントを使用します。サブスクリプション不要 — 自分の ElevenLabs アカウントで直接接続できます。エージェントには2つのクライアントツールを定義する必要があります: sendMessageToSession（コーディングエージェントにテキストを送信）と processPermissionRequest（ツール使用を許可または拒否）。セッションコンテキストは {{initialConversationContext}} 動的変数を通じて受信されます。',
         customAgentId: 'ElevenLabs Agent ID',
         customAgentIdNotSet: '未設定',
         customAgentIdDescription: 'ElevenLabs Agent ID を入力してください。空のままにすると Happy のデフォルトが使用されます。',
@@ -729,7 +741,7 @@ export const ja: TranslationStructure = {
         bypassToken: '直接接続',
         bypassTokenSubtitle: 'Happy サーバーをスキップし、ElevenLabs に直接接続',
         promptGuideTitle: 'エージェントプロンプトガイド',
-        promptGuideDescription: 'ElevenLabs エージェントには以下が必要です:\n\n• ツール: messageClaudeCode — パラメータ: message (string)。アクティブなコーディングセッションにメッセージを送信します。\n• ツール: processPermissionRequest — パラメータ: decision ("allow" または "deny")。保留中のツール許可を承認または拒否します。\n• 動的変数: {{initialConversationContext}} — 開始時にセッション履歴とコンテキストを受信します。\n\nエージェントはユーザーとコーディングエージェント間の音声ブリッジとして機能します。簡潔に、話しかけられた時のみ応答し、コーディングエージェントが作業を完了したら報告する必要があります。',
+        promptGuideDescription: 'ElevenLabs エージェントには以下が必要です:\n\n• ツール: sendMessageToSession — パラメータ: sessionId (string), message (string)。指定されたコーディングセッションにメッセージを送信します。\n• ツール: processPermissionRequest — パラメータ: requestId (string), decision ("allow" または "deny")。保留中のツール許可を承認または拒否します。\n• 動的変数: {{initialConversationContext}} — 開始時にセッション履歴とコンテキストを受信します。\n\nエージェントはユーザーとコーディングエージェント間の音声ブリッジとして機能します。簡潔に、話しかけられた時のみ応答し、コーディングエージェントが作業を完了したら報告する必要があります。',
         usageTitle: '使用状況（過去30日間）',
         usageFooter: '過去30日間に使用した音声時間。無料プラン: 20分。サブスクリプション: 5時間。月間最大100会話。',
         usageLabel: '音声時間',
@@ -745,7 +757,7 @@ export const ja: TranslationStructure = {
         status: 'ステータス',
         statusActive: 'アクティブ',
         statusNotAuthenticated: '未認証',
-        anonymousId: '匿名ID',
+        anonymousId: 'アナリティクスID',
         publicId: '公開ID',
         notAvailable: '利用不可',
         linkNewDevice: '新しいデバイスをリンク',
@@ -764,10 +776,10 @@ export const ja: TranslationStructure = {
         secretKeyCopied: 'シークレットキーがクリップボードにコピーされました。安全な場所に保管してください！',
         secretKeyCopyFailed: 'シークレットキーのコピーに失敗しました',
         privacy: 'プライバシー',
-        privacyDescription: '匿名の使用データを共有してアプリの改善にご協力ください。個人情報は収集されません。',
+        privacyDescription: '使用している機能やデバイスの種類などの使用データを共有し、Happy の改善に役立てます。メッセージやコードが共有されることはありません。',
         analytics: 'アナリティクス',
         analyticsDisabled: 'データは共有されません',
-        analyticsEnabled: '匿名の使用データが共有されます',
+        analyticsEnabled: '使用データが共有されます',
         dangerZone: '危険ゾーン',
         logout: 'ログアウト',
         logoutSubtitle: 'サインアウトしてローカルデータを消去',
@@ -862,6 +874,14 @@ export const ja: TranslationStructure = {
         restoreWithSecretKey: 'シークレットキーで復元',
         whatsNew: "新機能",
         friends: '友達',
+    },
+
+    onboarding: {
+        ...en.onboarding,
+    },
+
+    troubleshoot: {
+        ...en.troubleshoot,
     },
 
     welcome: {
@@ -1076,6 +1096,11 @@ export const ja: TranslationStructure = {
             : `${count}枚の画像をアップロードできず、送信されませんでした。`,
         notSupportedTitle: '画像はサポートされていません',
         notSupportedMessage: 'このエージェントは画像の添付に対応していません。画像は送信されませんでした。',
+        attachTitle: '画像を追加',
+        pasteFromClipboard: 'クリップボードから貼り付け',
+        chooseFromLibrary: 'フォトライブラリ',
+        nothingToPasteTitle: '貼り付けるものがありません',
+        nothingToPasteMessage: '先に画像をコピーしてから、もう一度お試しください。',
     },
 
     feed: {

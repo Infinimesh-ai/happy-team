@@ -10,6 +10,7 @@ import type { AgentQuestionAnswer, MachineMetadata, SessionAgentModesPatch } fro
 import { markAgentModePushPending, clearAgentModePushPending, type AgentModeField } from './agentModesPending';
 import {
     isRigMetadata,
+    isRigMetadataV1,
     rigCanAbort,
     rigCanReadFiles,
     rigCanSearchFiles,
@@ -17,6 +18,7 @@ import {
     rigCanWriteFiles,
     rigHasRpcMethod,
 } from './rig';
+import { rigComposerSetMode } from './rigComposer';
 import type { HappyAgentSpawnTarget } from './happyAgentSpawn';
 import { encodeBase64 } from '@/encryption/base64';
 
@@ -333,7 +335,7 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             'spawn-happy-session',
             request,
         );
-        return result;
+        return normalizeSpawnSessionResult(result);
     } catch (error) {
         // Handle RPC errors
         return {
@@ -341,6 +343,25 @@ export async function machineSpawnNewSession(options: SpawnSessionOptions): Prom
             errorMessage: error instanceof Error ? error.message : 'Failed to spawn session'
         };
     }
+}
+
+/**
+ * The machine RPC answer, with its refusal always under `errorMessage`.
+ *
+ * Earlier Happy Agent daemons answered a refused catalog spawn with `message`
+ * instead, which this read as an alert with nothing in it. Nothing here parses
+ * the payload otherwise, so the one field the flow reads is settled here.
+ */
+export function normalizeSpawnSessionResult(result: unknown): SpawnSessionResult {
+    if (typeof result !== 'object' || result === null || typeof (result as { type?: unknown }).type !== 'string') {
+        return { type: 'error', errorMessage: 'The machine answered with something Happy could not read.' };
+    }
+    const answer = result as Record<string, unknown> & { type: string };
+    if (answer.type !== 'error') return answer as SpawnSessionResult;
+    const errorMessage = [answer.errorMessage, answer.message].find(
+        (value): value is string => typeof value === 'string' && value.length > 0,
+    );
+    return { type: 'error', errorMessage: errorMessage ?? 'Failed to spawn session' };
 }
 
 /**
@@ -891,6 +912,13 @@ export function sessionSetAgentModes(sessionId: string, patch: SessionAgentModes
     const state = storage.getState();
     const session = state.sessions[sessionId];
 
+    // Happy Agent sessions carry their pickers inside the synced composer
+    // draft, so the pick is written there as part of the whole draft.
+    if (isRigMetadataV1(session?.metadata)) {
+        rigComposerSetMode(sessionId, patch);
+        return;
+    }
+
     // Only touch fields that actually change — clearing modes on a session
     // with no picks (e.g. every abort) must not cost a metadata round-trip.
     // A pick counts as changed when it differs from the local mirror OR from
@@ -944,6 +972,25 @@ export async function sessionAbort(sessionId: string): Promise<void> {
     await sessionRPC(sessionId, 'abort', isRigMetadata(metadata) ? {} : {
         reason: `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.`
     });
+}
+
+/**
+ * Puts a picture already uploaded to the session's attachment store onto the
+ * bot behind a Happy Agent session. The agent downloads it by ref the way it
+ * downloads a picture attached to a message, so nothing else travels here.
+ */
+export async function sessionSetAvatar(
+    sessionId: string,
+    picture: { ref: string; size: number; mimeType: 'image/png' | 'image/jpeg' | 'image/webp' },
+): Promise<void> {
+    const response = await sessionRPC<{ success?: boolean; error?: string }, typeof picture>(
+        sessionId,
+        'setAvatar',
+        picture,
+    );
+    if (response?.success !== true) {
+        throw new Error(response?.error ?? 'The picture could not be set.');
+    }
 }
 
 /**

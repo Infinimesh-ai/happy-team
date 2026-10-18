@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest';
 import { NormalizedMessage, normalizeRawMessage } from '../typesRaw';
 import { createReducer, reducer, ReducerOptions, registerUserMessageServerIds } from './reducer';
 import { Message, messageSortKey, isOtherParticipantMessage } from '../typesMessage';
-import { buildAgentTurnCopyTextByMessageId } from '../../utils/agentTurnCopy';
 
 /**
  * A message this device just sent, shown before the server has it. The reducer
@@ -61,6 +60,21 @@ function userMessages(messages: Message[]) {
 }
 
 describe('pending user messages', () => {
+    it.each([false, true])('preserves the send-time queue display decision through history and acceptance (%s)', (queuedWhileBusy) => {
+        const state = createReducer();
+        const restored = normalizeRawMessage('server-1', 'local-1', 1000, {
+            role: 'user',
+            content: { type: 'text', text: 'hello' },
+            meta: { expectsAcceptance: true, queuedWhileBusy },
+        });
+        const [pending] = reducer(state, [restored!], null, HOLD).messages;
+        expect(pending).toMatchObject({ pending: true, meta: { queuedWhileBusy } });
+
+        const [settled] = reducer(state, [receipt('accepted:1', 'server-1', 2000)], null, HOLD).messages;
+        expect(settled).not.toHaveProperty('pending');
+        expect(settled.meta?.queuedWhileBusy).toBe(queuedWhileBusy);
+    });
+
     it.each(['receipt-first', 'message-first'] as const)('keeps a rejected message failed across reload (%s)', (delivery) => {
         const failed = normalizeRawMessage('relay-refusal', 'rig:refused:server-1', 3000, {
             role: 'session',
@@ -83,7 +97,6 @@ describe('pending user messages', () => {
         expect(row).toMatchObject({ kind: 'user-text', createdAt: 1000, sortAt: 3000, sendError: 'That model is not available.' });
         expect(row).not.toHaveProperty('pending');
         const answer: Message = { kind: 'agent-text', id: 'old-answer', localId: null, createdAt: 2000, text: 'still working' };
-        expect(buildAgentTurnCopyTextByMessageId([row, answer], { currentTurnComplete: false }).size).toBe(0);
         const today: Message = { ...answer, id: 'today', createdAt: 4000 };
         expect([row, today].sort((a, b) => messageSortKey(b) - messageSortKey(a)).map((message) => message.id))
             .toEqual(['today', row.id]);
@@ -243,7 +256,6 @@ describe('pending user messages', () => {
             expect(rows.map((message) => 'text' in message ? message.text : '').reverse())
                 .toEqual(['old tail', 'steer', 'new answer']);
             expect(rows[1]).toMatchObject({ sortAt: 3000 });
-            expect(buildAgentTurnCopyTextByMessageId(rows, { currentTurnComplete: false }).has(rows[0].id)).toBe(false);
         },
     );
 

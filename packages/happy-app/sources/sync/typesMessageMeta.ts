@@ -6,6 +6,9 @@ export const MessageMetaSchema = z.object({
     // Capability at send time, inside the encrypted payload. New history can
     // resume waiting after reconnect without holding pre-receipt-era messages.
     expectsAcceptance: z.boolean().optional(),
+    // Snapshot at send time, not the agent's live state: starting this message's
+    // own turn must not briefly make an idle send look queued.
+    queuedWhileBusy: z.boolean().optional(),
     permissionMode: z.string().optional(), // Permission mode key for this message
     model: z.string().nullable().optional(), // Model name for this message (null = reset)
     modelProviderId: z.string().optional(), // Provider qualifier for metadata-driven clients such as Rig
@@ -15,6 +18,7 @@ export const MessageMetaSchema = z.object({
     allowedTools: z.array(z.string()).nullable().optional(), // Allowed tools for this message (null = reset)
     disallowedTools: z.array(z.string()).nullable().optional(), // Disallowed tools for this message (null = reset)
     effort: z.string().nullable().optional(), // Reasoning / thinking effort for this message (null = reset)
+    serviceTier: z.string().nullable().optional(), // Happy Agent service tier captured from the composer (null = none)
     displayText: z.string().optional() // Optional text to display in UI instead of actual message text
 });
 

@@ -13,18 +13,44 @@ import {
 } from '@/sync/persistence';
 import type { PermissionModeKey } from '@/components/PermissionModeSelector';
 import type { AttachmentPreview } from '@/sync/attachmentTypes';
+import { rollBotFaceSeeds, type BotFaceSeeds, type BotFaceSlot } from '@/utils/botFace';
 
 interface NewSessionDraftState {
     input: string;
     attachments: AttachmentPreview[];
     selectedMachineId: string | null;
     selectedPath: string | null;
+    /**
+     * The project the draft names, for a project whose folder only Happy Agent's catalog knows.
+     * Exactly one of this and `selectedPath` describes where the session starts; setting either
+     * clears the other, so the draft never names two places at once.
+     */
+    selectedProjectId: string | null;
     agentType: NewSessionAgentType;
+    /**
+     * The harness the person last picked in the composer, persisted and kept across sessions and
+     * restarts until they pick another. Separate from `agentType`, which follows what the selected
+     * computer can run: a computer without the picked harness moves `agentType` to one it has and
+     * leaves this alone, so the pick comes back on a computer that has it. Without a pick, a
+     * computer with Happy Agent starts Happy whatever `agentType` says.
+     */
+    pickedAgentType: NewSessionAgentType | null;
     permissionMode: PermissionModeKey | null;
     modelMode: string | null;
     effortLevel: string | null;
     sessionType: NewSessionSessionType;
     worktreeKey: string | null;
+    /**
+     * The composer is making a new bot rather than a session in the project.
+     * Sits on top of the project choice, which stays what it was, and is not
+     * persisted: a restarted app should offer a session, the ordinary case.
+     */
+    createsBot: boolean;
+    /** What the bot will be called. Typed into the composer's own input while making a bot. */
+    botName: string;
+    /** The four faces on offer; `botFaceSlot` says which one the bot gets. */
+    botFaceSeeds: BotFaceSeeds;
+    botFaceSlot: BotFaceSlot;
 
     setInput: (input: string) => void;
     setAttachments: (attachments: AttachmentPreview[]) => void;
@@ -38,12 +64,22 @@ interface NewSessionDraftState {
      */
     renameMachineId: (id: string | null) => void;
     setPath: (path: string | null) => void;
+    /** Names a catalog project as the place, in place of whatever directory was chosen before. */
+    setProjectId: (id: string | null) => void;
     setAgentType: (agent: NewSessionAgentType) => void;
+    /** The person's own harness choice in the composer; see `pickedAgentType`. */
+    pickAgentType: (agent: NewSessionAgentType) => void;
     setPermissionMode: (mode: PermissionModeKey) => void;
     setModelMode: (mode: string) => void;
     setEffortLevel: (level: string) => void;
     setSessionType: (type: NewSessionSessionType) => void;
     setWorktreeKey: (key: string | null) => void;
+    setCreatesBot: (createsBot: boolean) => void;
+    setBotName: (name: string) => void;
+    /** Picks one of the four faces by position. */
+    setBotFaceSlot: (slot: BotFaceSlot) => void;
+    /** Rolls four new faces. The picked position stays picked, now wearing its new face. */
+    rollBotFaces: () => void;
 }
 
 function persist(state: NewSessionDraftState) {
@@ -51,7 +87,9 @@ function persist(state: NewSessionDraftState) {
         input: state.input,
         selectedMachineId: state.selectedMachineId,
         selectedPath: state.selectedPath,
+        selectedProjectId: state.selectedProjectId,
         agentType: state.agentType,
+        pickedAgentType: state.pickedAgentType,
         permissionMode: state.permissionMode,
         modelMode: state.modelMode,
         effortLevel: state.effortLevel,
@@ -70,22 +108,34 @@ export const useNewSessionDraft = create<NewSessionDraftState>()((set, get) => (
     attachments: [],
     selectedMachineId: initial?.selectedMachineId ?? null,
     selectedPath: initial?.selectedPath ?? null,
+    selectedProjectId: initial?.selectedProjectId ?? null,
     agentType: initial?.agentType ?? 'claude',
+    pickedAgentType: initial?.pickedAgentType ?? null,
     permissionMode: initial?.permissionMode ?? null,
     modelMode: initial?.modelMode ?? null,
     effortLevel: initial?.effortLevel ?? null,
     sessionType: initial?.sessionType ?? 'simple',
     worktreeKey: initial?.worktreeKey ?? null,
+    createsBot: false,
+    botName: '',
+    botFaceSeeds: rollBotFaceSeeds(),
+    botFaceSlot: 0,
 
     setInput: (input) => { set({ input }); persist(get()); },
     setAttachments: (attachments) => { set({ attachments }); },
-    setMachineId: (id) => { set({ selectedMachineId: id, selectedPath: null, worktreeKey: null }); persist(get()); },
+    setMachineId: (id) => { set({ selectedMachineId: id, selectedPath: null, selectedProjectId: null, worktreeKey: null }); persist(get()); },
     renameMachineId: (id) => { set({ selectedMachineId: id }); persist(get()); },
-    setPath: (path) => { set({ selectedPath: path, worktreeKey: null }); persist(get()); },
+    setPath: (path) => { set({ selectedPath: path, selectedProjectId: null, worktreeKey: null }); persist(get()); },
+    setProjectId: (id) => { set({ selectedProjectId: id, selectedPath: null, worktreeKey: null }); persist(get()); },
     setAgentType: (agent) => { set({ agentType: agent }); persist(get()); },
+    pickAgentType: (agent) => { set({ agentType: agent, pickedAgentType: agent }); persist(get()); },
     setPermissionMode: (mode) => { set({ permissionMode: mode }); persist(get()); },
     setModelMode: (mode) => { set({ modelMode: mode }); persist(get()); },
     setEffortLevel: (level) => { set({ effortLevel: level }); persist(get()); },
     setSessionType: (type) => { set({ sessionType: type }); persist(get()); },
     setWorktreeKey: (key) => { set({ worktreeKey: key }); persist(get()); },
+    setCreatesBot: (createsBot) => { set({ createsBot }); },
+    setBotName: (botName) => { set({ botName }); },
+    setBotFaceSlot: (botFaceSlot) => { set({ botFaceSlot }); },
+    rollBotFaces: () => { set({ botFaceSeeds: rollBotFaceSeeds() }); },
 }));

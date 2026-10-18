@@ -15,7 +15,11 @@ import { backoff } from '@/utils/time';
 import { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { detectCLIAvailability, CLIAvailability } from '@/utils/detectCLI';
 import { detectResumeSupport, type ResumeSupport } from '@/resume/localHappyAgentAuth';
-import { shouldReconnect } from '@/utils/lidState';
+import {
+    releaseReconnectCapabilityMonitor,
+    retainReconnectCapabilityMonitor,
+    shouldReconnect,
+} from '@/utils/lidState';
 import { getProjectPath } from '@/claude/utils/path';
 import {
     forkSession as claudeForkSession,
@@ -149,6 +153,9 @@ export class ApiMachineClient {
     private rpcHandlerManager: RpcHandlerManager;
     private resumeSessionHandler: ((sessionId: string, options?: ResumeSessionOptions) => Promise<SpawnSessionResult>) | null = null;
     private reconnectInterval: NodeJS.Timeout | null = null;
+    private reconnectTimeout: NodeJS.Timeout | null = null;
+    private reconnectCapabilityHeld = false;
+    private shutdownRequested = false;
 
     constructor(
         private token: string,
@@ -475,6 +482,12 @@ export class ApiMachineClient {
     }
 
     connect() {
+        this.shutdownRequested = false;
+        if (!this.reconnectCapabilityHeld) {
+            retainReconnectCapabilityMonitor();
+            this.reconnectCapabilityHeld = true;
+        }
+
         const serverUrl = configuration.serverUrl.replace(/^http/, 'ws');
         logger.debug(`[API MACHINE] Connecting to ${serverUrl}`);
 
@@ -498,6 +511,10 @@ export class ApiMachineClient {
                 clearInterval(this.reconnectInterval);
                 this.reconnectInterval = null;
             }
+            if (this.reconnectTimeout) {
+                clearTimeout(this.reconnectTimeout);
+                this.reconnectTimeout = null;
+            }
 
             this.updateDaemonState((state) => ({
                 ...state,
@@ -517,7 +534,9 @@ export class ApiMachineClient {
             logger.debug(`[API MACHINE] Disconnected from server — reason: ${reason}`);
             this.rpcHandlerManager.onSocketDisconnect();
             this.stopKeepAlive();
-            this.startSmartReconnect();
+            if (!this.shutdownRequested) {
+                this.startSmartReconnect();
+            }
         });
 
         this.socket.on('rpc-registered', (data: { method?: unknown } | null) => {
@@ -629,7 +648,7 @@ export class ApiMachineClient {
         if (this.reconnectInterval) return;
 
         this.reconnectInterval = setInterval(() => {
-            if (this.socket.connected) {
+            if (this.shutdownRequested || this.socket.connected) {
                 clearInterval(this.reconnectInterval!);
                 this.reconnectInterval = null;
                 return;
@@ -643,8 +662,13 @@ export class ApiMachineClient {
         }, 3000);
 
         if (shouldReconnect()) {
-            logger.debug('[API MACHINE] Network up + lid open — reconnecting in 1s');
-            setTimeout(() => { if (!this.socket.connected) this.socket.connect() }, 1000);
+            logger.debug('[API MACHINE] Network available — reconnecting in 1s');
+            this.reconnectTimeout = setTimeout(() => {
+                this.reconnectTimeout = null;
+                if (!this.shutdownRequested && !this.socket.connected && shouldReconnect()) {
+                    this.socket.connect();
+                }
+            }, 1000);
         }
     }
 
@@ -658,10 +682,19 @@ export class ApiMachineClient {
 
     shutdown() {
         logger.debug('[API MACHINE] Shutting down');
+        this.shutdownRequested = true;
+        if (this.reconnectCapabilityHeld) {
+            releaseReconnectCapabilityMonitor();
+            this.reconnectCapabilityHeld = false;
+        }
         this.stopKeepAlive();
         if (this.reconnectInterval) {
             clearInterval(this.reconnectInterval);
             this.reconnectInterval = null;
+        }
+        if (this.reconnectTimeout) {
+            clearTimeout(this.reconnectTimeout);
+            this.reconnectTimeout = null;
         }
         if (this.socket) {
             this.socket.close();

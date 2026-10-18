@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { ActivityIndicator, Keyboard, LayoutChangeEvent, Modal as RNModal, Platform, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Keyboard, LayoutChangeEvent, Modal as RNModal, Platform, Pressable, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import type { StyleProp, ViewStyle } from 'react-native';
 import { Ionicons, Octicons } from '@expo/vector-icons';
 import { BlurView } from 'expo-blur';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,25 +20,35 @@ import Animated, {
 } from 'react-native-reanimated';
 import { MobileGlassSurface } from './MobileGlass';
 import { BubblePressable } from './BubblePressable';
-import { NativeOptionsPicker } from './NativeOptionsPicker';
+import { NativeOptionsPicker, type NativeOptionsPickerOption, type NativeOptionsPickerSection } from './NativeOptionsPicker';
 import { NativeSettingsMenu, type NativeSettingsMenuGroup, type NativeSettingsMenuProps } from './NativeSettingsMenu';
+import { PickerSheetOption, PickerSheetPanel, PickerSheetSection } from './PickerSheet';
+import { ProviderIcon } from './ProviderIcon';
+import { NativeSegmentedControl } from './NativeSegmentedControl';
+import { BotFacePicker } from './BotFacePicker';
+import { BOT_NAME_MAX_LENGTH, isValidBotName, sanitizeBotName } from '@/utils/botName';
 import { AgentInputAttachmentStrip } from './AgentInputAttachmentStrip';
 import { Typography } from '@/constants/Typography';
 import { layout } from './layout';
 import { t } from '@/text';
 import { useNewSessionDraft } from '@/hooks/useNewSessionDraft';
-import { useAllMachines, useSessions, useSetting } from '@/sync/storage';
-import { getCodeAgentDefaults, resolveAgentDefaultConfig } from '@/sync/agentDefaults';
+import { useAllMachines, useProjects, useSessions, useSetting } from '@/sync/storage';
+import { getCodeAgentDefaults, resolveAgentDefaultConfig, retireModelMode } from '@/sync/agentDefaults';
 import { formatLastSeen, formatPathRelativeToHome } from '@/utils/sessionUtils';
 import { isMachineOnline } from '@/utils/machineUtils';
 import { resolveAbsolutePath } from '@/utils/pathUtils';
 import { useWorktrees } from '@/hooks/useWorktrees';
-import { collectSessionPlaces, collectSessionWorkspaces } from '@/sync/agentSessionPlaces';
+import {
+    collectSessionPlaces,
+    collectSessionWorkspaces,
+    projectPlaceKey,
+    readProjectPlaceKey,
+} from '@/sync/agentSessionPlaces';
 import {
     collectMachineChoices,
     findMachineChoice,
     listMachineChoiceAvailableAgents,
-    resolveChoiceAgent,
+    resolveNewSessionAgent,
     resolveWorktreeCreationMachine,
 } from '@/sync/machineChoices';
 import type { Session } from '@/sync/storageTypes';
@@ -49,6 +60,7 @@ import {
     getSupportsWorktree,
     groupModelModesByProvider,
     includeConfiguredModel,
+    truncateModelLabel,
     type ModeOption,
 } from './modelModeOptions';
 import type { NewSessionAgentType } from '@/sync/persistence';
@@ -89,6 +101,7 @@ import {
     resolveMobileCollapsedComposerGeometry,
     resolveMobileComposerHeight,
     resolveMobileComposerMenuGeometry,
+    resolveMobileComposerMiddleGeometry,
 } from './agentInputLayout';
 
 export const MOBILE_HOME_DOCK_CONTENT_INSET = 108;
@@ -98,11 +111,28 @@ type AgentSetting = 'agent' | 'model' | 'permission' | 'effort';
 type PickerPage = EnvironmentSetting | AgentSetting;
 
 const CUSTOM_PROJECT_PATH_KEY = '__custom_project_path__';
+// What the composer makes: a session in a place, or a bot of its own.
+const COMPOSER_KINDS = [
+    { key: 'session', label: 'Session' },
+    { key: 'bot', label: 'Bot' },
+] as const;
+// What a bot is for, said once under the choice that offers one. A session is
+// the thing people already know, so only the bot side needs explaining.
+const BOT_LEDE = 'Bots are virtual colleagues great for recurring work like '
+    + 'releases, competitor analysis, or to own a large feature across several '
+    + 'projects and worktrees';
+
+/** The Android picker panel's share of the window with the keyboard down. */
+const SETTINGS_SHEET_HEIGHT_FRACTION = 0.5;
+const SETTINGS_SHEET_MIN_HEIGHT = 168;
+/** The focused dock's header and composer, which the panel must leave room for. */
+const SETTINGS_SHEET_RESERVED_HEIGHT = 320;
 
 const MOBILE_MODEL_MENU_GEOMETRY = resolveMobileComposerMenuGeometry('model');
 const MOBILE_EFFORT_MENU_GEOMETRY = resolveMobileComposerMenuGeometry('effort');
 const MOBILE_PERMISSION_MENU_GEOMETRY = resolveMobileComposerMenuGeometry('permission');
 const MOBILE_ACTION_ROW_GEOMETRY = resolveMobileComposerActionRowGeometry();
+const MOBILE_MIDDLE_GEOMETRY = resolveMobileComposerMiddleGeometry();
 const MOBILE_ICON_ACTION_GEOMETRY = resolveMobileComposerActionGeometry('icon');
 const MOBILE_PRIMARY_ACTION_GEOMETRY = resolveMobileComposerActionGeometry('primary');
 const MOBILE_COLLAPSED_COMPOSER_GEOMETRY = resolveMobileCollapsedComposerGeometry();
@@ -147,11 +177,11 @@ const styles = StyleSheet.create((theme) => ({
         overflow: 'hidden',
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.colors.glass.border,
-        // Frosted glass is supplied by MobileGlassSurface on native. The dense
-        // material tint keeps backdrop detail from competing with this input.
+        // iOS supplies frosted blur. Android needs an opaque writing surface
+        // because its fallback does not blur the session rows behind this dock.
         backgroundColor: Platform.select({
             ios: 'transparent',
-            android: theme.colors.glass.backgroundStrong,
+            android: theme.colors.input.background,
             default: theme.colors.glass.backgroundStrong,
         }),
     },
@@ -215,7 +245,7 @@ const styles = StyleSheet.create((theme) => ({
         borderColor: theme.colors.glass.border,
         backgroundColor: Platform.select({
             ios: 'transparent',
-            android: theme.colors.glass.backgroundStrong,
+            android: theme.colors.input.background,
             default: theme.colors.glass.backgroundStrong,
         }),
     },
@@ -286,6 +316,7 @@ const styles = StyleSheet.create((theme) => ({
         paddingBottom: MOBILE_COMPOSER_METRICS.inputPaddingBottom,
     },
     focusedComposerActions: MOBILE_ACTION_ROW_GEOMETRY,
+    focusedComposerMiddle: MOBILE_MIDDLE_GEOMETRY,
     nativeModeMenu: MOBILE_MODEL_MENU_GEOMETRY.frame,
     focusedModeButton: MOBILE_MODEL_MENU_GEOMETRY.content,
     nativeEffortMenu: MOBILE_EFFORT_MENU_GEOMETRY.frame,
@@ -363,6 +394,47 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: 6,
         borderRadius: 12,
     },
+    // The Session | Bot choice heads the whole screen rather than the dock: it
+    // decides what everything below it is for, so it is held at the top edge
+    // over the dimmed list, with the bot's lede directly beneath it.
+    // `box-none` throughout, so the backdrop underneath still dismisses except
+    // where the control and its text actually are.
+    focusHeader: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: 0,
+        paddingHorizontal: 24,
+        alignItems: 'center',
+    },
+    focusHeaderContent: {
+        width: '100%',
+        maxWidth: layout.maxWidth,
+        alignItems: 'center',
+        gap: 10,
+    },
+    // Narrower than the text below it: a two-word choice stretched the full
+    // width of a tablet reads as a toolbar rather than a switch.
+    focusHeaderSegment: {
+        width: '100%',
+        maxWidth: 260,
+    },
+    focusHeaderLede: {
+        maxWidth: 340,
+        color: theme.colors.textSecondary,
+        fontSize: 13,
+        lineHeight: 18,
+        textAlign: 'center',
+        ...Typography.default(),
+    },
+    // The faces line up with the icon column, not the labels after it, so the
+    // block reads as its own thing rather than another row's value.
+    focusConfigFaces: {
+        paddingLeft: 6,
+        paddingRight: 6,
+        paddingTop: 6,
+        paddingBottom: 4,
+    },
     // One fixed square per icon, with the glyph centred inside it. The square is
     // what the row lays out against, so the label after it starts at the same x
     // on every row no matter which glyph is in the box or how wide it draws.
@@ -377,6 +449,23 @@ const styles = StyleSheet.create((theme) => ({
     focusConfigValue: {
         flex: 1,
         minWidth: 0,
+        color: theme.colors.text,
+        fontSize: 17,
+        ...Typography.default(),
+    },
+    // Holds the native menu after the icon. Stretched to the row's height so
+    // the menu's trigger, which fills this box, is tappable across the whole
+    // row rather than only across the line of text.
+    focusConfigTrigger: {
+        flex: 1,
+        minWidth: 0,
+        alignSelf: 'stretch',
+        justifyContent: 'center',
+    },
+    // The React Native copy of the value that sizes the native trigger. It is
+    // not on screen (the picker hides it) so it carries no flex: inside the
+    // trigger's own box a flexed line would collapse to nothing.
+    focusConfigTriggerValue: {
         color: theme.colors.text,
         fontSize: 17,
         ...Typography.default(),
@@ -452,87 +541,6 @@ const styles = StyleSheet.create((theme) => ({
         alignSelf: 'center',
         gap: 10,
     },
-    settingsSurface: {
-        width: '100%',
-        maxHeight: 270,
-        borderRadius: 24,
-        overflow: 'hidden',
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.glass.border,
-        backgroundColor: Platform.select({
-            ios: theme.colors.glass.overlay,
-            default: theme.colors.glass.backgroundStrong,
-        }),
-        paddingVertical: 10,
-        paddingHorizontal: 12,
-    },
-    settingsHeader: {
-        minHeight: 40,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-        paddingBottom: 4,
-    },
-    backButton: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    settingsTitle: {
-        flex: 1,
-        minWidth: 0,
-        color: theme.colors.text,
-        fontSize: 14,
-        ...Typography.default('semiBold'),
-    },
-    optionList: {
-        flexGrow: 0,
-    },
-    optionSectionTitle: {
-        color: theme.colors.textSecondary,
-        fontSize: 12,
-        paddingHorizontal: 8,
-        paddingTop: 8,
-        paddingBottom: 4,
-        ...Typography.default('semiBold'),
-    },
-    option: {
-        minHeight: 48,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
-        paddingHorizontal: 8,
-        paddingVertical: 8,
-        borderRadius: 14,
-    },
-    optionPressed: {
-        backgroundColor: theme.colors.surfacePressedOverlay,
-    },
-    optionDisabled: {
-        opacity: 0.45,
-    },
-    optionCopy: {
-        flex: 1,
-        minWidth: 0,
-    },
-    optionLabel: {
-        color: theme.colors.textSecondary,
-        fontSize: 12,
-        ...Typography.default(),
-    },
-    optionValue: {
-        color: theme.colors.text,
-        fontSize: 15,
-        ...Typography.default(),
-    },
-    optionDescription: {
-        color: theme.colors.textSecondary,
-        fontSize: 12,
-        marginTop: 2,
-        ...Typography.default(),
-    },
 }));
 
 function resolveOption(options: ModeOption[], preferred: Array<string | null | undefined>): ModeOption | null {
@@ -557,14 +565,22 @@ function shakeOnce(value: SharedValue<number>) {
  * transparent sheet because a native menu mounts a SwiftUI host that no React
  * Native `disabled` prop can reach, and it is a later sibling so it paints and
  * hits over the control it covers.
+ *
+ * This wrapper is what the row lays out, not the control inside it, so the
+ * control's frame — whether it may shrink, how narrow it may go — has to be
+ * carried here. Left on the control alone it never reached the row: the
+ * wrapper kept React Native's refusal to shrink, the model name could not
+ * give way, and the row grew until send was pushed off its corner.
  */
 function RefusableControl({
     refusing,
     onRefuse,
+    style,
     children,
 }: {
     refusing: boolean;
     onRefuse: () => void;
+    style?: StyleProp<ViewStyle>;
     children: React.ReactNode;
 }) {
     const shake = useSharedValue(0);
@@ -572,7 +588,7 @@ function RefusableControl({
         transform: [{ translateX: shake.value }],
     }));
     return (
-        <Animated.View style={shakeStyle}>
+        <Animated.View style={[style, shakeStyle]}>
             {children}
             {refusing && (
                 <Pressable
@@ -598,12 +614,15 @@ function FocusConfigRevealRow({
     index,
     refusing,
     onRefuse,
+    pointerEvents,
     children,
 }: {
     progress: SharedValue<number>;
     index: number;
     refusing?: boolean;
     onRefuse?: () => void;
+    /** `box-none` for a row laid over the backdrop, which must stay dismissable. */
+    pointerEvents?: 'auto' | 'box-none';
     children: React.ReactNode;
 }) {
     const shake = useSharedValue(0);
@@ -626,7 +645,10 @@ function FocusConfigRevealRow({
     }, [index]);
 
     return (
-        <Animated.View style={[styles.focusConfigRevealRow, revealStyle]}>
+        <Animated.View
+            pointerEvents={pointerEvents}
+            style={[styles.focusConfigRevealRow, revealStyle]}
+        >
             {children}
             {refusing && (
                 <Pressable
@@ -662,6 +684,7 @@ export const HomeDock = React.memo(({
 }) => {
     const { theme } = useUnistyles();
     const safeArea = useSafeAreaInsets();
+    const { height: windowHeight } = useWindowDimensions();
     const keyboard = useReanimatedKeyboardAnimation();
     const inputRef = React.useRef<TextInput>(null);
     const focusedInputRef = React.useRef<TextInput>(null);
@@ -677,19 +700,31 @@ export const HomeDock = React.memo(({
     // and use an in-modal React Native picker only on Android.
     const useNativeMenus = shouldUseNativeHomeDockMenus(Platform.OS);
     const [sheetPage, setSheetPage] = React.useState<PickerPage | null>(null);
-    const { selectedImages, pickImages, removeImage, clearImages } = useImagePicker();
+    const { selectedImages, attachImages, removeImage, clearImages } = useImagePicker();
     const agentType = useNewSessionDraft((state) => state.agentType);
+    const pickedAgentType = useNewSessionDraft((state) => state.pickedAgentType);
     const selectedMachineId = useNewSessionDraft((state) => state.selectedMachineId);
     const selectedPath = useNewSessionDraft((state) => state.selectedPath);
+    const draftProjectId = useNewSessionDraft((state) => state.selectedProjectId);
     const sessionType = useNewSessionDraft((state) => state.sessionType);
     const worktreeKey = useNewSessionDraft((state) => state.worktreeKey);
     const permissionMode = useNewSessionDraft((state) => state.permissionMode);
     const modelMode = useNewSessionDraft((state) => state.modelMode);
     const effortLevel = useNewSessionDraft((state) => state.effortLevel);
+    const createsBot = useNewSessionDraft((state) => state.createsBot);
+    const botName = useNewSessionDraft((state) => state.botName);
+    const botFaceSeeds = useNewSessionDraft((state) => state.botFaceSeeds);
+    const botFaceSlot = useNewSessionDraft((state) => state.botFaceSlot);
+    const setCreatesBot = useNewSessionDraft((state) => state.setCreatesBot);
+    const setBotName = useNewSessionDraft((state) => state.setBotName);
+    const setBotFaceSlot = useNewSessionDraft((state) => state.setBotFaceSlot);
+    const rollBotFaces = useNewSessionDraft((state) => state.rollBotFaces);
     const setMachineId = useNewSessionDraft((state) => state.setMachineId);
     const renameMachineId = useNewSessionDraft((state) => state.renameMachineId);
     const setAgentType = useNewSessionDraft((state) => state.setAgentType);
+    const pickAgentType = useNewSessionDraft((state) => state.pickAgentType);
     const setPath = useNewSessionDraft((state) => state.setPath);
+    const setProjectId = useNewSessionDraft((state) => state.setProjectId);
     const setSessionType = useNewSessionDraft((state) => state.setSessionType);
     const setWorktreeKey = useNewSessionDraft((state) => state.setWorktreeKey);
     const setPermissionMode = useNewSessionDraft((state) => state.setPermissionMode);
@@ -698,6 +733,8 @@ export const HomeDock = React.memo(({
     const defaultOverrides = useSetting('agentDefaultOverrides');
     const machines = useAllMachines({ includeOffline: true });
     const sessions = useSessions();
+    // Names projects the session list cannot: the catalog keeps them whether or not a chat is open.
+    const projects = useProjects();
     // A person picks a computer, not a daemon. Happy CLI and Happy Agent each register a machine
     // for the same laptop, so the pair is offered once and the agent settles which one runs.
     const machineChoices = React.useMemo(() => collectMachineChoices(machines), [machines]);
@@ -750,24 +787,6 @@ export const HomeDock = React.memo(({
         }),
         [placeMachineIds, selectedPath, sessionList],
     );
-    const projectOptions = React.useMemo<ModeOption[]>(() => {
-        const homeDir = selectedHomeDir;
-        return places.map((place) => {
-            const relative = formatPathRelativeToHome(place.path, homeDir);
-            // A project names itself; a bare directory is named by where it is.
-            const name = place.projectId ? place.name : relative;
-            return {
-                key: place.key,
-                name,
-                description: name === place.path ? undefined : relative,
-            };
-        });
-    }, [places, selectedHomeDir]);
-    const selectedProjectId = React.useMemo(
-        () => places.find((place) => place.path === selectedPath)?.projectId ?? null,
-        [places, selectedPath],
-    );
-    const currentProject = resolveOption(projectOptions, [selectedPath, '~']);
     // Happy Agent's half of this computer, and only this computer's: a session asked for here is
     // never handed to a daemon somewhere else because that one happened to be reachable.
     const rigSelectionMachine = selectedChoice?.rigMachine ?? null;
@@ -775,7 +794,59 @@ export const HomeDock = React.memo(({
         () => getRigMachineSessionCreation(rigSelectionMachine?.metadata),
         [rigSelectionMachine],
     );
+    // The project the draft names, as the picker addresses it. A project that has since been worked
+    // on in its own checkout is offered as that directory, and the draft's row follows it there
+    // rather than standing beside it as a second row for the same project.
+    const draftProjectPlace = draftProjectId
+        ? places.find((place) => place.projectId === draftProjectId) ?? null
+        : null;
+    const draftProjectPlaceKey = draftProjectId
+        ? draftProjectPlace?.key ?? projectPlaceKey(draftProjectId)
+        : null;
+    const projectOptions = React.useMemo<ModeOption[]>(() => {
+        const homeDir = selectedHomeDir;
+        const options = places.flatMap((place): ModeOption[] => {
+            if (place.path === null) {
+                // A project only the catalog has the folder for can be opened by Happy Agent alone,
+                // so it is offered only where Happy Agent could run it.
+                if (!rigSelectionCreation) return [];
+                return [{ key: place.key, name: place.name }];
+            }
+            const relative = formatPathRelativeToHome(place.path, homeDir);
+            // A project names itself; a bare directory is named by where it is.
+            const name = place.projectId ? place.name : relative;
+            return [{
+                key: place.key,
+                name,
+                description: name === place.path ? undefined : relative,
+            }];
+        });
+        // A project is visible here only through its own chats, so archiving the last one takes it
+        // out of the list. It is still in the catalog and can still be started in, so the draft's
+        // own project keeps its row — otherwise the picker would read as home while the start went
+        // to the project. Its name comes from the catalog, which does not need a chat to know it.
+        if (draftProjectId && !draftProjectPlace) {
+            options.push({
+                key: projectPlaceKey(draftProjectId),
+                name: projects[draftProjectId]?.name ?? 'Project',
+            });
+        }
+        return options;
+    }, [draftProjectId, draftProjectPlace, places, projects, rigSelectionCreation, selectedHomeDir]);
+    const selectedProjectId = React.useMemo(
+        () => draftProjectId
+            ?? places.find((place) => place.path === selectedPath)?.projectId
+            ?? null,
+        [draftProjectId, places, selectedPath],
+    );
+    const currentProject = resolveOption(projectOptions, [draftProjectPlaceKey, selectedPath, '~']);
     const rigCreation = agentType === 'rig' ? rigSelectionCreation : null;
+    // A bot is Happy Agent's to make, and only a daemon new enough to say so
+    // offers it. An older daemon, or a computer without one, gets no Bot choice.
+    const supportsBots = rigSelectionCreation?.supportsBots === true;
+    React.useEffect(() => {
+        if (createsBot && !supportsBots) setCreatesBot(false);
+    }, [createsBot, setCreatesBot, supportsBots]);
     const happyCliVersion = selectedChoice?.happyMachine?.metadata?.happyCliVersion;
     const supportsWorktree = rigCreation?.supportsWorktrees
         ?? (agentType === 'rig' ? false : getSupportsWorktree(agentType));
@@ -845,7 +916,7 @@ export const HomeDock = React.memo(({
         }
         const options: ModeOption[] = [
             ...(canCreateWorktree
-                ? [{ key: '__new__', name: picksWorkspaces ? 'Create New' : 'Create new worktree' }]
+                ? [{ key: '__new__', name: picksWorkspaces ? 'Create New Workspace' : 'Create New Worktree' }]
                 : []),
             // Starting in no workspace means starting in the project's own
             // checkout, which is a place with a name rather than an absence.
@@ -868,7 +939,7 @@ export const HomeDock = React.memo(({
         }))
     ), [selectedChoice]);
     const hasAvailableHarness = availableAgents.length > 0;
-    const resolvedAgentType = resolveChoiceAgent(selectedChoice, agentType);
+    const resolvedAgentType = resolveNewSessionAgent(selectedChoice, agentType, pickedAgentType);
     const defaults = React.useMemo(() => rigCreation
         ? {
             permissionMode: rigCreation.defaultPermissionMode ?? '',
@@ -901,7 +972,7 @@ export const HomeDock = React.memo(({
         defaults.permissionMode,
         rigCreation ? null : getCodeAgentDefaults(agentType, happyCliVersion).permissionMode,
     ]);
-    const currentModel = resolveOption(modelOptions, [modelMode, defaults.modelMode]);
+    const currentModel = resolveOption(modelOptions, [retireModelMode(agentType, modelMode), defaults.modelMode]);
     const effortOptions = React.useMemo(
         () => rigCreation
             ? rigCreation.effortsForModel(currentModel?.key).map((key) => ({ key, name: key }))
@@ -915,15 +986,31 @@ export const HomeDock = React.memo(({
         ?? availableAgents[0]
         ?? { key: agentType, name: getHarnessName(agentType) };
     const permissionLabel = getPermissionModeShortLabel(currentPermission);
-    const focusedPromptPlaceholder = resolveHomeDockPromptPlaceholder(currentAgent.key, currentAgent.name);
-    const canSubmit = !isSubmitting && (
-        prompt.trim().length > 0 || selectedImages.length > 0
+    const modelChipName = (currentModel?.name ?? currentAgent.name).trim();
+    // Cut ahead of time only for the native iOS trigger, which draws a fixed
+    // string; the React Native chip ellipsises against its real width.
+    const modelChipLabel = useNativeMenus ? truncateModelLabel(modelChipName) : modelChipName;
+    const focusedPromptPlaceholder = createsBot
+        ? 'Name your bot'
+        : resolveHomeDockPromptPlaceholder(currentAgent.key, currentAgent.name);
+    // The one input is the prompt for a session and the name for a bot. It is
+    // the same TextInput either way, so switching keeps the keyboard up.
+    const inputText = createsBot ? botName : prompt;
+    // A pasted line break becomes a space and the daemon's ceiling is kept, so
+    // the field never holds a name the daemon would refuse after the press.
+    const onInputTextChange = createsBot
+        ? (next: string) => setBotName(sanitizeBotName(next))
+        : onPromptChange;
+    const canSubmit = !isSubmitting && (createsBot
+        ? isValidBotName(botName)
+        : prompt.trim().length > 0 || selectedImages.length > 0
     );
     const startPhase = isSubmitting ? submitPhase ?? 'spawning' : null;
     const startProgressLabel = resolveNewSessionProgressLabel({
         phase: startPhase,
         agentName: currentAgent.name,
         picksWorkspaces,
+        createsBot,
     });
     const primaryAction = resolveNewSessionPrimaryAction({
         canSubmit,
@@ -970,7 +1057,7 @@ export const HomeDock = React.memo(({
     }));
     const focusedInputLayout = resolveMultiTextInputLayout({
         contentHeight: focusedInputContentHeight,
-        hasText: prompt.length > 0,
+        hasText: inputText.length > 0,
         maxHeight: MOBILE_COMPOSER_METRICS.inputMaxHeight,
         lineHeight: MOBILE_COMPOSER_METRICS.inputLineHeight,
         paddingTop: MOBILE_COMPOSER_METRICS.inputPaddingTop,
@@ -984,7 +1071,7 @@ export const HomeDock = React.memo(({
     );
     const focusedComposerHeight = resolveMobileComposerHeight(
         focusedInputLayout.height,
-        selectedImages.length > 0,
+        !createsBot && selectedImages.length > 0,
     );
     const handleFocusedInputMeasurement = React.useCallback((event: LayoutChangeEvent) => {
         const nextHeight = Math.ceil(event.nativeEvent.layout.height);
@@ -992,6 +1079,18 @@ export const HomeDock = React.memo(({
             currentHeight === nextHeight ? currentHeight : nextHeight
         ));
     }, []);
+    // The Android picker sits between the header and the composer: it gives up
+    // whatever the keyboard takes, and never goes below a few rows.
+    const settingsSheetHeightStyle = useAnimatedStyle(() => ({
+        maxHeight: Math.max(
+            SETTINGS_SHEET_MIN_HEIGHT,
+            Math.min(
+                windowHeight * SETTINGS_SHEET_HEIGHT_FRACTION,
+                // keyboard.height is negative while the keyboard is up.
+                windowHeight - safeArea.top - SETTINGS_SHEET_RESERVED_HEIGHT + keyboard.height.value,
+            ),
+        ),
+    }), [safeArea.top, windowHeight]);
     const keyboardStyle = useAnimatedStyle(() => ({
         // Keyboard height includes the bottom safe area on iOS. The resting
         // dock keeps that inset, then gives it back while the keyboard opens
@@ -1145,7 +1244,9 @@ export const HomeDock = React.memo(({
         closeFocusMode();
     }, [closeFocusMode, closePicker, isSubmitting, refuse, sheetPage]);
 
-    const selectAgent = React.useCallback((agent: NewSessionAgentType) => {
+    // `picked` is the person choosing the harness (the picker, or a project only Happy can open);
+    // the resolution effect below only follows what the computer can run and never sets a pick.
+    const selectAgent = React.useCallback((agent: NewSessionAgentType, picked = false) => {
         const nextRigCreation = agent === 'rig' ? rigSelectionCreation : null;
         const nextDefaults = nextRigCreation
             ? {
@@ -1156,11 +1257,12 @@ export const HomeDock = React.memo(({
             : resolveAgentDefaultConfig(defaultOverrides, agent, happyCliVersion);
         // Choosing Happy Agent no longer moves the machine selection: the computer already covers
         // both daemons, and switching it under the person was what made the picker show two.
-        setAgentType(agent);
+        if (picked) pickAgentType(agent);
+        else setAgentType(agent);
         setPermissionMode(nextDefaults.permissionMode);
         setModelMode(nextDefaults.modelMode);
         if (nextDefaults.effortLevel) setEffortLevel(nextDefaults.effortLevel);
-    }, [defaultOverrides, happyCliVersion, rigSelectionCreation, setAgentType, setEffortLevel, setModelMode, setPermissionMode]);
+    }, [defaultOverrides, happyCliVersion, pickAgentType, rigSelectionCreation, setAgentType, setEffortLevel, setModelMode, setPermissionMode]);
 
     React.useEffect(() => {
         if (resolvedAgentType !== agentType) {
@@ -1172,40 +1274,87 @@ export const HomeDock = React.memo(({
         page: string;
         label: string;
         value: string;
-        icon: React.ComponentProps<typeof Ionicons>['name'];
     };
+    type EnvironmentRow = SettingsRow & {
+        page: EnvironmentSetting | 'agent';
+        /**
+         * Drawn by React Native beside the native menu rather than inside its
+         * trigger, so it stays put while the system morphs the value into the
+         * menu. It is not repeated inside the menu either.
+         */
+        icon: React.ReactElement;
+    };
+
+    const rowIcon = (name: React.ComponentProps<typeof Ionicons>['name']) => (
+        <Ionicons name={name} size={21} color={theme.colors.text} />
+    );
 
     // The rows stacked above the focused composer. The harness sits with
     // machine/project/worktree because all four say where and with what the
-    // session runs, and all four are settled before anything is typed.
-    const environmentRows: SettingsRow[] = [
-        { page: 'machine', label: 'MACHINE', value: currentMachine?.name ?? 'Select machine', icon: 'desktop-outline' },
-        { page: 'project', label: 'PROJECT', value: currentProject?.name ?? '~', icon: 'folder-outline' },
-        {
-            page: 'worktree',
-            label: picksWorkspaces ? 'WORKSPACE' : 'WORKTREE',
-            value: currentWorktree?.name ?? (picksWorkspaces ? 'Main' : 'No worktree'),
-            icon: 'git-branch-outline',
-        },
-        {
-            page: 'agent',
-            label: 'HARNESS',
-            value: hasAvailableHarness ? currentAgent.name : 'Help',
-            icon: hasAvailableHarness ? 'hardware-chip-outline' : 'help-circle-outline',
-        },
+    // session runs, and all four are settled before anything is typed. A bot
+    // lives on a computer and nowhere else, so making one keeps only the
+    // machine row; the faces take the place of the rest.
+    const environmentRows: EnvironmentRow[] = [
+        { page: 'machine', label: 'MACHINE', value: currentMachine?.name ?? 'Select machine', icon: rowIcon('desktop-outline') },
+        ...(createsBot ? [] : [
+            {
+                page: 'project' as const,
+                label: 'PROJECT',
+                value: currentProject?.name ?? '~',
+                icon: rowIcon('folder-outline'),
+            },
+            {
+                page: 'worktree' as const,
+                label: picksWorkspaces ? 'WORKSPACE' : 'WORKTREE',
+                value: currentWorktree?.name ?? (picksWorkspaces ? 'Main' : 'No worktree'),
+                icon: rowIcon('git-branch-outline'),
+            },
+            {
+                page: 'agent' as const,
+                label: 'HARNESS',
+                value: hasAvailableHarness ? currentAgent.name : 'Help',
+                icon: rowIcon(hasAvailableHarness ? 'hardware-chip-outline' : 'help-circle-outline'),
+            },
+        ]),
     ];
     const agentRows: SettingsRow[] = hasAvailableHarness ? [
-        ...(currentModel ? [{ page: 'model', label: t('agentInput.model.title'), value: currentModel.name, icon: 'cube-outline' as const }] : []),
-        ...(currentPermission ? [{ page: 'permission', label: t('agentInput.permissionMode.title'), value: permissionLabel ?? currentPermission.name, icon: 'shield-outline' as const }] : []),
-        ...(currentEffort ? [{ page: 'effort', label: t('agentInput.effort.title'), value: currentEffort.name, icon: 'speedometer-outline' as const }] : []),
+        ...(currentModel ? [{ page: 'model', label: t('agentInput.model.title'), value: currentModel.name }] : []),
+        ...(currentPermission ? [{ page: 'permission', label: t('agentInput.permissionMode.title'), value: permissionLabel ?? currentPermission.name }] : []),
+        ...(currentEffort ? [{ page: 'effort', label: t('agentInput.effort.title'), value: currentEffort.name }] : []),
     ] : [];
 
+    type PickerOption = ModeOption & {
+        /** An action such as "Enter custom path…", never drawn as chosen. */
+        action?: boolean;
+    };
+    /**
+     * One group of a picker, drawn the way the model menu draws a provider: a
+     * heading, then the rows, then a line before the next group.
+     */
+    type PickerSection = {
+        key: string;
+        title?: string;
+        /** The provider whose icon heads a group of models. */
+        providerKind?: string;
+        options: PickerOption[];
+    };
     type PickerConfig = {
         title: string;
-        options: ModeOption[];
+        sections: PickerSection[];
         selectedKey: string | null | undefined;
         onSelect: (key: string) => void;
     };
+    const toNativeOptions = (options: PickerOption[]): NativeOptionsPickerOption[] => options.map((option) => ({
+        key: option.key,
+        label: option.name,
+        disabled: option.disabled,
+        action: option.action,
+    }));
+    const toNativeSections = (sections: PickerSection[]): NativeOptionsPickerSection[] => sections.map((section) => ({
+        key: section.key,
+        title: section.title,
+        options: toNativeOptions(section.options),
+    }));
 
     const requestCustomProjectPath = () => {
         Keyboard.dismiss();
@@ -1223,9 +1372,7 @@ export const HomeDock = React.memo(({
                 },
             );
             const selectedCustomPath = resolveCustomProjectPathSelection(path, mountedRef.current);
-            if (selectedCustomPath) {
-                setPath(selectedCustomPath);
-            }
+            if (selectedCustomPath) setPath(selectedCustomPath);
         })();
     };
 
@@ -1236,16 +1383,27 @@ export const HomeDock = React.memo(({
 
     const getEnvironmentPickerConfig = (setting: EnvironmentSetting): PickerConfig => {
         if (setting === 'machine') {
-            return { title: 'Machine', options: machineOptions, selectedKey: selectedMachineId, onSelect: setMachineId };
+            return {
+                title: 'Machine',
+                sections: [{ key: 'machine', title: 'Machine', options: machineOptions }],
+                selectedKey: selectedMachineId,
+                onSelect: setMachineId,
+            };
         }
         if (setting === 'project') {
             return {
                 title: 'Project',
-                options: [
-                    ...projectOptions,
+                // The projects under their heading, then the one row that is an
+                // action rather than a place, past the system's line.
+                sections: [
+                    { key: 'projects', title: 'Projects', options: projectOptions },
                     {
-                        key: CUSTOM_PROJECT_PATH_KEY,
-                        name: t('machineLauncher.enterCustomPath'),
+                        key: 'custom',
+                        options: [{
+                            key: CUSTOM_PROJECT_PATH_KEY,
+                            name: t('machineLauncher.enterCustomPath'),
+                            action: true,
+                        }],
                     },
                 ],
                 selectedKey: currentProject?.key,
@@ -1254,13 +1412,22 @@ export const HomeDock = React.memo(({
                         requestCustomProjectPath();
                         return;
                     }
+                    const projectId = readProjectPlaceKey(key);
+                    if (projectId) {
+                        // Nothing here knows this project's folder, so it is named by identity and
+                        // the harness moves to the only one that can resolve it.
+                        setProjectId(projectId);
+                        selectAgent('rig', true);
+                        return;
+                    }
                     setPath(key);
                 },
             };
         }
+        const title = picksWorkspaces ? 'Workspace' : 'Worktree';
         return {
-            title: picksWorkspaces ? 'Workspace' : 'Worktree',
-            options: worktreeOptions,
+            title,
+            sections: [{ key: 'worktree', title, options: worktreeOptions }],
             selectedKey: selectedWorktreeKey,
             onSelect: (key) => {
                 setSessionType(key === '__none__' ? 'simple' : 'worktree');
@@ -1271,30 +1438,53 @@ export const HomeDock = React.memo(({
 
     const getAgentPickerConfig = (setting: AgentSetting): PickerConfig => {
         if (setting === 'agent') {
-            return { title: 'Harness', options: availableAgents, selectedKey: agentType, onSelect: (key) => selectAgent(key as NewSessionAgentType) };
+            return {
+                title: 'Harness',
+                sections: [{ key: 'agent', title: 'Harness', options: availableAgents }],
+                selectedKey: agentType,
+                onSelect: (key) => selectAgent(key as NewSessionAgentType, true),
+            };
         }
         if (setting === 'model') {
-            return { title: t('agentInput.model.title'), options: modelOptions, selectedKey: currentModel?.key, onSelect: setModelMode };
+            const title = t('agentInput.model.title');
+            return {
+                title,
+                sections: groupModelModesByProvider(modelOptions).map((providerGroup) => ({
+                    key: providerGroup.key,
+                    title: providerGroup.title ?? title,
+                    ...(providerGroup.title ? { providerKind: providerGroup.models[0]?.providerKind ?? '' } : {}),
+                    options: providerGroup.models,
+                })),
+                selectedKey: currentModel?.key,
+                onSelect: setModelMode,
+            };
         }
         if (setting === 'permission') {
-            return { title: t('agentInput.permissionMode.title'), options: permissionOptions, selectedKey: currentPermission?.key, onSelect: setPermissionMode };
+            const title = t('agentInput.permissionMode.title');
+            return {
+                title,
+                sections: [{ key: 'permission', title, options: permissionOptions }],
+                selectedKey: currentPermission?.key,
+                onSelect: setPermissionMode,
+            };
         }
-        return { title: t('agentInput.effort.title'), options: effortOptions, selectedKey: currentEffort?.key, onSelect: setEffortLevel };
+        const title = t('agentInput.effort.title');
+        return {
+            title,
+            sections: [{ key: 'effort', title, options: effortOptions }],
+            selectedKey: currentEffort?.key,
+            onSelect: setEffortLevel,
+        };
     };
 
     const agentSettingsGroups: NativeSettingsMenuGroup[] = agentRows.flatMap((row) => {
         const config = getAgentPickerConfig(row.page as AgentSetting);
-        const sections = row.page === 'model'
-            ? groupModelModesByProvider(modelOptions).map((providerGroup) => ({
-                key: `model:${providerGroup.key}`,
-                title: providerGroup.title ?? config.title,
-                options: providerGroup.models,
-            }))
-            : [{ key: row.page, title: config.title, options: config.options }];
-        return sections.map((section) => ({
-            key: section.key,
+        return config.sections.map((section) => ({
+            // The model menu is one group per provider; the others are one
+            // group each, found below by the page they belong to.
+            key: row.page === 'model' ? `model:${section.key}` : row.page,
             label: row.value || config.title,
-            title: section.title,
+            title: section.title ?? config.title,
             systemImage: {
                 agent: 'cpu',
                 model: 'cube',
@@ -1354,27 +1544,16 @@ export const HomeDock = React.memo(({
         closeFocusMode();
     }, [closeFocusMode, onSubmitCancel]);
 
-    const renderPickerRowContent = (row: SettingsRow, compact: boolean) => (
-        <View style={compact ? styles.focusConfigRow : styles.option}>
-            <View style={styles.focusConfigIcon}>
-                <Ionicons
-                    name={row.icon}
-                    size={compact ? 21 : 18}
-                    color={theme.colors.text}
-                />
-            </View>
-            {compact ? (
-                <Text style={styles.focusConfigValue} numberOfLines={1}>{row.value}</Text>
-            ) : (
-                <View style={styles.optionCopy}>
-                    <Text style={styles.optionLabel}>{row.label}</Text>
-                    <Text style={styles.optionValue} numberOfLines={1}>{row.value}</Text>
-                </View>
-            )}
+    // The whole row is one press target where the row opens an in-app sheet
+    // or a link: nothing morphs there, so the icon can sit inside it.
+    const renderPressableRow = (row: EnvironmentRow) => (
+        <View style={styles.focusConfigRow}>
+            <View style={styles.focusConfigIcon}>{row.icon}</View>
+            <Text style={styles.focusConfigValue} numberOfLines={1}>{row.value}</Text>
         </View>
     );
 
-    const renderPickerRow = (row: SettingsRow, config: PickerConfig, compact: boolean) => {
+    const renderPickerRow = (row: EnvironmentRow, config: PickerConfig) => {
         if (row.page === 'agent' && !hasAvailableHarness) {
             return (
                 <Pressable
@@ -1383,7 +1562,7 @@ export const HomeDock = React.memo(({
                     accessibilityRole="link"
                     accessibilityLabel="Harness setup help"
                 >
-                    {renderPickerRowContent(row, compact)}
+                    {renderPressableRow(row)}
                 </Pressable>
             );
         }
@@ -1393,57 +1572,78 @@ export const HomeDock = React.memo(({
                     key={row.page}
                     onPress={() => {
                         if (row.page === 'worktree') refreshWorktrees();
-                        setSheetPage(row.page as PickerPage);
+                        setSheetPage(row.page);
                     }}
                     accessibilityRole="button"
                     accessibilityLabel={`${row.label}: ${row.value}`}
                 >
-                    {renderPickerRowContent(row, compact)}
+                    {renderPressableRow(row)}
                 </Pressable>
             );
         }
+        // The icon stays a React Native view beside the native menu: only the
+        // value is the menu's trigger, so opening the menu morphs the value
+        // into the platter and leaves the icon where it is.
         return (
-            <NativeOptionsPicker
-                key={row.page}
-                title={config.title}
-                tintColor={compact ? theme.colors.text : undefined}
-                triggerLabel={row.value}
-                systemImage={{
-                    machine: 'desktopcomputer',
-                    project: 'folder',
-                    worktree: 'arrow.triangle.branch',
-                    agent: 'cpu',
-                    model: 'cube',
-                    permission: 'shield',
-                    effort: 'bolt',
-                }[row.page]}
-                options={config.options.map((option) => ({ key: option.key, label: option.name }))}
-                selectedKey={config.selectedKey}
-                onMenuOpen={() => {
-                    markNativeMenuOpen();
-                    if (row.page === 'worktree') refreshWorktrees();
-                }}
-                onSelect={(key) => {
-                    nativeMenuOpenRef.current = false;
-                    config.onSelect(key);
-                }}
-            >
-                {renderPickerRowContent(row, compact)}
-            </NativeOptionsPicker>
+            <View key={row.page} style={styles.focusConfigRow}>
+                <View style={styles.focusConfigIcon}>{row.icon}</View>
+                <View style={styles.focusConfigTrigger}>
+                    <NativeOptionsPicker
+                        title={config.title}
+                        tintColor={theme.colors.text}
+                        triggerLabel={row.value}
+                        sections={toNativeSections(config.sections)}
+                        selectedKey={config.selectedKey}
+                        onMenuOpen={() => {
+                            markNativeMenuOpen();
+                            if (row.page === 'worktree') refreshWorktrees();
+                        }}
+                        onSelect={(key) => {
+                            nativeMenuOpenRef.current = false;
+                            config.onSelect(key);
+                        }}
+                    >
+                        <Text style={styles.focusConfigTriggerValue} numberOfLines={1}>{row.value}</Text>
+                    </NativeOptionsPicker>
+                </View>
+            </View>
         );
     };
 
-    const renderEnvironmentPickers = () => environmentRows.map((row, index) => (
-        <FocusConfigRevealRow
-            key={row.page}
-            progress={focusPresentation}
-            index={index}
-            refusing={isSubmitting}
-            onRefuse={refuse}
-        >
-            {renderPickerRow(row, getPickerConfig(row.page as PickerPage), true)}
-        </FocusConfigRevealRow>
-    ));
+    // The rows for whatever the header chose, then the faces a bot may wear.
+    // Each reveals in turn. Session | Bot itself is at the top of the screen.
+    const renderEnvironmentPickers = () => {
+        const lines: { key: string; content: React.ReactNode }[] = [
+            ...environmentRows.map((row) => ({
+                key: row.page,
+                content: renderPickerRow(row, getPickerConfig(row.page)),
+            })),
+            ...(createsBot ? [{
+                key: 'faces',
+                content: (
+                    <View style={styles.focusConfigFaces}>
+                        <BotFacePicker
+                            seeds={botFaceSeeds}
+                            slot={botFaceSlot}
+                            onPick={setBotFaceSlot}
+                            onRoll={rollBotFaces}
+                        />
+                    </View>
+                ),
+            }] : []),
+        ];
+        return lines.map((line, index) => (
+            <FocusConfigRevealRow
+                key={line.key}
+                progress={focusPresentation}
+                index={index}
+                refusing={isSubmitting}
+                onRefuse={refuse}
+            >
+                {line.content}
+            </FocusConfigRevealRow>
+        ));
+    };
 
     const renderMenuControl = ({
         page,
@@ -1466,7 +1666,10 @@ export const HomeDock = React.memo(({
         triggerAlignment?: NativeSettingsMenuProps['triggerAlignment'];
         children: React.ReactNode;
     }) => (
-        <RefusableControl refusing={isSubmitting} onRefuse={refuse}>
+        // The frame goes on the wrapper as well as the control: the wrapper is
+        // the row's child, so it is the one that has to be allowed to shrink.
+        // The control inside is stretched to whatever the wrapper is given.
+        <RefusableControl refusing={isSubmitting} onRefuse={refuse} style={style}>
             {!useNativeMenus ? (
                 <Pressable
                     onPress={() => setSheetPage(page)}
@@ -1502,81 +1705,50 @@ export const HomeDock = React.memo(({
     // Only reached with a page selected: `sheetVisible` gates the whole sheet.
     const renderSettingsSheet = (page: PickerPage) => {
         const config = getPickerConfig(page);
-        const optionSections = page === 'model'
-            ? groupModelModesByProvider(modelOptions).map((providerGroup) => ({
-                key: providerGroup.key,
-                title: providerGroup.title,
-                options: providerGroup.models,
-            }))
-            : [{ key: page, title: null, options: config.options }];
+        // Android only (`sheetVisible`). Drawn inline rather than as a second
+        // modal so the focused composer keeps its keyboard; the panel shrinks
+        // with the keyboard so its list always scrolls inside the space left.
         return (
-            <View style={styles.settingsStack}>
-                <MobileGlassSurface
-                    nativeEffect
-                    intensity={78}
-                    glassEffectStyle="regular"
-                    style={styles.settingsSurface}
-                >
-                    <View style={styles.settingsHeader}>
-                        <Pressable
-                            onPress={closePicker}
-                            style={styles.backButton}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('common.cancel')}
-                        >
-                            <Ionicons name="close" size={20} color={theme.colors.text} />
-                        </Pressable>
-                        <Text style={styles.settingsTitle} numberOfLines={1}>
-                            {config.title}
-                        </Text>
-                    </View>
-                    <ScrollView style={styles.optionList} keyboardShouldPersistTaps="always">
-                        {optionSections.map((section) => (
-                            <React.Fragment key={section.key}>
-                                {section.title ? (
-                                    <Text style={styles.optionSectionTitle}>{section.title}</Text>
-                                ) : null}
-                                {section.options.map((option) => {
-                                    const selectable = isHomeDockOptionSelectable(option.disabled);
-                                    const selected = option.key === config.selectedKey;
-                                    return (
-                                <Pressable
+            <PickerSheetPanel
+                title={config.title}
+                onClose={closePicker}
+                style={[styles.settingsStack, settingsSheetHeightStyle]}
+            >
+                {config.sections.map((section, sectionIndex) => (
+                    <React.Fragment key={section.key}>
+                        {/* The sheet already names the choice in its header,
+                            so a group named the same is left bare; providers
+                            and "Projects" are shown. */}
+                        <PickerSheetSection
+                            separated={sectionIndex > 0}
+                            title={section.title && section.title !== config.title ? section.title : null}
+                            icon={section.providerKind !== undefined
+                                ? <ProviderIcon kind={section.providerKind} size={16} />
+                                : undefined}
+                        />
+                        {section.options.map((option) => {
+                            const selectable = isHomeDockOptionSelectable(option.disabled);
+                            return (
+                                <PickerSheetOption
                                     key={option.key}
+                                    label={option.name}
+                                    // A second line that only repeats its
+                                    // group's heading says nothing new.
+                                    description={option.description === section.title ? null : option.description}
+                                    selected={!option.action && option.key === config.selectedKey}
+                                    action={option.action}
                                     disabled={!selectable}
                                     onPress={() => {
                                         if (!selectable) return;
                                         config.onSelect(option.key);
                                         closePicker();
                                     }}
-                                    style={({ pressed }) => [
-                                        styles.option,
-                                        !selectable && styles.optionDisabled,
-                                        pressed && selectable && styles.optionPressed,
-                                    ]}
-                                    accessibilityRole="button"
-                                    accessibilityState={{ disabled: !selectable, selected }}
-                                >
-                                    <View style={styles.focusConfigIcon}>
-                                        {selected && (
-                                            <Ionicons name="checkmark" size={16} color={theme.colors.text} />
-                                        )}
-                                    </View>
-                                    <View style={styles.optionCopy}>
-                                        <Text style={styles.optionValue} numberOfLines={1}>{option.name}</Text>
-                                        {!!option.description && (
-                                            <Text style={styles.optionDescription} numberOfLines={2}>
-                                                {option.description}
-                                            </Text>
-                                        )}
-                                    </View>
-                                </Pressable>
-                                    );
-                                })}
-                            </React.Fragment>
-                        ))}
-                    </ScrollView>
-                </MobileGlassSurface>
-            </View>
+                                />
+                            );
+                        })}
+                    </React.Fragment>
+                ))}
+            </PickerSheetPanel>
         );
     };
 
@@ -1652,9 +1824,10 @@ export const HomeDock = React.memo(({
 
     const submit = async () => {
         if (!canSubmit) return false;
-        useNewSessionDraft.getState().setAttachments(selectedImages);
+        // A bot takes no first message here, so its attachments are none.
+        useNewSessionDraft.getState().setAttachments(createsBot ? [] : selectedImages);
         const started = await onSubmit();
-        if (started) clearImages();
+        if (started && !createsBot) clearImages();
         return started;
     };
 
@@ -1684,7 +1857,7 @@ export const HomeDock = React.memo(({
                     ]}
                 >
                 <View style={styles.focusedComposerContent}>
-                    {selectedImages.length > 0 && (
+                    {!createsBot && selectedImages.length > 0 && (
                         <Animated.View style={focusedInputRevealStyle}>
                             <AgentInputAttachmentStrip images={selectedImages} onRemove={removeImage} />
                         </Animated.View>
@@ -1700,11 +1873,11 @@ export const HomeDock = React.memo(({
                             onLayout={handleFocusedInputMeasurement}
                             style={styles.focusedInputMeasurement}
                         >
-                            {prompt || ' '}
+                            {inputText || ' '}
                         </Text>
                         <TextInput
                             ref={focusedInputRef}
-                            value={prompt}
+                            value={inputText}
                             // `editable={false}` would take the keyboard down
                             // with it, and the keyboard is the thing this whole
                             // flow keeps up. The input is controlled, so
@@ -1715,13 +1888,21 @@ export const HomeDock = React.memo(({
                                     refuseWithShake(composerShakerRef);
                                     return;
                                 }
-                                onPromptChange(next);
+                                onInputTextChange(next);
                             }}
                             onFocus={() => setIsFocused(true)}
                             placeholder={focusedPromptPlaceholder}
                             placeholderTextColor={theme.colors.textSecondary}
                             selectionColor={theme.colors.text}
                             autoCorrect
+                            // A name is one line: Return makes the bot rather
+                            // than adding a line, and the keyboard stays where
+                            // it is either way because nothing is remounted.
+                            autoCapitalize={createsBot ? 'words' : 'sentences'}
+                            maxLength={createsBot ? BOT_NAME_MAX_LENGTH : undefined}
+                            returnKeyType={createsBot ? 'done' : 'default'}
+                            submitBehavior={createsBot ? 'submit' : 'newline'}
+                            onSubmitEditing={createsBot ? submitFromFocusMode : undefined}
                             multiline
                             scrollEnabled={focusedInputLayout.scrollEnabled}
                             style={[styles.focusedInput, { height: focusedInputLayout.height }]}
@@ -1737,9 +1918,14 @@ export const HomeDock = React.memo(({
                         />
                     )}
                     <Animated.View style={[styles.focusedComposerActions, focusedActionsRevealStyle]}>
+                        {/* A bot is made from a name and a face: the picture,
+                            mode and model controls belong to a first message,
+                            which is typed once the bot is open. Only the
+                            primary button stays, where it always is. */}
+                        {!createsBot && (
                         <RefusableControl refusing={isSubmitting} onRefuse={refuse}>
                             <BubblePressable
-                                onPress={() => void pickImages()}
+                                onPress={() => void attachImages()}
                                 style={styles.sideButton}
                                 accessibilityRole="button"
                                 accessibilityLabel="Add image"
@@ -1751,11 +1937,16 @@ export const HomeDock = React.memo(({
                                 />
                             </BubblePressable>
                         </RefusableControl>
+                        )}
+                        {/* Every chip lives in this one box, and send is the
+                            box's sibling: the box is handed the width left
+                            over and nothing inside can reach past it. */}
+                        <View style={styles.focusedComposerMiddle}>
                         {/* The permission mode reads out in words instead of
                             hiding behind a gear: it is the one setting here that
                             changes what the agent is allowed to do to your
                             machine, so it is worth the width. */}
-                        {permissionSettingsGroup && permissionLabel && renderMenuControl({
+                        {!createsBot && permissionSettingsGroup && permissionLabel && renderMenuControl({
                             page: 'permission',
                             groups: [permissionSettingsGroup],
                             flat: true,
@@ -1778,18 +1969,18 @@ export const HomeDock = React.memo(({
                         {/* Pushes model/effort right so the pair sits against the
                             send button instead of drifting when a label changes. */}
                         <View style={{ flex: 1 }} />
-                        {modelSettingsGroups.length > 0 ? (
+                        {createsBot ? null : modelSettingsGroups.length > 0 ? (
                             renderMenuControl({
                                 page: 'model',
                                 groups: modelSettingsGroups,
                                 style: styles.nativeModeMenu,
                                 accessibilityLabel: t('agentInput.model.title'),
-                                triggerLabel: currentModel?.name ?? currentAgent.name,
+                                triggerLabel: modelChipLabel,
                                 triggerAlignment: 'trailing',
                                 children: (
                                     <View style={styles.focusedModeButton}>
                                         <Text style={styles.focusedModeText} numberOfLines={1}>
-                                            {currentModel?.name ?? currentAgent.name}
+                                            {modelChipLabel}
                                         </Text>
                                     </View>
                                 ),
@@ -1798,7 +1989,7 @@ export const HomeDock = React.memo(({
                             <View style={styles.nativeModeMenu}>
                                 <View style={styles.focusedModeButton}>
                                     <Text style={styles.focusedModeText} numberOfLines={1}>
-                                        {currentAgent.name}
+                                        {modelChipLabel}
                                     </Text>
                                 </View>
                             </View>
@@ -1806,10 +1997,10 @@ export const HomeDock = React.memo(({
                         {/* The separator is its own element rather than part of the
                             effort label, which would wrap it onto a second line
                             inside the narrow trigger. */}
-                        {effortSettingsGroup && (
+                        {!createsBot && effortSettingsGroup && (
                             <Text style={styles.focusedModeSeparator}>·</Text>
                         )}
-                        {effortSettingsGroup && renderMenuControl({
+                        {!createsBot && effortSettingsGroup && renderMenuControl({
                             page: 'effort',
                             groups: [effortSettingsGroup],
                             flat: true,
@@ -1825,6 +2016,7 @@ export const HomeDock = React.memo(({
                                 </View>
                             ),
                         })}
+                        </View>
                         {/* Nothing covers this row as a whole: each control
                             beside Stop refuses its own presses, which leaves
                             Stop itself reachable without having to be painted
@@ -1838,7 +2030,7 @@ export const HomeDock = React.memo(({
                                 disabled={primaryAction !== 'send' && primaryAction !== 'stop'}
                                 style={[styles.sendButton, primaryActionFilled && styles.sendButtonActive]}
                                 accessibilityRole="button"
-                                accessibilityLabel={primaryAction === 'stop' ? 'Stop' : 'Send'}
+                                accessibilityLabel={primaryAction === 'stop' ? 'Stop' : createsBot ? 'Create bot' : 'Send'}
                             >
                                 {primaryAction === 'stop' && (
                                     <Animated.View
@@ -1934,6 +2126,35 @@ export const HomeDock = React.memo(({
                     {/* No back affordance here on purpose: tapping the backdrop
                         already closes focus mode, and a floating chevron over the
                         session list is redundant chrome. */}
+
+                    {supportsBots && (
+                        <View
+                            pointerEvents="box-none"
+                            style={[styles.focusHeader, { paddingTop: safeArea.top + 8 }]}
+                        >
+                            <FocusConfigRevealRow
+                                progress={focusPresentation}
+                                index={0}
+                                refusing={isSubmitting}
+                                onRefuse={refuse}
+                                pointerEvents="box-none"
+                            >
+                                <View pointerEvents="box-none" style={styles.focusHeaderContent}>
+                                    <View style={styles.focusHeaderSegment}>
+                                        <NativeSegmentedControl
+                                            options={COMPOSER_KINDS}
+                                            selectedKey={createsBot ? 'bot' : 'session'}
+                                            onSelect={(key) => setCreatesBot(key === 'bot')}
+                                            accessibilityLabel="What to create"
+                                        />
+                                    </View>
+                                    {createsBot && (
+                                        <Text style={styles.focusHeaderLede}>{BOT_LEDE}</Text>
+                                    )}
+                                </View>
+                            </FocusConfigRevealRow>
+                        </View>
+                    )}
 
                     <Animated.View style={[styles.focusDock, keyboardStyle]}>
                         <View style={styles.focusConfig}>

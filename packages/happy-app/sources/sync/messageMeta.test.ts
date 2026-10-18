@@ -1,6 +1,75 @@
 import { describe, expect, it } from 'vitest';
-import { resolveMessageModeMeta, UnsupportedPermissionModeError } from './messageMeta';
+import { resolveMessageDeliveryMeta, resolveMessageModeMeta, UnsupportedPermissionModeError } from './messageMeta';
 import { rigMetadataFixture } from './__testdata__/rigMetadata';
+
+describe('resolveMessageDeliveryMeta', () => {
+    const idle = {
+        metadata: {
+            ...rigMetadataFixture,
+            capabilities: { ...rigMetadataFixture.capabilities!, messageReceipts: true },
+        },
+        thinking: false,
+        agentState: null,
+    };
+
+    it('tracks acceptance without showing a queue status for an idle agent', () => {
+        expect(resolveMessageDeliveryMeta(idle)).toEqual({ expectsAcceptance: true, queuedWhileBusy: false });
+    });
+
+    it('shows the queue status when sending during an existing turn', () => {
+        expect(resolveMessageDeliveryMeta({ ...idle, thinking: true }))
+            .toEqual({ expectsAcceptance: true, queuedWhileBusy: true });
+    });
+
+    it('queues a rapid follow-up behind a locally pending message before thinking updates', () => {
+        expect(resolveMessageDeliveryMeta(idle, false, true))
+            .toEqual({ expectsAcceptance: true, queuedWhileBusy: true });
+    });
+
+    it('treats a blocked permission request as busy even if thinking is false', () => {
+        expect(resolveMessageDeliveryMeta({
+            ...idle,
+            agentState: { requests: { permission: { tool: 'Bash', arguments: {} } } },
+        }).queuedWhileBusy).toBe(true);
+    });
+
+    it('does not label an answer to an agent question as queued', () => {
+        expect(resolveMessageDeliveryMeta({
+            ...idle,
+            thinking: true,
+            agentState: {
+                requests: {},
+                communications: {
+                    question: {
+                        kind: 'form',
+                        form: {
+                            questions: [{
+                                id: 'choice', header: 'Choice', question: 'Pick one',
+                                options: [{ label: 'One' }],
+                            }],
+                        },
+                    },
+                },
+            },
+        } as any).queuedWhileBusy).toBe(false);
+    });
+
+    it.each([false, true])('never labels the first message as queued during startup (thinking=%s)', (thinking) => {
+        expect(resolveMessageDeliveryMeta({ ...idle, thinking }, true))
+            .toEqual({ expectsAcceptance: true, queuedWhileBusy: false });
+    });
+
+    it('keeps the send-time decision when that message starts its own turn', () => {
+        const session = { ...idle };
+        const meta = resolveMessageDeliveryMeta(session);
+        session.thinking = true;
+        expect(meta.queuedWhileBusy).toBe(false);
+    });
+
+    it('does not mark sessions that cannot acknowledge messages', () => {
+        expect(resolveMessageDeliveryMeta({ ...idle, metadata: rigMetadataFixture, thinking: true })).toEqual({});
+    });
+});
 
 describe('resolveMessageModeMeta', () => {
     it('reasserts the displayed codex defaults after abort clears session overrides', () => {
@@ -13,7 +82,7 @@ describe('resolveMessageModeMeta', () => {
 
         expect(meta).toEqual({
             permissionMode: 'auto',
-            model: 'gpt-5.6-sol',
+            model: 'gpt-6.1-sol',
             effort: 'medium',
         });
     });
@@ -296,6 +365,43 @@ describe('resolveMessageModeMeta', () => {
         } as any);
 
         expect(meta).toEqual({ model: null });
+    });
+
+    it('never sends the claude code-default model to a session with no pick', () => {
+        // The code default seeds new sessions only. Sending it here would move
+        // every running session onto whatever model the default names next.
+        const meta = resolveMessageModeMeta({
+            permissionMode: null,
+            modelMode: null,
+            effortLevel: null,
+            metadata: { flavor: 'claude' },
+        } as any, { agentDefaultOverrides: {} });
+
+        expect(meta).toEqual({});
+    });
+
+    it('keeps sending a claude session the retired model key it was started with', () => {
+        // The composer shows the row that runs the same model, but a running
+        // session is never re-modeled behind the user's back.
+        const meta = resolveMessageModeMeta({
+            permissionMode: null,
+            modelMode: 'claude-sonnet-5-5[1m]',
+            effortLevel: null,
+            metadata: { flavor: 'claude' },
+        } as any, { agentDefaultOverrides: {} });
+
+        expect(meta).toEqual({ model: 'claude-sonnet-5-5[1m]' });
+    });
+
+    it('sends a saved claude [1m] default as the row it now maps to', () => {
+        const meta = resolveMessageModeMeta({
+            permissionMode: null,
+            modelMode: null,
+            effortLevel: null,
+            metadata: { flavor: 'claude' },
+        } as any, { agentDefaultOverrides: { claude: { modelMode: 'claude-opus-5[1m]' } } });
+
+        expect(meta).toEqual({ model: 'claude-opus-5' });
     });
 
     it('sends canonical Rig selection metadata using mode code rather than semantic kind', () => {
